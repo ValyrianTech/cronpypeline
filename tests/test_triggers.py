@@ -283,3 +283,33 @@ def my_trigger(context):
     def test_resolve_custom_callable_invalid_attr(self):
         with pytest.raises(AttributeError):
             resolve_custom_callable("json.nonexistent_function_xyz")
+
+    def test_custom_receives_enriched_context(self, tmp_path):
+        """Custom trigger callable should receive target, target_dir, workspace_dir, target_config."""
+        module_code = """
+def check_context(context):
+    assert context.get("target") == "my-repo"
+    assert "target_dir" in context
+    assert "workspace_dir" in context
+    assert context.get("target_config", {}).get("test_cmd") == "pytest"
+    return True
+"""
+        (tmp_path / "ctx_trigger_mod.py").write_text(module_code)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            trigger = TriggerCondition(
+                type=TriggerType.CUSTOM,
+                callable="ctx_trigger_mod.check_context",
+            )
+            ctx = {
+                "target": "my-repo",
+                "target_dir": str(tmp_path),
+                "workspace_dir": str(tmp_path),
+                "target_config": {"test_cmd": "pytest"},
+            }
+            assert evaluate_trigger(trigger, tmp_path, context=ctx) is True
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "ctx_trigger_mod" in sys.modules:
+                del sys.modules["ctx_trigger_mod"]

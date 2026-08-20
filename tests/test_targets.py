@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from cronpypeline.config import TargetSpec, TargetType
-from cronpypeline.targets import load_targets
+from cronpypeline.targets import load_targets, load_targets_with_config, Target
 
 
 class TestRegistryTarget:
@@ -126,3 +126,82 @@ class TestNoTargetSpec:
     def test_load_none_returns_default(self):
         targets = load_targets(None)
         assert targets == ["."]
+
+
+class TestLoadTargetsWithConfig:
+    """Tests for load_targets_with_config — returns Target objects with config."""
+
+    def test_registry_returns_target_objects_with_config(self, tmp_path):
+        registry = {"repos": [
+            {"name": "repo1", "enabled": True, "test_cmd": "pytest"},
+            {"name": "repo2", "enabled": True, "test_cmd": "tox"},
+        ]}
+        registry_file = tmp_path / "repos.json"
+        registry_file.write_text(json.dumps(registry))
+
+        spec = TargetSpec(
+            type=TargetType.REGISTRY,
+            file=str(registry_file),
+            key="repos",
+        )
+        targets = load_targets_with_config(spec)
+        assert len(targets) == 2
+        assert all(isinstance(t, Target) for t in targets)
+        assert targets[0].name == "repo1"
+        assert targets[0].config["test_cmd"] == "pytest"
+        assert targets[1].name == "repo2"
+        assert targets[1].config["test_cmd"] == "tox"
+
+    def test_registry_with_filter(self, tmp_path):
+        registry = {"repos": [
+            {"name": "repo1", "enabled": True, "slug": "a"},
+            {"name": "repo2", "enabled": False, "slug": "b"},
+        ]}
+        registry_file = tmp_path / "repos.json"
+        registry_file.write_text(json.dumps(registry))
+
+        spec = TargetSpec(
+            type=TargetType.REGISTRY,
+            file=str(registry_file),
+            key="repos",
+            filter={"enabled": True},
+        )
+        targets = load_targets_with_config(spec)
+        assert len(targets) == 1
+        assert targets[0].name == "repo1"
+        assert targets[0].config["slug"] == "a"
+
+    def test_static_returns_empty_config(self):
+        spec = TargetSpec(type=TargetType.STATIC, items=["repo1", "repo2"])
+        targets = load_targets_with_config(spec)
+        assert len(targets) == 2
+        assert targets[0].name == "repo1"
+        assert targets[0].config == {}
+        assert targets[1].name == "repo2"
+        assert targets[1].config == {}
+
+    def test_single_returns_empty_config(self):
+        spec = TargetSpec(type=TargetType.SINGLE, name="my-repo")
+        targets = load_targets_with_config(spec)
+        assert len(targets) == 1
+        assert targets[0].name == "my-repo"
+        assert targets[0].config == {}
+
+    def test_none_returns_default_with_empty_config(self):
+        targets = load_targets_with_config(None)
+        assert len(targets) == 1
+        assert targets[0].name == "."
+        assert targets[0].config == {}
+
+
+class TestTargetDataclass:
+    """Tests for the Target dataclass."""
+
+    def test_target_creation(self):
+        t = Target(name="repo1", config={"test_cmd": "pytest"})
+        assert t.name == "repo1"
+        assert t.config["test_cmd"] == "pytest"
+
+    def test_target_default_config(self):
+        t = Target(name="repo1")
+        assert t.config == {}

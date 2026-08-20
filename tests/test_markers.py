@@ -242,3 +242,67 @@ class TestMarkerAge:
         from cronpypeline.markers import marker_age_seconds
         age = marker_age_seconds(m, tmp_path)
         assert age is None
+
+
+class TestDynamicMarkerNaming:
+    """Tests for template substitution in marker names/directories/targets."""
+
+    def test_resolve_path_with_context(self, tmp_path):
+        m = MarkerSpec(name="{target}_done.marker", type=MarkerType.FILE, directory=".")
+        resolved = m.resolve_path(tmp_path, context={"target": "my-repo"})
+        assert resolved == tmp_path / "my-repo_done.marker"
+
+    def test_resolve_path_without_context_no_substitution(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        resolved = m.resolve_path(tmp_path)
+        assert resolved == tmp_path / "done.marker"
+
+    def test_resolve_path_with_target_config(self, tmp_path):
+        m = MarkerSpec(name="{slug}.marker", type=MarkerType.FILE, directory=".")
+        # target_config keys are flattened into the context by the pipeline
+        resolved = m.resolve_path(tmp_path, context={"target": "repo1", "slug": "my-slug"})
+        assert resolved == tmp_path / "my-slug.marker"
+
+    def test_create_marker_with_dynamic_name(self, tmp_path):
+        m = MarkerSpec(name="{target}_done.marker", type=MarkerType.FILE, directory=".")
+        create_marker(m, tmp_path, context={"target": "my-repo"})
+        assert (tmp_path / "my-repo_done.marker").exists()
+
+    def test_create_marker_with_dynamic_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="reports/{target}")
+        create_marker(m, tmp_path, context={"target": "repo1"})
+        assert (tmp_path / "reports" / "repo1" / "done.marker").exists()
+
+    def test_create_symlink_with_dynamic_target(self, tmp_path):
+        target_file = tmp_path / "20240101_report.md"
+        target_file.write_text("# Report")
+        m = MarkerSpec(
+            name="latest.md",
+            type=MarkerType.SYMLINK,
+            directory="reports",
+            target="{target}_report.md",
+        )
+        create_marker(m, tmp_path, context={"target": "20240101"})
+        link_path = tmp_path / "reports" / "latest.md"
+        assert link_path.is_symlink()
+        assert os.readlink(link_path) == "20240101_report.md"
+
+    def test_read_marker_with_dynamic_name(self, tmp_path):
+        m = MarkerSpec(name="{target}_task.json", type=MarkerType.JSON, directory=".", content={"x": 1})
+        create_marker(m, tmp_path, context={"target": "repo1"})
+        result = read_marker(m, tmp_path, context={"target": "repo1"})
+        assert result is not None
+        assert result["x"] == 1
+
+    def test_marker_exists_with_dynamic_name(self, tmp_path):
+        m = MarkerSpec(name="{target}_done.marker", type=MarkerType.FILE, directory=".")
+        create_marker(m, tmp_path, context={"target": "repo1"})
+        assert marker_exists(m, tmp_path, context={"target": "repo1"}) is True
+        assert marker_exists(m, tmp_path, context={"target": "repo2"}) is False
+
+    def test_delete_marker_with_dynamic_name(self, tmp_path):
+        m = MarkerSpec(name="{target}_done.marker", type=MarkerType.FILE, directory=".")
+        create_marker(m, tmp_path, context={"target": "repo1"})
+        assert (tmp_path / "repo1_done.marker").exists()
+        delete_marker(m, tmp_path, context={"target": "repo1"})
+        assert not (tmp_path / "repo1_done.marker").exists()

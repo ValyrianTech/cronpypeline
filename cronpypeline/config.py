@@ -123,6 +123,9 @@ class Stage:
     enabled: bool = True
     markers: dict[str, MarkerSpec] = dc_field(default_factory=dict)
     on_fail: Optional[ActionSpec] = None
+    invalidates: list[MarkerSpec] = dc_field(default_factory=list)
+    modes: list[str] = dc_field(default_factory=list)
+    max_rejections: int = 0
 
     @classmethod
     def from_dict(cls, data: dict) -> "Stage":
@@ -133,6 +136,10 @@ class Stage:
         on_fail = None
         if data.get("on_fail"):
             on_fail = ActionSpec.from_dict(data["on_fail"])
+
+        invalidates = [MarkerSpec.from_dict(m) for m in data.get("invalidates", [])]
+        modes = list(data.get("modes", []))
+        max_rejections = data.get("max_rejections", 0)
 
         return cls(
             id=data["id"],
@@ -145,6 +152,9 @@ class Stage:
             enabled=data.get("enabled", True),
             markers=markers,
             on_fail=on_fail,
+            invalidates=invalidates,
+            modes=modes,
+            max_rejections=max_rejections,
         )
 
 
@@ -197,6 +207,16 @@ class ActionHandlerConfig:
 
 
 @dataclass
+class HookConfig:
+    """Configuration for a pre-tick or post-tick hook."""
+    callable: str
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "HookConfig":
+        return cls(callable=data["callable"])
+
+
+@dataclass
 class PipelineConfig:
     """Top-level pipeline configuration loaded from JSON."""
     name: str
@@ -207,6 +227,10 @@ class PipelineConfig:
     targets: Optional[TargetSpec] = None
     action_handler: Optional[ActionHandlerConfig] = None
     log_file: Optional[str] = None
+    pre_tick: Optional[HookConfig] = None
+    post_tick: Optional[HookConfig] = None
+    mode_file: Optional[str] = None
+    target_lock: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> "PipelineConfig":
@@ -227,6 +251,14 @@ class PipelineConfig:
         if data.get("action_handler"):
             action_handler = ActionHandlerConfig.from_dict(data["action_handler"])
 
+        pre_tick = None
+        if data.get("pre_tick"):
+            pre_tick = HookConfig.from_dict(data["pre_tick"])
+
+        post_tick = None
+        if data.get("post_tick"):
+            post_tick = HookConfig.from_dict(data["post_tick"])
+
         return cls(
             name=data["name"],
             workspace_dir=data["workspace_dir"],
@@ -236,6 +268,10 @@ class PipelineConfig:
             targets=targets,
             action_handler=action_handler,
             log_file=data.get("log_file"),
+            pre_tick=pre_tick,
+            post_tick=post_tick,
+            mode_file=data.get("mode_file"),
+            target_lock=data.get("target_lock", False),
         )
 
     @classmethod

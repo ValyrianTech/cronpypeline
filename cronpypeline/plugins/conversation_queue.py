@@ -33,13 +33,30 @@ class ConversationQueueHandler(ActionHandler):
         agent = params.get("agent", "default")
         prompt = params.get("prompt", "")
         prompt_template = params.get("prompt_template", "")
+        reminder_prompt = params.get("reminder_prompt", "")
+        reminder_prompt_template = params.get("reminder_prompt_template", "")
+
+        # Determine which prompt to use based on retry context
+        is_retry = context.retry_count > 0
+        if is_retry and reminder_prompt_template:
+            prompt = reminder_prompt_template
+        elif is_retry and reminder_prompt:
+            prompt = reminder_prompt
+        elif prompt_template:
+            prompt = prompt_template
+        # else: use prompt as-is
 
         # Format prompt with context variables
         variables = {
             "target": context.target,
             "target_dir": str(context.target_dir),
             "workspace_dir": str(context.workspace_dir),
+            "target_config": context.target_config,
         }
+        # Flatten target_config keys for direct template access (e.g. {test_cmd})
+        for k, v in context.target_config.items():
+            if k not in variables:
+                variables[k] = v
         if prompt_template:
             prompt = format_template(prompt_template, variables)
         else:
@@ -86,5 +103,10 @@ class ConversationQueueHandler(ActionHandler):
 
 
 def register():
-    """Register the conversation queue handler."""
-    register_handler(ActionType.QUEUE_AGENT, "placeholder")  # Will be replaced by instance
+    """Register the conversation queue handler.
+
+    Note: This is a no-op placeholder. The actual handler must be instantiated
+    with queue_dir and registered via Pipeline.__init__() from action_handler config,
+    or manually via register_handler(ActionType.QUEUE_AGENT, ConversationQueueHandler(...)).
+    """
+    pass

@@ -5,10 +5,18 @@ static list, or single target.
 """
 
 import json
+from dataclasses import dataclass, field as dc_field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from cronpypeline.config import TargetSpec, TargetType
+
+
+@dataclass
+class Target:
+    """A single target with its name and per-target config dict."""
+    name: str
+    config: dict[str, Any] = dc_field(default_factory=dict)
 
 
 def _matches_filter(item: dict, filter_dict: dict) -> bool:
@@ -49,5 +57,45 @@ def load_targets(spec: Optional[TargetSpec]) -> list[str]:
             items = [item for item in items if _matches_filter(item, spec.filter)]
 
         return [item["name"] for item in items]
+
+    raise ValueError(f"Unknown target type: {spec.type}")
+
+
+def load_targets_with_config(spec: Optional[TargetSpec]) -> list[Target]:
+    """Load targets with their full config dicts from a TargetSpec.
+
+    Like load_targets() but returns Target objects that include per-target
+    configuration from the registry (e.g. test_cmd, coverage_threshold, etc.).
+
+    Args:
+        spec: TargetSpec configuration, or None for default single target.
+
+    Returns:
+        List of Target objects with name and config.
+    """
+    if spec is None:
+        return [Target(name=".", config={})]
+
+    if spec.type == TargetType.STATIC:
+        return [Target(name=name, config={}) for name in (spec.items or [])]
+
+    if spec.type == TargetType.SINGLE:
+        return [Target(name=spec.name, config={})] if spec.name else [Target(name=".", config={})]
+
+    if spec.type == TargetType.REGISTRY:
+        registry_path = Path(spec.file)
+        if not registry_path.exists():
+            raise FileNotFoundError(f"Registry file not found: {registry_path}")
+
+        data = json.loads(registry_path.read_text())
+        items = data[spec.key]
+
+        if spec.filter:
+            items = [item for item in items if _matches_filter(item, spec.filter)]
+
+        return [
+            Target(name=item["name"], config={k: v for k, v in item.items() if k != "name"})
+            for item in items
+        ]
 
     raise ValueError(f"Unknown target type: {spec.type}")

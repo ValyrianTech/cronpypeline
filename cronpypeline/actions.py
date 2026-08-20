@@ -11,6 +11,9 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
+import urllib.error
+import socket
 from dataclasses import dataclass, field as dc_field
 from pathlib import Path
 from typing import Any, Optional
@@ -29,6 +32,8 @@ class TickContext:
     env: dict[str, str] = dc_field(default_factory=dict)
     state: Any = None
     pipeline: Any = None
+    target_config: dict[str, Any] = dc_field(default_factory=dict)
+    retry_count: int = 0
 
     @property
     def target_dir(self) -> Path:
@@ -185,12 +190,80 @@ class CustomActionHandler(ActionHandler):
             return ActionResult(success=True, stdout=str(result))
 
 
+class HttpRequestActionHandler(ActionHandler):
+    """Makes HTTP requests using urllib from the stdlib."""
+
+    def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
+        if context.dry_run:
+            return ActionResult(success=True, dry_run=True)
+
+        params = action.params
+        url = params.get("url", "")
+        method = params.get("method", "GET").upper()
+        headers = dict(params.get("headers", {}))
+        body = params.get("body")
+        timeout = action.timeout_seconds
+
+        # Resolve auth token: direct value, then env var, then context env
+        auth_token = params.get("auth_token")
+        if not auth_token:
+            auth_token_env = params.get("auth_token_env")
+            if auth_token_env:
+                auth_token = context.env.get(auth_token_env) or os.environ.get(auth_token_env)
+        if auth_token:
+            headers["Authorization"] = f"token {auth_token}"
+
+        # Build request
+        data = body.encode("utf-8") if body else None
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                status = resp.status
+                body_bytes = resp.read()
+                body_str = body_bytes.decode("utf-8", errors="replace")
+                success = 200 <= status < 300
+                return ActionResult(
+                    success=success,
+                    stdout=body_str,
+                    exit_code=status,
+                    data={"status_code": status, "url": url, "method": method},
+                )
+        except urllib.error.HTTPError as e:
+            body_str = ""
+            try:
+                body_str = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            return ActionResult(
+                success=False,
+                stdout=body_str,
+                stderr=f"HTTP {e.code}: {e.reason}",
+                exit_code=e.code,
+                data={"status_code": e.code, "url": url, "method": method},
+            )
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, socket.timeout):
+                return ActionResult(
+                    success=False,
+                    timed_out=True,
+                    exit_code=-1,
+                    stderr=f"Request timed out after {timeout}s",
+                )
+            return ActionResult(
+                success=False,
+                exit_code=-1,
+                stderr=str(e.reason),
+            )
+
+
 # ─── Registry ───────────────────────────────────────────────────────────────
 
 _HANDLERS: dict[ActionType, ActionHandler] = {
     ActionType.COMMAND: CommandActionHandler(),
     ActionType.SUBPROCESS: SubprocessActionHandler(),
     ActionType.CUSTOM: CustomActionHandler(),
+    ActionType.HTTP_REQUEST: HttpRequestActionHandler(),
 }
 
 

@@ -20,7 +20,7 @@ from cronpypeline.state import PipelineState, StageState, TargetState
 from cronpypeline.markers import MarkerType, create_marker, read_marker, marker_exists, delete_marker
 from cronpypeline.actions import ActionHandler, TickContext, ActionResult, execute_action, register_handler
 from cronpypeline.triggers import evaluate_trigger
-from cronpypeline.targets import load_targets
+from cronpypeline.targets import load_targets, load_targets_with_config, Target
 
 __all__ = [
     "Pipeline",
@@ -52,4 +52,6 @@ __all__ = [
     "register_handler",
     "evaluate_trigger",
     "load_targets",
+    "load_targets_with_config",
+    "Target",
 ]

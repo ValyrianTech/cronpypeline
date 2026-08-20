@@ -76,6 +76,56 @@ class TestConversationQueueHandler:
         entry = json.loads(files[0].read_text())
         assert "my-repo" in entry["prompt"]
 
+    def test_prompt_template_with_target_config(self, tmp_path):
+        """Prompt templates should support target_config variables."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "CoderAgent",
+                "prompt_template": "Fix issue {issue_id} in {target} using {test_cmd}",
+            },
+        )
+        ctx = TickContext(
+            target="my-repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"issue_id": "42", "test_cmd": "pytest"},
+        )
+        result = handler.execute(action, ctx)
+
+        files = list(queue_dir.glob("*.json"))
+        entry = json.loads(files[0].read_text())
+        assert "Fix issue 42 in my-repo using pytest" == entry["prompt"]
+
+    def test_prompt_with_target_config(self, tmp_path):
+        """Plain prompt should also support target_config variables."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "CoderAgent",
+                "prompt": "Run {test_cmd} for {target}",
+            },
+        )
+        ctx = TickContext(
+            target="my-repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"test_cmd": "tox"},
+        )
+        result = handler.execute(action, ctx)
+
+        files = list(queue_dir.glob("*.json"))
+        entry = json.loads(files[0].read_text())
+        assert "Run tox for my-repo" == entry["prompt"]
+
     def test_includes_optional_fields(self, tmp_path):
         queue_dir = tmp_path / "queue"
         handler = ConversationQueueHandler(queue_dir=str(queue_dir))
