@@ -19,9 +19,14 @@
 - **Pre/post-tick hooks**: Run custom callables before state derivation (can skip tick) or after tick completion.
 - **Marker invalidation**: Stages can declaratively delete other stages' markers on success — no manual cleanup code.
 - **Rejection tracking**: Separate rejection counter (distinct from retries) with `max_rejections` give-up — supports revision/review loops.
+- **Rejection audit trail**: Optional `post_tick` hook for append-only `rejection_log.json` with detailed entries (reasons, timestamps, rejection metadata).
 - **Queue-file staleness**: Processing markers track queue file paths — immediate stale detection when agent finishes without producing completion.
+- **Conversation ID continuation**: On retry, the previous `entry_id` is reused as `conversation_id` so agents continue the same conversation instead of starting fresh.
+- **Serendipity-compatible queue format**: Configurable `prompt_field` (e.g. `content` instead of `prompt`), `default_fields` for static metadata (`sender`, `folder_name`, `model_name`, `runs_left`), and `flatten_agent_settings` for flat agent config merging.
 - **Dynamic marker naming**: Marker names and directories support `{target}`, `{slug}`, and any target config key via template substitution.
 - **HTTP requests**: Built-in `http_request` action handler with auth token resolution from config, env vars, or context.
+- **SWE pipeline plugins**: Issue store (YAML frontmatter), diagnostic report handlers with output parsers, prompt builders for fix/coder/review agents, GitHub session adapter.
+- **VNN pipeline plugins**: Story state sync, inconsistent state cleanup, global queue-empty gate, completed compilation checks, story discovery, rejection audit trail.
 - **Crash-safe**: If a process is killed mid-tick, the next tick re-derives state from whatever markers were already written.
 - **Minimal dependencies**: Pure Python stdlib. No heavy framework. Python 3.10+.
 
@@ -63,7 +68,16 @@ pip install -e ".[dev]"
     "type": "conversation_queue",
     "params": {
       "queue_dir": "/path/to/conversation_queue",
-      "agent_settings_dir": "/path/to/agent_settings"
+      "agent_settings_dir": "/path/to/agent_settings",
+      "prompt_field": "content",
+      "default_fields": {
+        "sender": "MY_PIPELINE",
+        "conversation_id": "",
+        "folder_name": "MY_PIPELINE",
+        "model_name": "default_model",
+        "runs_left": 3
+      },
+      "flatten_agent_settings": true
     }
   },
   "pre_tick": {"callable": "my_plugin.pre_tick_sync"},
@@ -556,7 +570,16 @@ Writes JSON files to a conversation queue directory. Compatible with Serendipity
   "type": "conversation_queue",
   "params": {
     "queue_dir": "/path/to/conversation_queue",
-    "agent_settings_dir": "/path/to/agent_settings"
+    "agent_settings_dir": "/path/to/agent_settings",
+    "prompt_field": "content",
+    "default_fields": {
+      "sender": "SWE_PIPELINE",
+      "conversation_id": "",
+      "folder_name": "SWE",
+      "model_name": "default_model",
+      "runs_left": 3
+    },
+    "flatten_agent_settings": true
   }
 }
 ```
@@ -570,6 +593,9 @@ from cronpypeline import register_handler, ActionType
 handler = ConversationQueueHandler(
     queue_dir="/path/to/conversation_queue",
     agent_settings_dir="/path/to/agent_settings",
+    prompt_field="content",
+    default_fields={"sender": "SWE_PIPELINE", "folder_name": "SWE", "runs_left": 3},
+    flatten_agent_settings=True,
 )
 register_handler(ActionType.QUEUE_AGENT, handler)
 ```
@@ -577,11 +603,16 @@ register_handler(ActionType.QUEUE_AGENT, handler)
 **Features**:
 - Template variables in prompts: `{target}`, `{target_dir}`, `{workspace_dir}`, plus all flattened target config keys
 - Reminder prompts: `reminder_prompt` or `reminder_prompt_template` used when `retry_count > 0`
+- **Configurable prompt field**: `prompt_field` (default `"prompt"`) — set to `"content"` for Serendipity compatibility
+- **Default fields**: Static fields injected into every queue entry (e.g. `sender`, `conversation_id`, `folder_name`, `model_name`, `runs_left`)
+- **Flatten agent settings**: When `flatten_agent_settings=True`, agent settings are merged flat into the entry instead of nested under `agent_config`
+- **Runs left decrement**: On retry, `runs_left` is decremented by `retry_count` (clamped to 0)
+- **Conversation ID continuation**: On retry, the previous `entry_id` from the processing marker is reused as `conversation_id` and `id` — agents continue the same conversation
 - Agent settings loading: if `agent_settings_dir` is set, loads `{agent}.json` config into the queue entry
 - Queue file tracking: returns `queue_file` and `entry_id` in `result.data`, which the pipeline writes into the processing marker for stale detection
 - Optional params: `model`, `temperature`, `max_tokens`
 
-Queue entry format:
+**Default queue entry format** (backward compatible):
 ```json
 {
   "id": "uuid",
@@ -592,6 +623,24 @@ Queue entry format:
   "model": "gpt-4",
   "temperature": 0.7,
   "max_tokens": 4096
+}
+```
+
+**Serendipity-compatible format** (with `prompt_field`, `default_fields`, `flatten_agent_settings`):
+```json
+{
+  "id": "uuid",
+  "agent": "CoderAgent",
+  "content": "Fix issue 42...",
+  "sender": "SWE_PIPELINE",
+  "conversation_id": "",
+  "folder_name": "SWE",
+  "model_name": "gpt-4",
+  "temperature": 0.5,
+  "runs_left": 3,
+  "user_name": "coder",
+  "target": "my-repo",
+  "timestamp": 1234567890.0
 }
 ```
 
@@ -631,14 +680,69 @@ path = write_report(directory=target_dir / "reports", filename="report_{timestam
 update_latest_symlink(directory=target_dir / "reports", symlink_name="latest.md", target_name=path.name)
 ```
 
-#### SWE pipeline plugin (`cronpypeline.plugins.swe_plugin`)
+#### SWE pipeline plugins
+
+**SWE plugin** (`cronpypeline.plugins.swe_plugin`):
 
 Custom triggers and actions for the SWE pipeline:
 
-- `detect_open_issue` — trigger: fires if there's an open issue in `issues.json`
+- `detect_open_issue` — trigger: fires if there's an open issue in `.SWE/issues/*.md` (YAML frontmatter)
 - `detect_agent_forgot_marker` — trigger: fires when queue is empty + git commits exist but no completion marker
 - `cleanup_git_branch` — action: cleans up git branches after failure
-- `reset_issue_status` — action: resets issue status to "open" after failure
+- `reset_issue_status` — action: resets issue status to "open" after failure (updates YAML frontmatter)
+- `sync_session_mode` — pre_tick hook: syncs `.SWE/github_session.json` to the pipeline `mode_file`
+
+**SWE issue store** (`cronpypeline.plugins.issue_store`):
+
+Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency).
+
+**SWE diagnostics** (`cronpypeline.plugins.swe_diagnostics`):
+
+Diagnostic report action handler and output parsers:
+
+- `run_diagnostic` — custom action: runs a command, parses output, writes a timestamped markdown report, creates `latest.md` symlink
+- Output parsers: `parse_pytest_output`, `parse_ruff_output`, `parse_mypy_output`, `parse_pydocstyle_output`, `parse_vulture_output`, `parse_coverage_output`, `parse_bandit_output`, `parse_pip_audit_output`, `parse_radon_output`
+
+```json
+{
+  "type": "custom",
+  "params": {
+    "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+    "command": "{test_cmd}",
+    "report_dir": ".SWE/reports/test-infra",
+    "parser": "cronpypeline.plugins.swe_diagnostics.parse_pytest_output",
+    "report_name": "test-infra_{timestamp}.md"
+  }
+}
+```
+
+**SWE prompt builders** (`cronpypeline.plugins.swe_prompts`):
+
+Custom action callables that build prompts programmatically and queue agents:
+
+- `queue_fix_agent` — reads a diagnostic report, builds a fix prompt, queues via `ConversationQueueHandler`
+- `queue_coder_agent` — reads an issue from the issue store, builds a coder prompt with git state, queues
+- `queue_review_agent` — builds a review prompt with cycle numbers, diff stats, PR state, queues
+- Prompt builders: `build_fix_prompt`, `build_coder_prompt`, `build_review_prompt`
+
+**SWE pipeline config**: A full example config is available at `configs/swe_pipeline.json` with all SWE stages (A1–A9 diagnostics, fix agents, B1, C-select/gate/code/publish/pr-review/pr-status/session-terminal/stale).
+
+#### VNN pipeline plugin (`cronpypeline.plugins.vnn_plugin`)
+
+Custom hooks for the VNN pipeline:
+
+- `log_rejection` — post_tick hook: appends to `.VNN/rejection_log.json` (append-only audit trail with timestamps, reasons, rejection metadata)
+- `queue_empty_global` — pre_tick hook: returns `False` (skip tick) when conversation queue is not empty (global queue-empty gate)
+- `sync_story_states` — pre_tick hook: syncs `.VNN/ranking.json` with filesystem state (article, published, rejected markers)
+- `cleanup_inconsistent_state` — pre_tick hook: removes stale processing markers when completion marker also exists
+- `check_completed_compilations` — pre_tick hook: checks for `.compilation_complete` markers and updates compilation state
+- `cleanup_stale_compilation_markers` — pre_tick hook: removes compilation markers older than the configured timeout
+- `discover_stories` — pre_tick hook: scans workspace for story directories and writes a registry file
+
+```json
+"pre_tick": {"callable": "cronpypeline.plugins.vnn_plugin.sync_story_states"},
+"post_tick": {"callable": "cronpypeline.plugins.vnn_plugin.log_rejection"}
+```
 
 ## Package structure
 
@@ -659,7 +763,13 @@ cronpypeline/
 └── plugins/
     ├── __init__.py
     ├── conversation_queue.py  # Serendipity conversation queue handler
-    └── swe_plugin.py          # SWE pipeline custom triggers/actions
+    ├── swe_plugin.py          # SWE pipeline triggers, actions, session adapter
+    ├── issue_store.py         # SWE issue store with YAML frontmatter
+    ├── swe_diagnostics.py     # SWE diagnostic report handler + output parsers
+    ├── swe_prompts.py         # SWE prompt builders for fix/coder/review agents
+    └── vnn_plugin.py          # VNN pipeline hooks (rejection log, story sync, etc.)
+configs/
+└── swe_pipeline.json         # Full SWE pipeline example config
 ```
 
 ## Testing
@@ -675,11 +785,13 @@ cronpypeline/
 .venv/bin/python -m pytest tests/test_pipeline.py -v
 ```
 
-The test suite includes **316 tests** covering:
+The test suite includes **433 tests** covering:
 - Unit tests for each core class (config parsing, marker resolution, trigger evaluation, lock acquisition, action execution)
 - Integration tests using temp directories as workspaces, simulating multi-tick execution
 - Crash safety tests verifying state recovery from partial filesystem state
-- Plugin tests for conversation queue and SWE plugin
+- Plugin tests for conversation queue (Serendipity format, conversation ID continuation, runs_left decrement)
+- SWE plugin tests (issue store, diagnostic parsers, prompt builders, session adapter, pipeline config)
+- VNN plugin tests (rejection audit trail, queue-empty gate, story sync, state cleanup)
 
 ## Python API reference
 
