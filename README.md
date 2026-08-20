@@ -11,8 +11,17 @@
 - **Cron-native**: Each invocation is a single "tick" that takes one action and exits. State is derived from the filesystem, not held in memory. Safe to run every minute via crontab.
 - **Configuration over code**: Define stages, commands, timeouts, retries, markers, and agent queueing entirely via JSON — no orchestrator code needed.
 - **Step management**: Insert, reorder, rename, or remove steps by editing the JSON config. No code changes, no renumbering.
-- **Resilience**: Built-in handling for timeouts, retries, stale tasks, and rollback/revert actions.
+- **Resilience**: Built-in handling for timeouts, retries, stale tasks, rejection tracking, and rollback/revert actions.
 - **Agent-agnostic**: Works with any async agent dispatch mechanism (conversation queue, subprocess, HTTP API call) via pluggable action handlers.
+- **Per-target config**: Registry targets carry per-target configuration (custom commands, thresholds, GitHub slugs) that flows into triggers, actions, and templates.
+- **Mode switching**: Pipeline-wide mode file enables/disables groups of stages at runtime (e.g. "default" vs "github session" mode).
+- **Target locking**: Optional cross-stage lock ensures one target flows through the entire pipeline before the next target starts.
+- **Pre/post-tick hooks**: Run custom callables before state derivation (can skip tick) or after tick completion.
+- **Marker invalidation**: Stages can declaratively delete other stages' markers on success — no manual cleanup code.
+- **Rejection tracking**: Separate rejection counter (distinct from retries) with `max_rejections` give-up — supports revision/review loops.
+- **Queue-file staleness**: Processing markers track queue file paths — immediate stale detection when agent finishes without producing completion.
+- **Dynamic marker naming**: Marker names and directories support `{target}`, `{slug}`, and any target config key via template substitution.
+- **HTTP requests**: Built-in `http_request` action handler with auth token resolution from config, env vars, or context.
 - **Crash-safe**: If a process is killed mid-tick, the next tick re-derives state from whatever markers were already written.
 - **Minimal dependencies**: Pure Python stdlib. No heavy framework. Python 3.10+.
 
@@ -48,9 +57,22 @@ pip install -e ".[dev]"
   "name": "my-pipeline",
   "workspace_dir": "/path/to/workspace",
   "lock_file": "pipeline.lock",
+  "mode_file": "mode.json",
+  "target_lock": true,
+  "action_handler": {
+    "type": "conversation_queue",
+    "params": {
+      "queue_dir": "/path/to/conversation_queue",
+      "agent_settings_dir": "/path/to/agent_settings"
+    }
+  },
+  "pre_tick": {"callable": "my_plugin.pre_tick_sync"},
+  "post_tick": {"callable": "my_plugin.post_tick_log"},
   "targets": {
-    "type": "static",
-    "items": ["project-a", "project-b"]
+    "type": "registry",
+    "file": "repos.json",
+    "key": "repos",
+    "filter": {"enabled": true}
   },
   "stages": [
     {
@@ -64,12 +86,14 @@ pip install -e ".[dev]"
         "type": "queue_agent",
         "params": {
           "agent": "ResearchAgent",
-          "prompt": "Research the codebase and produce a report."
+          "prompt": "Research the codebase and produce a report.",
+          "reminder_prompt": "Your previous research was incomplete. Please finish."
         }
       },
       "markers": {
         "completion": {"type": "file", "name": "research.md"},
-        "processing": {"type": "json", "name": ".processing", "content": {}}
+        "processing": {"type": "json", "name": ".processing", "content": {}},
+        "give_up": {"type": "file", "name": ".gave_up"}
       },
       "timeout_minutes": 30,
       "max_retries": 3
@@ -84,17 +108,43 @@ pip install -e ".[dev]"
       "action": {
         "type": "command",
         "params": {
-          "command": ".venv/bin/pytest -q > test-results.md"
+          "command": "{test_cmd}"
         }
       },
       "markers": {
         "completion": {"type": "file", "name": "test-results.md"}
       },
+      "invalidates": [
+        {"type": "file", "name": "research.md"}
+      ],
       "chain": true,
       "timeout_minutes": 15
     },
     {
       "id": "A2",
+      "name": "Review",
+      "trigger": {
+        "type": "file_exists",
+        "path": "test-results.md"
+      },
+      "action": {
+        "type": "queue_agent",
+        "params": {
+          "agent": "ReviewAgent",
+          "prompt": "Review the test results in {target_dir}/test-results.md."
+        }
+      },
+      "markers": {
+        "completion": {"type": "file", "name": "reviewed.marker"},
+        "processing": {"type": "json", "name": ".review_processing", "content": {}},
+        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+        "give_up": {"type": "file", "name": ".review_gave_up"}
+      },
+      "max_rejections": 3,
+      "modes": ["default", "review"]
+    },
+    {
+      "id": "A3",
       "name": "Deploy",
       "trigger": {
         "type": "file_missing",
@@ -176,15 +226,56 @@ Stages are evaluated in array order (first-match-wins). The first stage whose tr
 
 Stages with `"chain": true` allow same-tick continuation when the action is synchronous (command, subprocess, custom). The pipeline chains through consecutive mechanical stages until it hits a non-chain stage, an async action (`queue_agent`), or a failure. This lets multi-step mechanical workflows complete in a single tick instead of waiting for multiple cron cycles.
 
+### Mode switching
+
+A pipeline can define a `mode_file` — a JSON file with `{"mode": "some_mode"}`. Stages with a `modes` list are only active when the current mode is in that list. Stages without `modes` are always active. This enables runtime behavior switching (e.g. "default" vs "github session" mode) without changing the config.
+
+```json
+{"mode": "github"}
+```
+
+### Target locking
+
+When `target_lock: true` is set on the pipeline, no stage for a target is actionable while any stage for that target has a processing marker. This ensures one target flows through the entire pipeline before the next target starts — useful when stages have side effects that conflict across targets.
+
+### Pre-tick / post-tick hooks
+
+A pipeline can declare `pre_tick` and `post_tick` hooks — custom Python callables that run before state derivation and after tick completion respectively.
+
+- **Pre-tick hooks** receive a context dict (`target`, `target_dir`, `workspace_dir`, `target_config`). Returning `False` skips the tick entirely.
+- **Post-tick hooks** receive the context dict and the `TickResult`. Useful for logging, notifications, or cleanup.
+
+```json
+"pre_tick": {"callable": "my_plugin.sync_state"},
+"post_tick": {"callable": "my_plugin.log_result"}
+```
+
+### Marker invalidation
+
+Stages can declare an `invalidates` list — markers from other stages to delete when this stage's action succeeds. This enables cross-stage state cleanup without custom code (e.g. a fix stage deleting upstream report markers to force re-evaluation).
+
+### Rejection tracking
+
+Stages can define a `rejection` marker (JSON type) and `max_rejections` count. Rejections are tracked separately from retries — when `rejection_count >= max_rejections`, the stage writes a give-up marker. Below the max, the rejection marker is cleared so the stage can be re-processed. This supports revision/review loops where an agent's work is rejected and must be redone.
+
+### Queue-file staleness
+
+Processing markers can include a `queue_file` field (written automatically by `ConversationQueueHandler`). When the queue file no longer exists, the stage is immediately marked stale — no waiting for `timeout_minutes` to elapse. This detects the case where an agent finished but didn't produce a completion marker. Falls back to time-based staleness when no `queue_file` field is present.
+
+### Dynamic marker naming
+
+Marker names and directories support template substitution with context variables: `{target}`, `{target_dir}`, `{workspace_dir}`, and all flattened target config keys (e.g. `{slug}`). This enables per-target marker names like `queued_for_{slug}.marker`.
+
 ### File-based state markers
 
 The filesystem is the source of truth — no database, no in-memory state:
 
-| Marker type | Purpose | Example |
+| Marker role | Purpose | Example |
 |---|---|---|
 | **Completion** | Stage is done | `research.md`, `coding_complete.marker` |
-| **Processing** | Task is in progress | `.processing` (JSON with agent, retry_count, timestamp) |
-| **Give-up** | Stage exhausted retries | `.gave_up` |
+| **Processing** | Task is in progress | `.processing` (JSON with retry_count, queue_file, timestamp) |
+| **Give-up** | Stage exhausted retries or rejections | `.gave_up` |
+| **Rejection** | Stage output was rejected (separate from retries) | `.rejection` (JSON with rejection_count) |
 | **Symlink** | Latest report pointer | `latest.md → 20240101_120000.md` |
 
 ## Configuration reference
@@ -197,10 +288,14 @@ The filesystem is the source of truth — no database, no in-memory state:
 | `workspace_dir` | string | yes | — | Root workspace directory |
 | `stages` | array | yes | `[]` | Ordered list of stage definitions |
 | `lock_file` | string | no | `"pipeline.lock"` | Lock file path (relative to workspace) |
-| `config_file` | string | no | `null` | Optional pipeline config toggle file |
+| `config_file` | string | no | `null` | Optional pipeline config toggle file (`{"enabled": false}` disables) |
 | `targets` | object | no | `null` | Target specification (see below) |
-| `action_handler` | object | no | `null` | Action handler plugin config |
+| `action_handler` | object | no | `null` | Action handler plugin config (wired automatically) |
 | `log_file` | string | no | `null` | Optional log file path |
+| `mode_file` | string | no | `null` | Path to JSON file with `{"mode": "..."}` for mode switching |
+| `target_lock` | bool | no | `false` | Cross-stage lock — blocks all stages for a target while any stage is processing |
+| `pre_tick` | object | no | `null` | Pre-tick hook config (`{"callable": "module.func"}`) |
+| `post_tick` | object | no | `null` | Post-tick hook config (`{"callable": "module.func"}`) |
 
 ### Stage definition
 
@@ -214,8 +309,11 @@ The filesystem is the source of truth — no database, no in-memory state:
 | `timeout_minutes` | int | no | `30` | Per-stage timeout for stale detection |
 | `max_retries` | int | no | `3` | Max attempts before give-up |
 | `enabled` | bool | no | `true` | Skip this stage if false |
-| `markers` | object | no | `{}` | Completion/processing/give-up marker specs |
+| `markers` | object | no | `{}` | Completion/processing/give_up/rejection marker specs |
 | `on_fail` | object | no | `null` | Revert/rollback action on failure |
+| `invalidates` | array | no | `[]` | Markers from other stages to delete on success |
+| `modes` | array | no | `[]` | Active modes for this stage (empty = always active) |
+| `max_rejections` | int | no | `0` | Max rejections before give-up (0 = disabled) |
 
 ### Trigger conditions
 
@@ -249,9 +347,9 @@ The filesystem is the source of truth — no database, no in-memory state:
 | Type | Description | Key params |
 |---|---|---|
 | `command` | Run a shell command | `command`, `cwd` |
-| `queue_agent` | Drop a file in conversation queue | `agent`, `prompt` or `prompt_template` |
+| `queue_agent` | Drop a file in conversation queue | `agent`, `prompt` or `prompt_template`, `reminder_prompt`, `reminder_prompt_template` |
 | `subprocess` | Run a Python script as subprocess | `script`, `args` |
-| `http_request` | Call an HTTP endpoint | `url`, `method` |
+| `http_request` | Call an HTTP endpoint | `url`, `method`, `headers`, `body`, `auth_token`, `auth_token_env` |
 | `custom` | User-provided Python callable | `callable` |
 
 **Common fields:**
@@ -262,10 +360,12 @@ The filesystem is the source of truth — no database, no in-memory state:
 | `timeout_seconds` | int | `null` | Execution timeout |
 | `produces` | array | `[]` | Markers created on success |
 
-**Template variables** in `command`, `cwd`, and `prompt_template`:
+**Template variables** in `command`, `cwd`, `prompt_template`, marker names, and marker directories:
 - `{target}` — current target name
 - `{target_dir}` — full path to target directory
 - `{workspace_dir}` — full path to workspace
+- `{target_config}` — full per-target config dict
+- Any flattened target config key (e.g. `{slug}`, `{test_cmd}`, `{coverage_threshold}`) — available when using a registry target spec
 
 ### Marker specs
 
@@ -283,6 +383,8 @@ The filesystem is the source of truth — no database, no in-memory state:
 | `static` | Fixed list of target names | `items` |
 | `single` | One target | `name` |
 
+**Registry targets carry per-target config** — all fields except `name` are passed through as `target_config` to triggers, actions, and templates. Keys are flattened into the context dict for direct template access (e.g. `{test_cmd}`, `{slug}`).
+
 **Registry example:**
 
 ```json
@@ -298,9 +400,9 @@ With `repos.json`:
 ```json
 {
   "repos": [
-    {"name": "repo1", "enabled": true},
-    {"name": "repo2", "enabled": false},
-    {"name": "repo3", "enabled": true}
+    {"name": "repo1", "enabled": true, "slug": "org/repo1", "test_cmd": "pytest -q", "coverage_threshold": 90},
+    {"name": "repo2", "enabled": false, "slug": "org/repo2", "test_cmd": "tox", "coverage_threshold": 80},
+    {"name": "repo3", "enabled": true, "slug": "org/repo3", "test_cmd": ".venv/bin/pytest", "coverage_threshold": 100}
   ]
 }
 ```
@@ -314,11 +416,28 @@ Each stage has a `timeout_minutes` config. If a task's processing marker is olde
 2. Increments the retry counter
 3. Either re-queues the action (if retries remain) or writes a give-up marker
 
+**Queue-file-based staleness**: If the processing marker contains a `queue_file` field, staleness is detected immediately when the queue file is gone (agent finished without producing completion) — no waiting for the timeout.
+
 ### Retries and give-up
 
 - `max_retries` (default 3): after this many failed attempts, the stage writes a give-up marker and the target is skipped on future ticks.
 - Give-up markers are configurable (file name, JSON content).
 - **Manual recovery**: delete the give-up marker to re-enable the stage.
+
+### Rejections and give-up
+
+- `max_rejections` (default 0 = disabled): a separate counter from retries, tracked via a `rejection` marker (JSON type with `rejection_count`).
+- When `rejection_count >= max_rejections`, the stage writes a give-up marker.
+- Below the max, the rejection marker is cleared so the stage can be re-processed.
+- Supports revision/review loops where an agent's output is rejected and must be redone.
+
+```json
+"markers": {
+  "rejection": {"type": "json", "name": ".rejection", "content": {}},
+  "give_up": {"type": "file", "name": ".gave_up"}
+},
+"max_rejections": 5
+```
 
 ### Rollback / revert
 
@@ -381,9 +500,10 @@ Options:
 ### Action handlers
 
 Built-in:
-- **conversation_queue**: Writes JSON to a queue directory (Serendipity-compatible)
+- **conversation_queue**: Writes JSON to a queue directory (Serendipity-compatible), wired from config via `action_handler`
 - **command**: Runs a shell command, captures stdout/stderr/exit code
 - **subprocess**: Runs a Python script as a subprocess
+- **http_request**: Makes HTTP requests via `urllib` with auth token resolution
 - **custom**: Calls a user-provided Python callable
 
 Custom: Register a Python callable via `register_handler()`:
@@ -406,7 +526,7 @@ register_handler(ActionType.QUEUE_AGENT, MyHandler())
 
 Built-in: `file_missing`, `file_exists`, `file_older_than`, `marker_state`, `queue_empty`, `and`, `or`.
 
-Custom: Register a Python callable that receives a context dict and returns `bool`:
+Custom: Register a Python callable that receives an enriched context dict and returns `bool`. The context includes `target`, `target_dir`, `workspace_dir`, `target_config`, and all flattened target config keys:
 
 ```json
 {
@@ -418,7 +538,8 @@ Custom: Register a Python callable that receives a context dict and returns `boo
 ```python
 # my_module.py
 def my_trigger_function(context):
-    # context contains: target, target_dir, workspace_dir, etc.
+    # context contains: target, target_dir, workspace_dir, target_config,
+    #   plus all flattened target_config keys (e.g. context["slug"], context["test_cmd"])
     return True  # or False
 ```
 
@@ -427,6 +548,20 @@ def my_trigger_function(context):
 #### Conversation queue (`cronpypeline.plugins.conversation_queue`)
 
 Writes JSON files to a conversation queue directory. Compatible with Serendipity's `conversation_queue_monitor`.
+
+**Wired from config** — no manual registration needed:
+
+```json
+"action_handler": {
+  "type": "conversation_queue",
+  "params": {
+    "queue_dir": "/path/to/conversation_queue",
+    "agent_settings_dir": "/path/to/agent_settings"
+  }
+}
+```
+
+Or manually:
 
 ```python
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
@@ -439,6 +574,13 @@ handler = ConversationQueueHandler(
 register_handler(ActionType.QUEUE_AGENT, handler)
 ```
 
+**Features**:
+- Template variables in prompts: `{target}`, `{target_dir}`, `{workspace_dir}`, plus all flattened target config keys
+- Reminder prompts: `reminder_prompt` or `reminder_prompt_template` used when `retry_count > 0`
+- Agent settings loading: if `agent_settings_dir` is set, loads `{agent}.json` config into the queue entry
+- Queue file tracking: returns `queue_file` and `entry_id` in `result.data`, which the pipeline writes into the processing marker for stale detection
+- Optional params: `model`, `temperature`, `max_tokens`
+
 Queue entry format:
 ```json
 {
@@ -448,8 +590,45 @@ Queue entry format:
   "target": "my-repo",
   "timestamp": 1234567890.0,
   "model": "gpt-4",
-  "temperature": 0.7
+  "temperature": 0.7,
+  "max_tokens": 4096
 }
+```
+
+#### HTTP request handler
+
+Makes HTTP requests using `urllib` from the stdlib. Supports `GET`, `POST`, `PATCH`, `PUT`, `DELETE` methods, custom headers, request body, and auth token resolution.
+
+```json
+{
+  "type": "http_request",
+  "params": {
+    "url": "https://api.github.com/repos/{slug}/issues",
+    "method": "GET",
+    "headers": {"Accept": "application/vnd.github+json"},
+    "auth_token_env": "GITHUB_TOKEN"
+  }
+}
+```
+
+**Auth token resolution** (in order):
+1. `auth_token` — direct value (supports template variables)
+2. `auth_token_env` — environment variable name (checked in `context.env` then `os.environ`)
+
+When an auth token is resolved, it's sent as `Authorization: token <value>` header.
+
+#### Report writing utilities (`cronpypeline.reporting`)
+
+Utility functions for writing timestamped reports and managing "latest" symlinks. Used by custom action handlers that need to produce structured output:
+
+```python
+from cronpypeline.reporting import write_report, update_latest_symlink, format_report, ReportConfig
+
+# Write a timestamped report
+path = write_report(directory=target_dir / "reports", filename="report_{timestamp}.md", content="# Results\n...")
+
+# Update latest.md symlink to point to the new report
+update_latest_symlink(directory=target_dir / "reports", symlink_name="latest.md", target_name=path.name)
 ```
 
 #### SWE pipeline plugin (`cronpypeline.plugins.swe_plugin`)
@@ -467,14 +646,14 @@ Custom triggers and actions for the SWE pipeline:
 cronpypeline/
 ├── __init__.py              # Public API exports
 ├── __main__.py              # python -m cronpypeline entry point
-├── pipeline.py              # Pipeline class, tick() orchestration
-├── config.py                # PipelineConfig, Stage, TriggerCondition, ActionSpec
-├── state.py                 # PipelineState, marker resolution
+├── pipeline.py              # Pipeline class, tick() orchestration, chaining, stale handling
+├── config.py                # PipelineConfig, Stage, TriggerCondition, ActionSpec, HookConfig
+├── state.py                 # PipelineState, StageState, TargetState — marker resolution
 ├── lock.py                  # FileLock (fcntl-based, non-blocking)
-├── markers.py               # MarkerSpec, marker creation/reading
-├── triggers.py              # Built-in trigger condition evaluators
-├── actions.py               # Built-in action handlers
-├── targets.py               # Target registry loading
+├── markers.py               # MarkerSpec, marker creation/reading/deletion, template substitution
+├── triggers.py              # Built-in trigger condition evaluators, custom callable resolution
+├── actions.py               # ActionHandler, TickContext, ActionResult, built-in handlers
+├── targets.py               # Target, load_targets, load_targets_with_config
 ├── cli.py                   # argparse CLI entry point
 ├── reporting.py             # Report writing, symlink management
 └── plugins/
@@ -496,7 +675,7 @@ cronpypeline/
 .venv/bin/python -m pytest tests/test_pipeline.py -v
 ```
 
-The test suite includes **243 tests** covering:
+The test suite includes **316 tests** covering:
 - Unit tests for each core class (config parsing, marker resolution, trigger evaluation, lock acquisition, action execution)
 - Integration tests using temp directories as workspaces, simulating multi-tick execution
 - Crash safety tests verifying state recovery from partial filesystem state
@@ -532,7 +711,7 @@ from cronpypeline import TickResult, TickResultStatus
 # - ACTION_FAILED    — action failed
 # - NO_WORK          — nothing to do
 # - DRY_RUN          — would have executed (dry-run mode)
-# - GAVE_UP          — stage exhausted retries
+# - GAVE_UP          — stage exhausted retries or rejections
 # - LOCK_FAILED      — could not acquire lock
 # - DISABLED         — pipeline disabled
 
@@ -543,6 +722,31 @@ result.message      # "Executed Step 1"
 result.stdout       # command output
 result.stderr       # command error output
 result.chained_stages  # ["A1", "A2"] if chaining occurred
+```
+
+### Full public API
+
+```python
+from cronpypeline import (
+    # Core
+    Pipeline, TickResult, TickResultStatus,
+    # Config
+    PipelineConfig, Stage, TriggerCondition, TriggerType,
+    ActionSpec, ActionType, MarkerSpec, TargetSpec, TargetType,
+    ActionHandlerConfig,
+    # State
+    PipelineState, StageState, TargetState,
+    # Markers
+    MarkerType, create_marker, read_marker, marker_exists, delete_marker,
+    # Actions
+    ActionHandler, TickContext, ActionResult, execute_action, register_handler,
+    # Triggers
+    evaluate_trigger,
+    # Targets
+    load_targets, load_targets_with_config, Target,
+    # Lock
+    FileLock,
+)
 ```
 
 ## Migration path
