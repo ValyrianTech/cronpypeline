@@ -738,11 +738,15 @@ Custom hooks for the VNN pipeline:
 - `check_completed_compilations` — pre_tick hook: checks for `.compilation_complete` markers and updates compilation state
 - `cleanup_stale_compilation_markers` — pre_tick hook: removes compilation markers older than the configured timeout
 - `discover_stories` — pre_tick hook: scans workspace for story directories and writes a registry file
+- `vnn_pre_tick` — composite pre_tick hook: runs all VNN pre_tick hooks in sequence (queue empty gate, story discovery, state sync, cleanup, compilation checks). Returns `False` if any hook returns `False`.
+- `vnn_post_tick` — composite post_tick hook: runs all VNN post_tick hooks in sequence (rejection audit trail)
 
 ```json
-"pre_tick": {"callable": "cronpypeline.plugins.vnn_plugin.sync_story_states"},
-"post_tick": {"callable": "cronpypeline.plugins.vnn_plugin.log_rejection"}
+"pre_tick": {"callable": "cronpypeline.plugins.vnn_plugin.vnn_pre_tick"},
+"post_tick": {"callable": "cronpypeline.plugins.vnn_plugin.vnn_post_tick"}
 ```
+
+**VNN pipeline config**: A full example config is available at `configs/vnn_pipeline.json` with all VNN story-level stages (research, writing, publishing, revision) in a detector chain that prioritizes revision before publishing, with composite hooks, target locking, registry-based targets, and Serendipity-compatible queue entries.
 
 ## Package structure
 
@@ -769,7 +773,8 @@ cronpypeline/
     ├── swe_prompts.py         # SWE prompt builders for fix/coder/review agents
     └── vnn_plugin.py          # VNN pipeline hooks (rejection log, story sync, etc.)
 configs/
-└── swe_pipeline.json         # Full SWE pipeline example config
+├── swe_pipeline.json         # Full SWE pipeline example config
+└── vnn_pipeline.json         # Full VNN pipeline example config
 ```
 
 ## Testing
@@ -785,13 +790,15 @@ configs/
 .venv/bin/python -m pytest tests/test_pipeline.py -v
 ```
 
-The test suite includes **433 tests** covering:
+The test suite includes **462 tests** covering:
 - Unit tests for each core class (config parsing, marker resolution, trigger evaluation, lock acquisition, action execution)
 - Integration tests using temp directories as workspaces, simulating multi-tick execution
 - Crash safety tests verifying state recovery from partial filesystem state
 - Plugin tests for conversation queue (Serendipity format, conversation ID continuation, runs_left decrement)
 - SWE plugin tests (issue store, diagnostic parsers, prompt builders, session adapter, pipeline config)
 - VNN plugin tests (rejection audit trail, queue-empty gate, story sync, state cleanup)
+- VNN config tests (stage ordering, markers, hooks, action handler, target lock)
+- E2E migration tests (multi-tick VNN flow, rejection/revision loop, give-up, queue entry format validation, SWE + VNN dry-run validation)
 
 ## Python API reference
 
