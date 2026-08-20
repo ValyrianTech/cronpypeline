@@ -1,265 +1,394 @@
-# cronpypeline Roadmap: VNN + SWE Compatibility
+# cronpypeline Roadmap: Full SWE + VNN Compatibility
 
-> Feature analysis derived from comparing the VNN and SWE pipeline implementations against cronpypeline's current capabilities. Sources: `VNN_compatibility.md`, `SWE_compatibility.md`, `VNN_PIPELINE.md`, `SWE_PIPELINE.md`, `PRD.md`, and the cronpypeline source code.
->
-> **Implementation status**: Tiers 1–4 are fully implemented (316 tests passing). Tier 5 features require no new core code — they are modelable with existing features plus custom callables.
-
----
-
-## Tier 1: Foundation Fixes (trivial, unblock everything)
-
-Small fixes to existing code that's either stubbed, broken, or missing a wiring step.
-
-### 1.1 `config_file` enabled check ✅
-
-**Status**: ✅ **Implemented.** `_tick_inner()` reads the JSON config file at the top of each tick. If `{"enabled": false}`, returns `TickResult(status=DISABLED)`.
-
-**Relevant**: `cronpypeline/pipeline.py` (`_tick_inner` — config_file check)
-
-### 1.2 Wire up `ConversationQueueHandler` from config ✅
-
-**Status**: ✅ **Implemented.** `Pipeline.__init__()` instantiates handlers from `ActionHandlerConfig` via a factory mapping. `"conversation_queue"` → `ConversationQueueHandler(**params)`. Custom handler types can also be registered.
-
-**Relevant**: `cronpypeline/pipeline.py` (`Pipeline.__init__` — action handler wiring)
-
-### 1.3 Implement `http_request` action handler ✅
-
-**Status**: ✅ **Implemented.** `HttpRequestActionHandler` in `actions.py` supports `url`, `method` (GET/POST/PATCH), `headers`, `body`, `auth_token` (resolved from env). Uses `urllib.request` from stdlib. Registered in `_HANDLERS`.
-
-**Relevant**: `cronpypeline/actions.py` (`HttpRequestActionHandler`)
+> Derived from `SWE_compatibility.md` and `VNN_compatibility.md` (re-evaluated August 2026).
+> Tiers 1–4 of the previous roadmap are fully implemented (316 tests passing). This roadmap
+> covers **all remaining work** needed to achieve full compatibility with both existing pipelines.
 
 ---
 
-## Tier 2: Rich Context & Dynamic Capabilities
+## Phase 1: Critical Blocker — Queue Entry Format Fix
 
-These unlock the majority of both pipelines' functionality. Currently everything is too static.
+> **Affects**: SWE + VNN
+> **Priority**: Critical — without this, no agents queued by cronpypeline will be dispatched by Serendipity's `conversation_queue_monitor`.
+> **Effort**: Small–Medium
 
-### 2.1 Enriched `TickContext` ✅
+### 1.1 Extend `ConversationQueueHandler` for Serendipity-compatible format
 
-**Status**: ✅ **Implemented.** `load_targets_with_config()` returns `Target` objects with `name` + `config`. `TickContext` has `target_config: dict` field. Custom triggers receive enriched context including `target_config`. Target config keys are flattened into the trigger context dict for direct access.
+**Problem**: `ConversationQueueHandler` produces entries with `prompt`, `id`, `target`, `timestamp`, `model`, `max_tokens`. Serendipity's `conversation_queue_monitor` expects `content` (not `prompt`), `sender`, `conversation_id`, `folder_name`, `model_name`, `runs_left`. Agent settings are loaded as a nested `agent_config` sub-object instead of flat merged fields.
 
-**Relevant**: `cronpypeline/targets.py` (`load_targets_with_config`, `Target`), `cronpypeline/actions.py` (`TickContext.target_config`), `cronpypeline/triggers.py` (`_eval_custom` — enriched context)
+**Fix**: Add configurable field mapping and default fields to `ConversationQueueHandler`:
 
-### 2.2 Dynamic marker naming ✅
-
-**Status**: ✅ **Implemented.** `MarkerSpec.name` and `MarkerSpec.directory` support template variables (`{target}`, `{target_dir}`, `{workspace_dir}`, plus flattened `target_config` keys). `_format_template()` helper resolves templates at marker creation/read time. All marker functions (`create_marker`, `read_marker`, `marker_exists`, `delete_marker`, `marker_age_seconds`) accept an optional `context` dict. `_build_marker_context()` in `pipeline.py` constructs the context with flattened target config keys.
-
-**Relevant**: `cronpypeline/markers.py` (`_format_template`, `resolve_path`, `resolve_target`), `cronpypeline/pipeline.py` (`_build_marker_context`)
-
-### 2.3 Dynamic symlink targets ✅
-
-**Status**: ✅ **Implemented.** `MarkerSpec.resolve_target()` accepts a context dict and performs template substitution on the symlink target path. Covered by the same `_format_template()` mechanism as dynamic marker naming (2.2).
-
-**Relevant**: `cronpypeline/markers.py` (`resolve_target` — context-aware template substitution)
-
-### 2.4 Dynamic prompt templates ✅
-
-**Status**: ✅ **Implemented.** `ConversationQueueHandler` now includes `target_config` and all flattened `target_config` keys in the template variable dict. Prompts and prompt templates can reference any target config field directly (e.g., `{test_cmd}`, `{slug}`, `{issue_id}`).
-
-**Note**: Advanced template features like `{file:path}` or `{state:stage_id.field}` are not implemented — custom action handlers can build prompts programmatically for those use cases.
-
-**Relevant**: `cronpypeline/plugins/conversation_queue.py` (template variables with flattened target_config)
-
----
-
-## Tier 3: Cross-Stage & Pipeline-Level Mechanisms
-
-These add concepts that don't exist at all in cronpypeline currently.
-
-### 3.1 Cross-stage marker invalidation ✅
-
-**Status**: ✅ **Implemented.** `Stage` has an `invalidates` field — a list of `MarkerSpec`s to delete after the stage's action succeeds. Markers are deleted after completion marker creation, with context-aware template substitution. Supports all marker types (FILE, JSON, SYMLINK).
+1. **Prompt field name**: Make the prompt field name configurable (default `prompt`, set to `content` for Serendipity compatibility)
+2. **Required default fields**: Support injecting static default fields into every queue entry (`sender`, `conversation_id`, `folder_name`, `model_name`, `runs_left`)
+3. **Agent settings flattening**: When loading `{agent}.json` settings, merge fields flat into the entry (e.g. `user_name`, `model_name`, `temperature`) instead of nesting under `agent_config`
+4. **Config-driven**: Expose these as handler params in `action_handler` config so no code change is needed per pipeline
 
 ```json
-"invalidates": [
-  {"type": "file", "name": ".SWE/reports/lint/latest.md"},
-  {"type": "file", "name": "{target}_a.md"}
-]
-```
-
-**Relevant**: `cronpypeline/config.py` (`Stage.invalidates`), `cronpypeline/pipeline.py` (invalidation in `_tick_single_inner` and `_try_chain`)
-
-### 3.2 Pre-tick / post-tick hooks ✅
-
-**Status**: ✅ **Implemented.** `PipelineConfig` has `pre_tick` and `post_tick` fields, each a `HookConfig` with a `callable` string. Pre-tick hooks run before state derivation; returning `False` skips the tick. Post-tick hooks run after the tick completes with the `TickResult`. Hooks are resolved via `resolve_custom_callable()`.
-
-```json
-"pre_tick": {"callable": "vnn_plugin.sync_story_states"},
-"post_tick": {"callable": "vnn_plugin.log_result"}
-```
-
-**Relevant**: `cronpypeline/config.py` (`HookConfig`, `PipelineConfig.pre_tick/post_tick`), `cronpypeline/pipeline.py` (`_tick_single` wraps `_tick_single_inner` with hooks)
-
-### 3.3 Pipeline-wide mode switching ✅
-
-**Status**: ✅ **Implemented.** `PipelineConfig` has a `mode_file` field pointing to a JSON file with `{"mode": "production"}`. `Stage` has a `modes` field listing active modes. Each tick, `_get_current_mode()` reads the mode file. Stages with `modes` set are only active if the current mode matches. Stages without `modes` are always active. Missing or unreadable mode files are treated as no mode restriction.
-
-```json
-"mode_file": ".SWE/github_session.json",
-"stages": [
-  {"id": "C-select", "modes": ["github"], ...},
-  {"id": "A0", ...}
-]
-```
-
-**Relevant**: `cronpypeline/config.py` (`PipelineConfig.mode_file`, `Stage.modes`), `cronpypeline/pipeline.py` (`_get_current_mode`, mode filtering in `_tick_inner` and `_tick_single_inner`)
-
-### 3.4 Cross-stage target lock (active story lock) ✅
-
-**Status**: ✅ **Implemented.** `PipelineConfig` has a `target_lock: bool` field. When enabled, `TargetState` blocks all stages for a target if any stage has a processing marker. This ensures one target flows through the entire pipeline before the next target starts. `TargetState.has_processing` checks all stage states.
-
-```json
-"target_lock": true
-```
-
-**Relevant**: `cronpypeline/config.py` (`PipelineConfig.target_lock`), `cronpypeline/state.py` (`TargetState.target_lock`, `has_processing`, `first_actionable_stage`)
-
----
-
-## Tier 4: Advanced State Management
-
-These refine the existing state model to handle real-world complexity.
-
-### 4.1 Queue-file-based stale detection ✅
-
-**Status**: ✅ **Implemented.** `StageState.derive()` checks for a `queue_file` field in the processing marker's JSON data. If the queue file no longer exists, the stage is immediately marked stale (no waiting for timeout). If the queue file still exists, the stage is not stale (agent still working). Falls back to time-based staleness when no `queue_file` field is present. The pipeline writes `queue_file` from `result.data` into the processing marker after action execution.
-
-**Relevant**: `cronpypeline/state.py` (`StageState.derive` — queue-file-based stale check), `cronpypeline/pipeline.py` (writes `queue_file` to processing marker)
-
-### 4.2 Processing marker enhancement ✅
-
-**Status**: ✅ **Implemented.** After action execution, all `result.data` fields are merged into the processing marker's JSON content. This includes `queue_file` (for stale detection), `entry_id` (for conversation continuation), and any other data the action handler returns.
-
-**Relevant**: `cronpypeline/pipeline.py` (result.data merged into processing marker in `_tick_single_inner` and `_handle_stale`)
-
-### 4.3 Retry prompt support ✅
-
-**Status**: ✅ **Implemented.** `TickContext` has a `retry_count` field. `ConversationQueueHandler` checks `retry_count > 0` and uses `reminder_prompt` or `reminder_prompt_template` from action params if available, falling back to the original prompt. `_handle_stale()` passes the incremented retry count to the `TickContext`.
-
-```json
-"action": {
-  "type": "queue_agent",
+"action_handler": {
+  "type": "conversation_queue",
   "params": {
-    "agent": "NewsResearchAgent",
-    "prompt": "Research this story.",
-    "reminder_prompt": "You previously attempted this but did not complete it. Please finish now."
+    "queue_dir": "/path/to/queue",
+    "agent_settings_dir": "/path/to/agent_settings",
+    "prompt_field": "content",
+    "default_fields": {
+      "sender": "SWE_PIPELINE",
+      "conversation_id": "",
+      "folder_name": "SWE",
+      "model_name": "default_model",
+      "runs_left": 3
+    },
+    "flatten_agent_settings": true
   }
 }
 ```
 
-**Relevant**: `cronpypeline/actions.py` (`TickContext.retry_count`), `cronpypeline/plugins/conversation_queue.py` (reminder prompt logic), `cronpypeline/pipeline.py` (`_handle_stale` — passes retry_count)
+**Relevant code**: `cronpypeline/plugins/conversation_queue.py:28-96` (`ConversationQueueHandler.execute`)
 
-### 4.4 Separate counters (rejection vs. retry) ✅
+### 1.2 Tests for queue entry format
 
-**Status**: ✅ **Implemented.** `Stage` has a `max_rejections` field. A `rejection` marker role (JSON type) stores `rejection_count` in its content. `StageState` reads `rejection_count` from the rejection marker and sets `is_rejected`. When `rejection_count >= max_rejections`, the pipeline creates a `give_up` marker and returns `GAVE_UP`. When below max, the rejection marker is cleared so the stage can be re-processed.
-
-```json
-"markers": {
-  "completion": {"type": "file", "name": "done.md"},
-  "rejection": {"type": "json", "name": ".rejection", "content": {}},
-  "give_up": {"type": "file", "name": ".gave_up"}
-},
-"max_rejections": 5
-```
-
-**Relevant**: `cronpypeline/config.py` (`Stage.max_rejections`), `cronpypeline/state.py` (`StageState.rejection_count`, `is_rejected`), `cronpypeline/pipeline.py` (rejection give-up logic in `_tick_single_inner`)
-
-### 4.5 Issue store / shared work queue
-
-**Status**: No concept of a shared work queue. State is per-stage markers only.
-
-SWE's entire Phase C revolves around `.SWE/issues/` — a directory of markdown files with YAML frontmatter (id, source, type, status, attempts, hivemind_score, rank, etc.). Multiple stages read from and write to this shared store.
-
-**Fix**: This is fundamentally outside cronpypeline's per-stage marker model. Two approaches:
-1. **Plugin approach**: Implement the issue store as a plugin module (`cronpypeline.plugins.issue_store`) with custom trigger callables that read/write issues. The store lives outside cronpypeline's state model. This is the pragmatic path — the issue store is SWE-specific business logic.
-2. **Generalized work queue**: Add a `WorkQueue` abstraction to cronpypeline — a shared, ordered queue of work items with rich metadata that multiple stages can consume from and produce to. This is more general but significantly more complex.
-
-**Recommendation**: Plugin approach. The issue store is too domain-specific to generalize. Enriched `TickContext` (2.1) + custom callables is sufficient.
+Add tests verifying:
+- Default format (backward compatibility — `prompt` field, no extra fields)
+- Serendipity format (`content` field, `sender`/`conversation_id`/`folder_name`/`model_name`/`runs_left` present)
+- Agent settings flattening (flat fields, not nested `agent_config`)
+- `runs_left` decrement or override on retry entries
 
 ---
 
-## Tier 5: Complex Flow Patterns
+## Phase 2: SWE Plugin Implementation
 
-These are the hardest gaps — they challenge cronpypeline's linear detector chain model.
+> **Affects**: SWE only
+> **Priority**: High — required for SWE migration
+> **Effort**: Medium–Large
+> **Approach**: All SWE-specific logic lives in plugin code (`swe_plugin.py` + new modules). No core cronpypeline changes needed except Phase 1.
 
-### 5.1 Circular/loop stage support (revision loop)
+### 2.1 Fix `swe_plugin.py` stub bugs
 
-**Status**: Stages are strictly linear (array order, forward-only). No mechanism for a stage to send work back to a previous stage.
+**Problem**: The existing stubs have known bugs:
 
-VNN has a publish→reject→revise→publish loop (up to 5 times). The revision stage has higher priority than writing, so it naturally fires when `rejected-article.md` exists. This actually *does* work with cronpypeline's detector chain — the revision stage just needs to appear earlier in the array than the writing stage, and its trigger checks for `rejected-article.md`. The "loop" is really just the detector chain re-evaluating from the top each tick.
+- `detect_agent_forgot_marker` line 70: `iterfile()` should be `iterdir()` — `Path.iterfile()` does not exist
+- `detect_open_issue` reads `.SWE/issues.json` (JSON array) — the SWE pipeline uses `.SWE/issues/*.md` with YAML frontmatter
+- `reset_issue_status` reads/writes `.SWE/issues.json` — same format mismatch
+- `cleanup_git_branch` accesses `context.target_dir` as attribute — custom actions receive `(action, context)` where `context` is a `TickContext` (has `.target_dir` attribute, so this may work, but should be verified)
 
-**Analysis**: This may not need a code change at all. The VNN revision loop is modelable as:
-1. Stage "revision" (trigger: `rejected-article.md` exists, no `article.md`, no `.processing`, no `.gave_up`) — appears early in the chain
-2. Stage "publishing" (trigger: `article.md` exists, no `published.json`) — appears later
-3. Publishing action creates `rejected-article.md` (on rejection) → next tick, revision stage fires first
+**Fix**:
+1. Fix `iterfile()` → `iterdir()` in `detect_agent_forgot_marker`
+2. Rewrite `detect_open_issue` to scan `.SWE/issues/*.md` files, parse YAML frontmatter, check for `status: open`
+3. Rewrite `reset_issue_status` to read the specific issue `.md` file, update frontmatter `status` field, write back
+4. Verify `cleanup_git_branch` context access pattern works with `TickContext`
 
-The give-up logic tied to rejection count (4.4) is the real gap, not the loop itself.
+**Relevant code**: `cronpypeline/plugins/swe_plugin.py:14-126`
 
-**Fix**: Likely no new feature needed beyond separate rejection counters (4.4). The detector chain already supports this pattern naturally. Document it as a pattern.
+### 2.2 SWE issue store plugin
 
-### 5.2 Multi-state stage support (C-select/C-gate/C-wait/C-stale)
+**Problem**: SWE's Phase C revolves around an issue store — a directory of markdown files with YAML frontmatter (`id`, `source`, `type`, `status`, `attempts`, `hivemind_score`, `rank`, `repo`, `labels`, `github_number`, `github_url`, `created_at`). Multiple stages read from and write to this shared store. cronpypeline has no concept of a shared work queue.
 
-**Status**: Each stage is a single trigger→action pair. No concept of sub-states within a stage.
+**Fix**: Create `cronpypeline/plugins/issue_store.py` with:
 
-SWE's Phase C fix loop is a 4-way state machine: C-select (no active task + open issue → create task, queue agent), C-gate (coding_complete.marker exists → verify + merge), C-wait (active task, no marker → idle), C-stale (task >30min old → cleanup).
+- `load_issues(target_dir) -> list[Issue]` — scan `.SWE/issues/*.md`, parse YAML frontmatter
+- `get_issue(target_dir, issue_id) -> Issue` — read single issue
+- `set_issue_status(target_dir, issue_id, status) -> bool` — update frontmatter `status` field
+- `create_issue(target_dir, issue_data) -> Issue` — write new issue `.md` file with frontmatter
+- `finalize_issue_outcome(target_dir, issue_id, outcome) -> bool` — set final status, update `attempts`
+- `Issue` dataclass with all frontmatter fields
 
-**Fix**: Two approaches:
-1. **Multiple stages**: Model each sub-state as a separate stage in the config. C-select, C-gate, C-wait, C-stale each have their own trigger and action. They share state via the task directory (which is just files on disk). This works with cronpypeline's existing model if the triggers are expressive enough (needs enriched context — 2.1).
-2. **Composite stage**: Add a `states` field to `Stage` — a dict of named sub-states, each with its own trigger and action. The pipeline evaluates the sub-states in order when the stage is reached. This is more complex but keeps related logic together.
+This module is used by custom trigger callables and custom action handlers in the SWE pipeline config. It lives outside cronpypeline's per-stage marker model.
 
-**Recommendation**: Multiple stages (approach 1). It's more declarative, works with the existing model, and the triggers are just file-existence checks on the shared task directory. The main requirement is enriched context (2.1) for the custom triggers that need to read issue state.
+**Relevant code**: New module `cronpypeline/plugins/issue_store.py`. SWE pipeline reference: `issue_store.py`, `run_issue_fix.py`
 
-### 5.3 Report-writing action handler
+### 2.3 SWE report action handler
 
-**Status**: `CommandActionHandler` runs a command and captures stdout/stderr/exit_code. No report generation, no output parsing, no structured markdown writing.
+**Problem**: SWE's Phase A diagnostics (A1–A9) each run a tool, parse its output, write a structured markdown report with tables/metadata, and create a `latest.md` symlink. `CommandActionHandler` only captures stdout/stderr/exit_code. The `reporting.py` utilities exist but nothing wires them together.
 
-SWE's Phase A diagnostics (A1-A9) each run a tool, parse its output, write a structured markdown report with tables/metadata, and create a `latest.md` symlink. This is ~15-30 lines of parsing logic per stage.
+**Fix**: Create a `run_diagnostic` custom action callable in `swe_plugin.py` (or a new `swe_diagnostics.py` module) that:
 
-**Fix**: Add a `ReportActionHandler` (or extend `CommandActionHandler`) that:
-1. Runs the command (existing behavior)
-2. Passes stdout to a configurable parser callable
-3. Writes a timestamped markdown report from a template
-4. Creates/updates a `latest.md` symlink to the new report
+1. Runs the configured command (using `subprocess.run`)
+2. Passes stdout to a configurable parser callable (e.g. `parse_pytest_output`, `parse_ruff_output`)
+3. Writes a timestamped markdown report via `reporting.write_report()`
+4. Creates/updates `latest.md` symlink via `reporting.update_latest_symlink()`
+5. Returns `ActionResult(success=True, data={"report_path": str(path)})`
+
+Each diagnostic stage (A1–A9) references this callable with different parser and report config:
 
 ```json
 {
   "type": "custom",
   "params": {
-    "callable": "swe_plugin.run_diagnostic",
-    "command": ".venv/bin/pytest -q",
+    "callable": "cronpypeline.plugins.swe_plugin.run_diagnostic",
+    "command": "{test_cmd}",
     "report_dir": ".SWE/reports/test-infra",
-    "parser": "swe_plugin.parse_pytest_output"
+    "parser": "cronpypeline.plugins.swe_plugin.parse_pytest_output"
   }
 }
 ```
 
-Alternatively, this can be a `custom` action handler that does everything. The key is that the `produces` mechanism needs to support dynamic symlink targets (2.3) so `latest.md` can point to the timestamped report.
+Implement parsers for: pytest (A1), ruff (A2), pydocstyle (A3), mypy (A4), bandit/pip-audit (A5), vulture (A6), pytest --cov (A7), radon (A8), pip-audit deps (A9).
 
-**Recommendation**: Implement as custom action handlers in the SWE plugin. The core library needs dynamic symlink support (2.3) but shouldn't bake in report-writing logic — that's domain-specific.
+**Relevant code**: `cronpypeline/reporting.py` (`write_report`, `update_latest_symlink`), new code in `cronpypeline/plugins/swe_plugin.py` or `cronpypeline/plugins/swe_diagnostics.py`
+
+### 2.4 SWE prompt builder
+
+**Problem**: SWE agent prompts include full report contents, issue details (title, body, frontmatter), cycle numbers, integration branch SHA, diff stats, commit hints, and instructions. Target config template variables alone are insufficient for these dynamic prompts.
+
+**Fix**: Create custom action callables in `swe_plugin.py` that build prompts programmatically:
+
+- `queue_fix_agent(action, context)` — reads report file from `action.params["report_path"]`, builds prompt with report contents, queues via `ConversationQueueHandler`
+- `queue_coder_agent(action, context)` — reads issue from issue store, builds prompt with issue details + git state
+- `queue_review_agent(action, context)` — builds prompt with cycle numbers, diff stats, PR state
+
+These callables use `format_template()` with any variables they construct (report contents, issue fields, git SHA, etc.) and then dispatch to the conversation queue.
+
+**Relevant code**: `cronpypeline/plugins/conversation_queue.py` (`ConversationQueueHandler`), `cronpypeline/actions.py` (`format_template`)
+
+### 2.5 GitHub session adapter
+
+**Problem**: SWE's `.SWE/github_session.json` has a richer format than cronpypeline's `mode_file` (`{"mode": "..."}`). The session file contains session metadata, not just a mode string.
+
+**Fix**: Either:
+1. **Adapter hook** (preferred): A `pre_tick` hook that reads `.SWE/github_session.json`, extracts/derives the mode, and writes `{"mode": "github"}` to the `mode_file` path. No core change needed.
+2. **Config mapping**: If the session file can be extended with a `mode` field, point `mode_file` directly at it.
+
+Implement as a `pre_tick` callable: `cronpypeline.plugins.swe_plugin.sync_session_mode`.
+
+**Relevant code**: `cronpypeline/pipeline.py` (`_get_current_mode`, pre-tick hook execution)
+
+### 2.6 SWE pipeline JSON config
+
+**Problem**: No actual SWE pipeline JSON config exists yet — only the compatibility analysis.
+
+**Fix**: Write `configs/swe_pipeline.json` that defines all SWE stages (A0–A9, A2–A7 fix agents, B1, C-select/gate/stale, C-review/publish/pr-review/pr-status/session-terminal) using the plugin callables from 2.1–2.5. This is the integration artifact that proves full compatibility.
+
+### 2.7 Tests for SWE plugin
+
+- Unit tests for issue store (create, read, update status, finalize, attempt counting)
+- Unit tests for each diagnostic parser (pytest, ruff, mypy, etc.)
+- Unit tests for prompt builders (verify report contents, issue details, git state in prompt)
+- Integration test: multi-tick simulation of Phase A → Phase B → Phase C flow
 
 ---
 
-## Summary: Priority-Ordered Feature List
+## Phase 3: VNN Plugin Implementation
 
-| # | Feature | Tier | Impact | Effort | Pipelines | Status |
-|---|---------|------|--------|--------|-----------|--------|
-| 1 | `config_file` enabled check | 1 | High | Trivial | Both | ✅ Done |
-| 2 | Wire `ConversationQueueHandler` from config | 1 | High | Small | Both | ✅ Done |
-| 3 | Implement `http_request` handler | 1 | High | Small | SWE | ✅ Done |
-| 4 | Enriched `TickContext` (per-target config) | 2 | Critical | Medium | Both | ✅ Done |
-| 5 | Pass context to custom triggers | 2 | Critical | Small | Both | ✅ Done |
-| 6 | Dynamic marker naming | 2 | High | Medium | Both | ✅ Done |
-| 7 | Dynamic symlink targets | 2 | High | Small | SWE | ✅ Done |
-| 8 | Cross-stage marker invalidation (`invalidates`) | 3 | High | Small | Both | ✅ Done |
-| 9 | Pre-tick / post-tick hooks | 3 | Medium | Medium | Both | ✅ Done |
-| 10 | Pipeline-wide mode switching (`mode_file`) | 3 | Medium | Small | SWE | ✅ Done |
-| 11 | Cross-stage target lock | 3 | High | Medium | VNN | ✅ Done |
-| 12 | Queue-file-based stale detection | 4 | High | Medium | VNN, SWE | ✅ Done |
-| 13 | Processing marker enhancement (result.data) | 4 | Medium | Small | Both | ✅ Done |
-| 14 | Retry prompt support | 4 | Medium | Small | VNN | ✅ Done |
-| 15 | Separate rejection counter | 4 | Medium | Medium | VNN | ✅ Done |
-| 16 | Dynamic prompt templates | 2 | High | Large | Both | ✅ Done |
+> **Affects**: VNN only
+> **Priority**: Medium — VNN's article processing stages map well already; the remaining work is plugin code + architectural decisions
+> **Effort**: Medium–Large
 
-**All 16 features are implemented** (316 tests passing). Tiers 1–4 are complete.
+### 3.1 VNN queue entry format
 
-The revision loop (5.1) and multi-state stages (5.2) need **no new core features** — they're modelable with the existing detector chain plus enriched context and custom callables. The issue store (4.5) should remain a plugin, not a core feature.
+**Problem**: Same as SWE Gap 0 — VNN's `conversation_queue_monitor` expects `content` (not `prompt`), `sender`, `conversation_id`, `folder_name`, `model_name`, `runs_left`.
+
+**Fix**: Use the same `ConversationQueueHandler` extension from Phase 1.1 with VNN-specific defaults:
+
+```json
+"action_handler": {
+  "type": "conversation_queue",
+  "params": {
+    "queue_dir": "/path/to/queue",
+    "prompt_field": "content",
+    "default_fields": {
+      "sender": "VNN_PIPELINE",
+      "conversation_id": "",
+      "folder_name": "VNN",
+      "model_name": "default_model",
+      "runs_left": 3
+    },
+    "flatten_agent_settings": true
+  }
+}
+```
+
+No additional code needed beyond Phase 1.
+
+### 3.2 Conversation ID continuation
+
+**Problem**: `ConversationQueueHandler` creates a new UUID per queue entry. On retry, the `entry_id` from the processing marker is not reused — the agent gets a new conversation instead of continuing the previous one.
+
+**Fix**: Extend `ConversationQueueHandler.execute()` to check `context.retry_count > 0` and read the previous `entry_id` from the processing marker (available in `context` via the processing marker data). Reuse it as `conversation_id` in the new queue entry.
+
+This requires:
+1. Passing processing marker data into `TickContext` (or a `retry_data` field)
+2. `ConversationQueueHandler` reading `conversation_id` from `retry_data` on retry
+
+**Relevant code**: `cronpypeline/plugins/conversation_queue.py:28-96`, `cronpypeline/actions.py` (`TickContext`), `cronpypeline/pipeline.py` (`_handle_stale` — passes retry context)
+
+### 3.3 Rejection audit trail
+
+**Problem**: cronpypeline tracks rejection count in a simple JSON marker. VNN uses `rejection_log.json` — an append-only audit log with detailed entries (reasons, timestamps, rejection metadata).
+
+**Fix**: Create a `post_tick` hook callable that:
+1. Checks if the tick result involves a rejection (rejection marker was created/updated)
+2. Appends a detailed entry to `rejection_log.json` with timestamp, reason, stage, target
+
+Implement as: `cronpypeline.plugins.vnn_plugin.log_rejection`
+
+No core change needed — `post_tick` hooks receive the `TickResult` and context.
+
+**Relevant code**: `cronpypeline/pipeline.py` (post-tick hook execution)
+
+### 3.4 VNN plugin module
+
+Create `cronpypeline/plugins/vnn_plugin.py` with:
+
+- `sync_story_states(context) -> bool` — pre_tick hook: sync `ranking.json` with filesystem state
+- `cleanup_inconsistent_state(context) -> bool` — pre_tick hook: resolve marker conflicts
+- `check_completed_compilations(context) -> bool` — pre_tick hook: check for completed compilation markers
+- `cleanup_stale_compilation_markers(context) -> bool` — pre_tick hook: remove stale compilation markers
+- `log_rejection(context, result) -> None` — post_tick hook: append to `rejection_log.json`
+- `queue_empty_global(context) -> bool` — pre_tick hook: return `False` if conversation queue is not empty (global queue-empty gate)
+- `discover_stories(context) -> bool` — pre_tick hook: scan story directories, update registry file
+
+### 3.5 Tests for VNN plugin
+
+- Unit tests for each pre_tick hook
+- Unit test for rejection audit trail (verify append-only log entries)
+- Integration test: multi-tick simulation of research → writing → publishing → revision loop
+
+---
+
+## Phase 4: VNN Architectural Gaps
+
+> **Affects**: VNN only
+> **Priority**: Lower — these are fundamental design differences requiring structural solutions
+> **Effort**: Large
+> **Note**: These may require core cronpypeline changes or external coordination. Evaluate whether to address in core or via workarounds before implementing.
+
+### 4.1 Two-level target hierarchy (country + story)
+
+**Problem**: VNN stages 2–3 (compilation, ranking) operate on **countries** within a date directory. Stages 4–6b (research, writing, publishing, revision) operate on **stories** within country/date directories. cronpypeline supports one `TargetSpec` per pipeline — all stages operate on the same set of targets.
+
+**Options**:
+
+1. **Two pipelines** (no core change): Run a country-level pipeline and a story-level pipeline as separate cronpypeline instances. The country pipeline writes compilation/ranking results; the story pipeline picks up stories from the output. Coordinate via filesystem state (shared date directory).
+   - Pro: No core change, clean separation
+   - Con: Two cron entries, two configs, coordination via filesystem
+
+2. **Custom `TargetSpec`** (core change): Add a `hierarchical` target type that can represent both countries and stories. Stages declare which level they operate on.
+   - Pro: Single pipeline, single config
+   - Con: Significant core change to `targets.py` and `state.py`, complex state derivation
+
+3. **Flatten to story-level** (no core change): Handle compilation/ranking outside cronpypeline (external script or pre_tick hook). Only the story-level stages (research → writing → publishing → revision) run in cronpypeline.
+   - Pro: Simplest, leverages cronpypeline's strengths
+   - Con: Compilation/ranking logic lives outside the framework
+
+**Recommendation**: Start with option 3 (flatten to story-level), move to option 1 (two pipelines) if compilation/ranking need to be brought into the framework.
+
+### 4.2 Agent-side directory and marker creation
+
+**Problem**: VNN's research agent runs `load_next_story.py` which creates the story directory, copies `story.json`, creates `ranking_metadata.json`, creates `.processing` marker, and creates `.active_story` lock. The pipeline doesn't know which story will be researched — it queues a generic "research the top pending story" prompt and the agent decides. cronpypeline's model is the opposite: the pipeline knows the target, creates the processing marker, and gives the agent a specific target.
+
+**Options**:
+
+1. **Pre-create story directories** (no core change): An external script or `pre_tick` hook scans compiled stories, creates story directories, and registers them in the registry file before the pipeline runs. The pipeline then operates on pre-created story targets normally.
+   - Pro: No core change, fits cronpypeline's model
+   - Con: Story selection logic duplicated outside the agent
+
+2. **Custom action handler wrapping** (no core change): A custom action handler that wraps the "pick a story" logic — it creates the story directory before the pipeline creates the processing marker. The handler receives the target as a "slot" and fills it with the actual story.
+   - Pro: Keeps logic in the pipeline
+   - Con: Inverts the pipeline's assumption about target identity
+
+3. **Lazy target binding** (core change): Add a mechanism where a stage's action can dynamically determine the actual target at execution time, creating the target directory as a side effect.
+   - Pro: Most flexible
+   - Con: Breaks the invariant that target directories exist before state derivation
+
+**Recommendation**: Option 1 (pre-create via pre_tick hook). The `discover_stories` hook from Phase 3.4 can handle this — it scans compiled stories, creates directories, and updates the registry.
+
+### 4.3 Active story lock richness
+
+**Problem**: VNN's `.active_story` lock is a JSON file with `story_id`, `story_dir`, `locked_at`, and `stage`. It's created by both the pipeline and `load_next_story.py` (agent-side), updated with the current stage as the story progresses, and used for diagnostics and cross-pipeline coordination. cronpypeline's `target_lock: true` only provides blocking — no stage tracking, no agent-side creation, no metadata.
+
+**Options**:
+
+1. **Separate metadata file via hooks** (no core change): Use `target_lock: true` for blocking. Maintain a separate `.active_story` file via `pre_tick`/`post_tick` hooks for diagnostics and agent coordination. The hook updates the `stage` field after each tick.
+   - Pro: No core change, blocking works
+   - Con: Agent-side creation of the lock file (by `load_next_story.py`) needs separate handling
+
+2. **Enrich `target_lock` metadata** (core change): Extend `target_lock` to write a JSON lock file with metadata (target, stage, timestamp) instead of just blocking. Stages update the lock file as they execute.
+   - Pro: Integrated solution
+   - Con: Core change, agent-side creation still needs coordination
+
+**Recommendation**: Option 1 (separate metadata file via hooks). The blocking behavior is equivalent; the metadata is supplementary. Agent-side creation can be handled by having `load_next_story.py` write the `.active_story` file directly (it already does this in VNN).
+
+---
+
+## Phase 5: Integration & Validation
+
+> **Affects**: Both pipelines
+> **Priority**: Medium — proves full compatibility
+> **Effort**: Medium
+
+### 5.1 SWE pipeline JSON config
+
+Write the complete SWE pipeline config (`configs/swe_pipeline.json`) with all stages:
+- Phase A: A0 (briefing), A1–A9 (diagnostics with report handlers), A2–A7 fix agents (with prompt builders)
+- Phase B: B1 (GitHub issue gathering)
+- Phase C: C-select, C-gate, C-stale (as separate stages), C-review-ranking, C-review-issue, C-coverage-issue, C-doc-sync, C-pr-publish, C-pr-review, C-pr-status, C-session-terminal
+- Mode switching for GitHub sessions
+- All triggers, actions, markers, invalidates, modes configured
+
+### 5.2 VNN pipeline JSON config
+
+Write the complete VNN pipeline config (`configs/vnn_pipeline.json`) with all stages:
+- Compilation, ranking (if using two-pipeline approach: separate config)
+- Research, writing, publishing, revision (story-level stages)
+- Pre-tick hooks for state sync, cleanup, story discovery
+- Post-tick hook for rejection audit trail
+- Target lock, rejection tracking, queue-file stale detection
+
+### 5.3 End-to-end migration validation
+
+- Run SWE pipeline config against a test repo in dry-run mode — verify all stages trigger correctly
+- Run VNN pipeline config against a test story directory in dry-run mode — verify all stages trigger correctly
+- Verify queue entries are picked up by Serendipity's `conversation_queue_monitor` (format compatibility)
+- Multi-tick simulation: verify state flows correctly through all stages for both pipelines
+
+### 5.4 Documentation update
+
+- Update `SWE_compatibility.md` — mark all gaps as resolved
+- Update `VNN_compatibility.md` — mark all gaps as resolved
+- Update `README.md` — add SWE and VNN config examples, plugin documentation
+- Document the patterns used (revision loop, multi-state stages, two-level targets)
+
+---
+
+## Summary: Priority-Ordered Work Items
+
+| # | Item | Phase | Pipelines | Effort | Blocks Migration? |
+|---|------|-------|-----------|--------|-------------------|
+| 1 | Queue entry format fix | 1 | Both | Small–Med | **Yes — critical** |
+| 2 | Fix `swe_plugin.py` stub bugs | 2 | SWE | Small | Yes |
+| 3 | SWE issue store plugin | 2 | SWE | Medium | Yes (Phase C) |
+| 4 | SWE report action handler | 2 | SWE | Medium | Yes (Phase A) |
+| 5 | SWE prompt builder | 2 | SWE | Medium | Yes (fix agents) |
+| 6 | GitHub session adapter | 2 | SWE | Small | No |
+| 7 | SWE pipeline JSON config | 5 | SWE | Medium | — (integration) |
+| 8 | Conversation ID continuation | 3 | VNN | Small–Med | No |
+| 9 | Rejection audit trail | 3 | VNN | Small | No |
+| 10 | VNN plugin module | 3 | VNN | Medium | Yes |
+| 11 | VNN pipeline JSON config | 5 | VNN | Medium | — (integration) |
+| 12 | Two-level target hierarchy | 4 | VNN | Large | No (workaround exists) |
+| 13 | Agent-side directory creation | 4 | VNN | Medium | No (workaround exists) |
+| 14 | Active story lock richness | 4 | VNN | Small | No |
+| 15 | End-to-end validation | 5 | Both | Medium | — (validation) |
+| 16 | Documentation update | 5 | Both | Small | — (polish) |
+
+### Dependency graph
+
+```
+Phase 1 (queue format) ──┬──> Phase 2 (SWE plugins) ──┬──> Phase 5 (integration)
+                         │                             │
+                         └──> Phase 3 (VNN plugins) ──┘
+                                   │
+Phase 4 (VNN architectural) ──────┘
+```
+
+Phase 1 unblocks everything. Phases 2 and 3 can proceed in parallel. Phase 4 is independent and lower priority. Phase 5 requires 2 and 3 to be complete.
+
+### What's already done (previous roadmap, Tiers 1–4)
+
+All 16 features from the previous roadmap are implemented (316 tests passing):
+- `config_file` enabled check, `ConversationQueueHandler` wiring, `http_request` handler
+- Enriched `TickContext`, custom trigger context, dynamic marker naming, dynamic symlink targets
+- Dynamic prompt templates with flattened target config keys
+- Cross-stage marker invalidation, pre/post-tick hooks, pipeline mode switching, target lock
+- Queue-file-based stale detection, processing marker enhancement, retry prompts, separate rejection counter
+
+No core cronpypeline changes are needed for Phases 2–3 (all plugin code). Phase 1 requires a small extension to `ConversationQueueHandler`. Phase 4 may require core changes depending on chosen approach.
