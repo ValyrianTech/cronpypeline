@@ -1,6 +1,6 @@
 # VNN Pipeline → cronpypeline Compatibility Analysis
 
-> **Re-evaluated August 2026** after implementation of Tiers 1–4 from the roadmap. All 9 original gaps have been addressed — 7 are fully implemented, 1 is partially implemented, 1 is modelable with existing features.
+> **Re-evaluated August 2026** after implementation of Tiers 1–4 from the roadmap and a fresh independent code review. The original 9 gaps have been addressed — 7 fully implemented, 1 partially implemented, 1 modelable with existing features. The fresh review identified 3 additional architectural gaps and 1 format mismatch that were not in the original analysis.
 >
 > Analysis of how the Valyrian News Network (VNN) article pipeline maps to cronpypeline's abstractions.
 
@@ -34,7 +34,7 @@ These VNN features map directly to cronpypeline abstractions:
 | **Custom triggers/actions** — plugin system | `callable` refs in JSON config, `register_handler()` |
 | **Template variables** — `{target}`, `{target_dir}`, `{workspace_dir}` | Supported in `command`, `cwd`, `prompt_template` |
 | **Pipeline enabled/disabled toggle** | `config_file` checked in `_tick_inner()` — returns `DISABLED` if `{"enabled": false}` |
-| **Cross-stage target lock** (active story lock) | `target_lock: true` in `PipelineConfig` — blocks all stages for a target if any stage has a processing marker |
+| **Cross-stage target lock** (active story lock — blocking behavior) | `target_lock: true` in `PipelineConfig` — blocks all stages for a target if any stage has a processing marker. See [Architectural Gaps](#architectural-gaps--) for limitations vs VNN's richer `.active_story` lock |
 | **Queue-file-based stale detection** | `StageState.derive()` checks `queue_file` in processing marker — immediately stale if queue file gone |
 | **Queue file path in processing marker** | Pipeline merges `result.data` (including `queue_file`) into processing marker after action execution |
 | **Retry/reminder prompts** | `TickContext.retry_count` + `reminder_prompt`/`reminder_prompt_template` in `ConversationQueueHandler` |
@@ -43,8 +43,8 @@ These VNN features map directly to cronpypeline abstractions:
 | **Cross-stage marker invalidation** | `Stage.invalidates` field — list of `MarkerSpec`s to delete after stage action succeeds |
 | **Dynamic marker naming** | `MarkerSpec.resolve_path()` accepts context dict, template-substitutes `{key}` placeholders in name and directory |
 | **Per-target config passthrough** | `load_targets_with_config()` returns `Target` objects with `config`, flattened into `TickContext` and trigger context |
-| **Ranking as inline subprocess** | `subprocess` action type + custom trigger with enriched context (can count unranked stories) |
-| **Compilation threshold detection** | Custom trigger callable with enriched context (can count files, compare metadata) |
+| **Ranking as inline subprocess** | `subprocess` action type + `custom` trigger callable for threshold logic (counting unranked stories requires custom code) |
+| **Compilation threshold detection** | `custom` trigger callable for threshold logic (counting files, comparing metadata requires custom code) |
 | **Post-success cleanup** | `Stage.invalidates` for marker cleanup + `post_tick` hook for arbitrary cleanup logic |
 
 ---
@@ -56,6 +56,8 @@ These VNN features map directly to cronpypeline abstractions:
 | **Queue empty as global pre-condition** | `queue_empty` exists as a per-stage trigger, not a pipeline-level gate | Add `queue_empty` condition to every stage's trigger via `and`, or use `pre_tick` hook to return `False` when queue is not empty |
 | **Dynamic target discovery** | Targets are config-driven (static/registry/single). VNN discovers stories by scanning directories | Use a registry file updated externally (e.g., by a `pre_tick` hook that scans directories and writes the registry) |
 | **Conversation ID continuation** | `ConversationQueueHandler` creates a new UUID per queue entry. `entry_id` is stored in processing marker but not reused on retry | Custom action handler that reads `entry_id` from processing marker and reuses it for retry prompts |
+| **Queue entry format compatibility** | `ConversationQueueHandler` produces entries with fields `id`, `agent`, `prompt`, `target`, `timestamp`, `model`, `temperature`, `max_tokens`. VNN's `conversation_queue_monitor` expects `agent`, `content` (not `prompt`), `sender`, `conversation_id`, `folder_name`, `model_name`, `runs_left` | Custom action handler (or extend `ConversationQueueHandler`) that produces VNN-compatible queue entry format |
+| **Rejection audit trail** | cronpypeline uses a simple JSON rejection marker with `rejection_count` field. VNN uses `rejection_log.json` — an append-only audit log with detailed entries (reasons, timestamps, rejection metadata) | Use `post_tick` hook to append to `rejection_log.json` after rejection marker is created. The give-up counter logic is fully supported; only the audit trail is missing |
 
 ---
 
@@ -159,20 +161,90 @@ All four VNN pre-tick operations (`check_completed_compilations`, `cleanup_stale
 
 ---
 
+## Architectural Gaps (❌)
+
+These are fundamental differences in design between the VNN pipeline and cronpypeline that cannot be resolved with config alone. They were identified during a fresh independent code review and were not part of the original 9-gap analysis.
+
+### A1. Two-Level Target Hierarchy (Country + Story)
+
+**VNN**: Stages 2–3 (compilation, ranking) operate on **countries** within a date directory. Stages 4–6b (research, writing, publishing, revision) operate on **stories** within country/date directories. The pipeline switches between these two target granularities in a single run.
+
+**cronpypeline**: A pipeline has one `TargetSpec` — all stages operate on the same set of targets. There is no concept of hierarchical or mixed-granularity targets.
+
+**Impact**: Cannot model the full VNN pipeline in a single cronpypeline config. Would require either:
+- Two separate pipelines (one country-level, one story-level) coordinated externally
+- A custom `TargetSpec` type that can represent both countries and stories (requires code change to `targets.py`)
+- Flattening to story-level only, with compilation/ranking handled outside cronpypeline
+
+**Relevant**: `cronpypeline/config.py` (`TargetSpec`, `TargetType`), `cronpypeline/targets.py` (`load_targets`, `load_targets_with_config`)
+
+### A2. Agent-Side Directory and Marker Creation
+
+**VNN**: The research agent runs `load_next_story.py` which:
+- Creates the story directory (`STORIES_DIR/{date}/{date}_{country}_rank{N}_{story_id}/`)
+- Copies `story.json` from compiled stories
+- Creates `ranking_metadata.json`
+- Creates the `.processing` marker
+- Creates the `.active_story` lock
+
+The pipeline does **not** know which story will be researched — it queues a generic "go research the top pending story" prompt and the agent decides what to research.
+
+**cronpypeline**: The pipeline creates the processing marker **before** queuing the agent. The target directory is `workspace_dir / target` — the pipeline knows exactly which target it's processing. Agents receive a specific target, not a "pick something" prompt.
+
+**Impact**: The research stage fundamentally doesn't map. In VNN, target selection happens inside the agent; in cronpypeline, target selection happens in the pipeline. This inverts the control flow.
+
+**Possible approaches**:
+- Pre-create all story directories before the pipeline runs (external script)
+- Use a `pre_tick` hook that creates the story directory and registers it as a target
+- Custom action handler that wraps the "pick a story" logic and creates the directory before the pipeline creates the processing marker
+
+### A3. Active Story Lock — Stage Tracking and Agent-Side Creation
+
+**VNN**: The `.active_story` lock is a JSON file containing `story_id`, `story_dir`, `locked_at`, and `stage`. It is:
+- Created by the pipeline **and** by `load_next_story.py` (agent-side)
+- Updated with the current stage as the story progresses
+- Released by checking for `published.json` or `.gave_up` markers
+
+**cronpypeline**: `target_lock: true` simply blocks all stages for a target while any stage has a processing marker. No stage tracking, no agent-side creation, no lock file with metadata.
+
+**Impact**: The blocking behavior is equivalent, but VNN's lock serves additional purposes:
+- **Diagnostics**: The `stage` field shows where the story is in the pipeline
+- **Agent coordination**: `load_next_story.py` checks the lock to avoid picking a story that's already being processed
+- **Cross-pipeline coordination**: The lock lives in the date directory, shared across pipeline invocations
+
+**Workaround**: Use `target_lock: true` for blocking. Use a `pre_tick` hook to maintain a separate `.active_story` file for diagnostics and agent coordination. However, agent-side creation of this lock (by `load_next_story.py`) would need to be handled separately.
+
+---
+
 ## Summary
 
 | Category | Count | Verdict |
 |---|---|---|
 | Fully supported | 27 | Direct mapping or implemented feature |
-| Partially supported | 3 | Workable with minor workarounds |
-| Not supported | 0 | All original gaps resolved |
+| Partially supported | 5 | Workable with workarounds or minor code changes |
+| Architectural gaps | 3 | Fundamental design differences requiring structural solutions |
 
-### Remaining partial items (low impact)
+### Remaining partial items
 
 1. **Queue empty as global pre-condition** — use `and` conditions on each stage or a `pre_tick` hook
 2. **Dynamic target discovery** — use externally-updated registry file + `pre_tick` hook
 3. **Conversation ID continuation** — `entry_id` stored in processing marker but not reused; custom handler needed
+4. **Queue entry format compatibility** — `ConversationQueueHandler` produces entries with different field names than VNN's `conversation_queue_monitor` expects; custom handler or handler extension needed
+5. **Rejection audit trail** — cronpypeline tracks rejection count but not detailed audit log; `post_tick` hook needed for `rejection_log.json`
+
+### Architectural gaps (require structural solutions)
+
+1. **Two-level target hierarchy** — VNN operates on both countries and stories; cronpypeline supports one target type per pipeline. Would require two pipelines or a custom `TargetSpec`.
+2. **Agent-side directory/marker creation** — VNN's research agent creates the story directory and initial markers; cronpypeline's model is pipeline-controlled. Inverts the control flow.
+3. **Active story lock richness** — VNN's `.active_story` tracks stage, is created agent-side, and serves as a coordination point. cronpypeline's `target_lock` provides blocking only.
 
 ### Migration readiness
 
-**VNN is ready for migration to cronpypeline.** All high-impact gaps are resolved. The three remaining partial items have clear workarounds and are low complexity. The revision loop, active story lock, queue-file-based stale detection, rejection counters, and pre-tick hooks — the five most critical VNN-specific features — are all fully implemented.
+**The article processing stages** (research → writing → publishing → revision) map well to cronpypeline's per-target stage model — marker-based state, retry/rejection tracking, and conversation queue integration are all directly supported.
+
+**However, a full migration requires addressing the architectural gaps first:**
+- The **queue entry format mismatch** must be fixed (custom handler or extend `ConversationQueueHandler`) — without this, queued agents won't be picked up by Serendipity's `conversation_queue_monitor`
+- The **two-level target hierarchy** requires deciding whether to use two pipelines or extend `TargetSpec`
+- The **agent-side directory creation** for the research stage requires rethinking the control flow or using a `pre_tick` hook
+
+The three remaining partial items from the original analysis (queue empty, dynamic targets, conversation ID) have clear workarounds. The five new partial items and three architectural gaps identified in the fresh review require more work but are not insurmountable. A phased migration — starting with the story-level stages (writing, publishing, revision) and addressing the country-level stages (compilation, ranking) and research stage separately — is recommended.
