@@ -1,6 +1,6 @@
 # SWE Pipeline vs cronpypeline: Feature Compatibility Analysis
 
-> **Re-evaluated August 2026** after implementation of Tiers 1–4 from the roadmap. Of the 12 original gaps, 8 are fully implemented, 2 are partially implemented, 1 is modelable with existing features, and 1 remains by design (issue store as plugin).
+> **Re-evaluated August 2026** after implementation of Tiers 1–4 from the roadmap and a fresh independent code review. Of the 13 gaps identified, 8 are fully implemented, 2 are partially implemented, 1 is modelable with existing features, 1 remains by design (issue store as plugin), and 1 newly identified critical gap (queue entry format mismatch) requires a plugin fix before migration is viable.
 >
 > **Objective**: Assess how easily the existing SWE pipeline (in `spellbook/apps/Serendipity/SWE/`) could be configured using `cronpypeline`, and whether all necessary features are supported.
 
@@ -78,6 +78,62 @@ cronpypeline is a **config-driven** pipeline framework that:
 ---
 
 ## Gaps: Current Status
+
+### Gap 0: Queue entry format mismatch ❌ (critical — newly identified)
+
+**SWE Pipeline**: The `queue_agent()` function writes JSON files to the conversation queue directory with a format compatible with Serendipity's `conversation_queue_monitor`:
+
+```json
+{
+  "agent": "CoderAgent",
+  "content": "Fix issue...",
+  "sender": "SWE_PIPELINE",
+  "conversation_id": "",
+  "folder_name": "SWE",
+  "model_name": "default_model",
+  "temperature": 0.5,
+  "runs_left": 3
+}
+```
+
+Key fields: `content` (the prompt text), `sender`, `conversation_id`, `folder_name`, `model_name`, `runs_left`.
+
+**cronpypeline**: `ConversationQueueHandler` produces a different format:
+
+```json
+{
+  "id": "uuid",
+  "agent": "CoderAgent",
+  "prompt": "Fix issue...",
+  "target": "my-repo",
+  "timestamp": 1234567890.0,
+  "model": "gpt-4",
+  "temperature": 0.7,
+  "max_tokens": 4096
+}
+```
+
+Key differences:
+- **`prompt` vs `content`** — the prompt text field has a different name
+- **Missing fields**: `sender`, `conversation_id`, `folder_name`, `model_name`, `runs_left` — all required by Serendipity's `conversation_queue_monitor`
+- **Extra fields**: `id`, `target`, `timestamp` — not used by the monitor
+- **Agent settings loading**: SWE loads `settings.json` per agent and merges `user_name`, `model_name`, `temperature` into the entry; cronpypeline loads the full settings as `agent_config` sub-object
+
+**Current status**: ❌ **Not implemented — critical blocker.** Agents queued by cronpypeline would not be picked up by Serendipity's existing `conversation_queue_monitor`. This is a hard blocker for migration.
+
+**Fix**: Extend `ConversationQueueHandler` to support custom field names and additional required fields, or create an SWE-specific subclass that produces the correct format. The handler needs:
+1. `prompt` field renamed to `content` (or configurable field name)
+2. `sender`, `conversation_id`, `folder_name`, `model_name`, `runs_left` fields added (with configurable defaults)
+3. Agent settings loaded and merged as flat fields (not nested `agent_config`)
+
+**Impact**: **Critical.** Without this fix, no agents queued by cronpypeline will be dispatched by Serendipity. This was identified during a fresh code review and was not in the original 12-gap analysis. The same issue affects the VNN pipeline (documented in `VNN_compatibility.md`).
+
+**Relevant code**:
+- SWE pipeline: `queue_agent()` in `run_swe_pipeline.py:132-170`
+- cronpypeline: `ConversationQueueHandler.execute()` in `cronpypeline/plugins/conversation_queue.py:28-96`
+- VNN compatibility: `VNN_compatibility.md` — "Queue entry format compatibility" in Partially Supported section
+
+---
 
 ### Gap 1: Report generation + symlink management ⚠️
 
@@ -420,11 +476,11 @@ The mode file format `{"mode": "github"}` maps to SWE's session file (needs a `m
 
 ### Bottom Line
 
-**The SWE pipeline is now largely viable in cronpypeline.** After implementation of Tiers 1–4 from the roadmap, all 12 original gaps have been addressed: 8 fully implemented, 2 partially implemented, 1 modelable with existing features, and 1 by design (issue store as plugin).
+**The SWE pipeline is largely viable in cronpypeline, with one critical blocker.** After implementation of Tiers 1–4 from the roadmap, 12 of the 13 identified gaps have been addressed: 8 fully implemented, 2 partially implemented, 1 modelable with existing features, and 1 by design (issue store as plugin). However, a fresh code review identified a **critical queue entry format mismatch** (gap 0) that must be fixed before migration is viable — agents queued by cronpypeline would not be picked up by Serendipity's `conversation_queue_monitor`.
 
-The core orchestration patterns (tick-based, detector chain, file lock, chaining, retries) were already aligned. The newly implemented features — enriched custom trigger context, per-target config passthrough, dynamic marker naming, cross-stage invalidation, `http_request` handler, pipeline mode switching, `ConversationQueueHandler` wiring, queue-file-based stale detection, pre/post-tick hooks — cover the vast majority of SWE pipeline needs.
+The core orchestration patterns (tick-based, detector chain, file lock, chaining, retries) were already aligned. The implemented features — enriched custom trigger context, per-target config passthrough, dynamic marker naming, cross-stage invalidation, `http_request` handler, pipeline mode switching, `ConversationQueueHandler` wiring, queue-file-based stale detection, pre/post-tick hooks — cover the vast majority of SWE pipeline needs.
 
-The remaining work is writing SWE-specific **plugin code** (custom triggers, action handlers, issue store module) that uses these now-implemented capabilities. The JSON config would define the stage structure, triggers, and marker wiring, while the plugin code handles SWE-specific logic like report parsing, issue store management, and GitHub session handling.
+The remaining work is writing SWE-specific **plugin code** (custom triggers, action handlers, issue store module) that uses these now-implemented capabilities, plus fixing the queue entry format mismatch. The JSON config would define the stage structure, triggers, and marker wiring, while the plugin code handles SWE-specific logic like report parsing, issue store management, and GitHub session handling.
 
 ### Feature Parity Matrix
 
@@ -436,13 +492,15 @@ The remaining work is writing SWE-specific **plugin code** (custom triggers, act
 | **Phase C fix loop** | `custom` triggers with task dir state, `modes` for session filtering, modelable as multiple stages | Issue store plugin (YAML frontmatter read/write) |
 | **Phase C review/publish** | `http_request` for GitHub API, `file_exists`/`file_missing` triggers, `invalidates`, `subprocess` for scripts | `custom` action for PR state parsing + conditional behavior |
 | **Cross-cutting** | Lock, chaining, dry-run, targets with per-target config, pipeline modes, pre/post-tick hooks, queue-file stale detection | — |
+| **Agent dispatch** | `ConversationQueueHandler` wiring, `queue_file` in processing marker, retry prompts | **Queue entry format fix** — `content` vs `prompt`, missing `sender`/`conversation_id`/`folder_name`/`model_name`/`runs_left` fields |
 
 ### Remaining Work for SWE Migration
 
-The following plugin code needs to be written (no core cronpypeline changes needed):
+The following work is needed, ordered by priority:
 
-1. **SWE report action handler** — `custom` action that runs a command, parses output, writes markdown report via `reporting.py`, creates `latest.md` symlink
-2. **SWE issue store plugin** — YAML frontmatter read/write, status lifecycle, attempt counting (used by custom triggers and actions)
-3. **SWE prompt builder** — `custom` action handler that builds prompts with report contents, issue details, and git state
-4. **Fix `swe_plugin.py` stubs** — `detect_agent_forgot_marker` has `iterfile()` bug (line 70), `detect_open_issue` needs YAML frontmatter support
-5. **GitHub session adapter** — Map `.SWE/github_session.json` format to `mode_file` `{"mode": "..."}` format (or custom pre_tick hook)
+1. **⚠️ CRITICAL: Queue entry format fix** — Extend `ConversationQueueHandler` (or create SWE-specific subclass) to produce entries with `content` (not `prompt`), `sender`, `conversation_id`, `folder_name`, `model_name`, `runs_left` fields. Without this, no agents will be dispatched. The same issue affects VNN.
+2. **SWE report action handler** — `custom` action that runs a command, parses output, writes markdown report via `reporting.py`, creates `latest.md` symlink
+3. **SWE issue store plugin** — YAML frontmatter read/write, status lifecycle, attempt counting (used by custom triggers and actions)
+4. **SWE prompt builder** — `custom` action handler that builds prompts with report contents, issue details, and git state
+5. **Fix `swe_plugin.py` stubs** — `detect_agent_forgot_marker` has `iterfile()` bug (line 70, should be `iterdir()`), `detect_open_issue` reads `issues.json` instead of YAML-frontmatter `.SWE/issues/*.md`, `reset_issue_status` has same format issue
+6. **GitHub session adapter** — Map `.SWE/github_session.json` format to `mode_file` `{"mode": "..."}` format (or custom pre_tick hook)
