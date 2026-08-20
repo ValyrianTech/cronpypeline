@@ -492,15 +492,17 @@ The remaining work is writing SWE-specific **plugin code** (custom triggers, act
 | **Phase C fix loop** | `custom` triggers with task dir state, `modes` for session filtering, modelable as multiple stages | Issue store plugin (YAML frontmatter read/write) |
 | **Phase C review/publish** | `http_request` for GitHub API, `file_exists`/`file_missing` triggers, `invalidates`, `subprocess` for scripts | `custom` action for PR state parsing + conditional behavior |
 | **Cross-cutting** | Lock, chaining, dry-run, targets with per-target config, pipeline modes, pre/post-tick hooks, queue-file stale detection | — |
-| **Agent dispatch** | `ConversationQueueHandler` wiring, `queue_file` in processing marker, retry prompts | **Queue entry format fix** — `content` vs `prompt`, missing `sender`/`conversation_id`/`folder_name`/`model_name`/`runs_left` fields |
+| **Agent dispatch** | `ConversationQueueHandler` wiring, `queue_file` in processing marker, retry prompts, `prompt_field="content"`, `default_fields` with `sender`/`conversation_id`/`folder_name`/`model_name`/`runs_left` | — |
 
 ### Remaining Work for SWE Migration
 
-The following work is needed, ordered by priority:
+All previously identified gaps have been resolved:
 
-1. **⚠️ CRITICAL: Queue entry format fix** — Extend `ConversationQueueHandler` (or create SWE-specific subclass) to produce entries with `content` (not `prompt`), `sender`, `conversation_id`, `folder_name`, `model_name`, `runs_left` fields. Without this, no agents will be dispatched. The same issue affects VNN.
-2. **SWE report action handler** — `custom` action that runs a command, parses output, writes markdown report via `reporting.py`, creates `latest.md` symlink
-3. **SWE issue store plugin** — YAML frontmatter read/write, status lifecycle, attempt counting (used by custom triggers and actions)
-4. **SWE prompt builder** — `custom` action handler that builds prompts with report contents, issue details, and git state
-5. **Fix `swe_plugin.py` stubs** — `detect_agent_forgot_marker` has `iterfile()` bug (line 70, should be `iterdir()`), `detect_open_issue` reads `issues.json` instead of YAML-frontmatter `.SWE/issues/*.md`, `reset_issue_status` has same format issue
-6. **GitHub session adapter** — Map `.SWE/github_session.json` format to `mode_file` `{"mode": "..."}` format (or custom pre_tick hook)
+1. ~~**⚠️ CRITICAL: Queue entry format fix**~~ — ✅ Resolved. `ConversationQueueHandler` now supports `prompt_field="content"`, `default_fields` with `sender`/`conversation_id`/`folder_name`/`model_name`/`runs_left`, and `flatten_agent_settings`. Configured in `configs/swe_pipeline.json`.
+2. ~~**SWE report action handler**~~ — ✅ Resolved. `cronpypeline.plugins.swe_diagnostics.run_diagnostic` implements run → parse → write report → symlink.
+3. ~~**SWE issue store plugin**~~ — ✅ Resolved. YAML frontmatter read/write, status lifecycle, attempt counting implemented in `swe_plugin.py`.
+4. ~~**SWE prompt builder**~~ — ✅ Resolved. `cronpypeline.plugins.swe_prompts` provides `queue_fix_agent`, `queue_coder_agent`, `queue_review_agent`.
+5. ~~**Fix `swe_plugin.py` stubs**~~ — ✅ Resolved. `iterfile()` bug fixed, YAML frontmatter format adopted.
+6. ~~**GitHub session adapter**~~ — ✅ Resolved. `sync_session_mode` pre_tick hook maps `github_session.json` to `mode_file` format.
+
+**Validation**: SWE pipeline config loads and dry-runs correctly (see `tests/test_swe_config.py` — 14 tests, `tests/test_e2e_migration.py` — 3 SWE validation tests). Queue entries are Serendipity-compatible.

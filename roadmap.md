@@ -310,7 +310,7 @@ Created `cronpypeline/plugins/vnn_plugin.py` with all 7 hook callables:
 > **Affects**: Both pipelines
 > **Priority**: Medium — proves full compatibility
 > **Effort**: Medium
-> **Status**: Partially complete — SWE config done (5.1), README updated (5.4 partial)
+> **Status**: ✅ Complete (Phase 4 skipped per user decision)
 
 ### 5.1 SWE pipeline JSON config ✅ Complete
 
@@ -323,28 +323,36 @@ Created `configs/swe_pipeline.json` with all SWE stages:
 
 **Tests**: 14 tests in `tests/test_swe_config.py`
 
-### 5.2 VNN pipeline JSON config ⏳ Pending
+### 5.2 VNN pipeline JSON config ✅ Complete
 
-Write the complete VNN pipeline config (`configs/vnn_pipeline.json`) with all stages:
-- Compilation, ranking (if using two-pipeline approach: separate config)
+Created `configs/vnn_pipeline.json` with all VNN story-level stages:
 - Research, writing, publishing, revision (story-level stages)
-- Pre-tick hooks for state sync, cleanup, story discovery
-- Post-tick hook for rejection audit trail
-- Target lock, rejection tracking, queue-file stale detection
+- Detector chain order: revision → publishing → writing → research
+- Composite `vnn_pre_tick` hook (queue empty gate, story discovery, state sync, cleanup, compilation checks)
+- Composite `vnn_post_tick` hook (rejection audit trail)
+- Target lock, rejection tracking with `max_rejections`, queue-file stale detection
+- Registry-based targets (`.VNN/stories.json`)
+- Serendipity-compatible queue entries (`content` field, `default_fields`)
 
-### 5.3 End-to-end migration validation ⏳ Pending
+**Tests**: 19 tests in `tests/test_vnn_config.py`
 
-- Run SWE pipeline config against a test repo in dry-run mode — verify all stages trigger correctly
-- Run VNN pipeline config against a test story directory in dry-run mode — verify all stages trigger correctly
-- Verify queue entries are picked up by Serendipity's `conversation_queue_monitor` (format compatibility)
-- Multi-tick simulation: verify state flows correctly through all stages for both pipelines
+### 5.3 End-to-end migration validation ✅ Complete
 
-### 5.4 Documentation update ✅ Partial
+- ✅ SWE pipeline config dry-run validated — all stages trigger correctly
+- ✅ VNN pipeline config dry-run validated — all stages trigger correctly
+- ✅ Queue entries verified as Serendipity-compatible (content, sender, conversation_id, folder_name, model_name, runs_left)
+- ✅ Multi-tick simulation: research → writing → publishing flow verified
+- ✅ Rejection/revision loop verified (publishing → rejected → revision → re-publish → published)
+- ✅ Give-up after max_rejections verified
+
+**Tests**: 10 tests in `tests/test_e2e_migration.py`
+
+### 5.4 Documentation update ✅ Complete
 
 - ✅ Update `README.md` — add SWE and VNN config examples, plugin documentation
-- ⏳ Update `SWE_compatibility.md` — mark all gaps as resolved
-- ⏳ Update `VNN_compatibility.md` — mark all gaps as resolved
-- ⏳ Document the patterns used (revision loop, multi-state stages, two-level targets)
+- ✅ Update `SWE_compatibility.md` — all gaps marked as resolved
+- ✅ Update `VNN_compatibility.md` — all partial items marked as resolved, architectural gaps documented as deferred (Phase 4)
+- ✅ Document patterns used: revision loop (detector chain + invalidates), composite hooks (vnn_pre_tick/vnn_post_tick), registry-based targets
 
 ---
 
@@ -362,12 +370,12 @@ Write the complete VNN pipeline config (`configs/vnn_pipeline.json`) with all st
 | 8 | Conversation ID continuation | 3 | VNN | Small–Med | No | ✅ Complete |
 | 9 | Rejection audit trail | 3 | VNN | Small | No | ✅ Complete |
 | 10 | VNN plugin module | 3 | VNN | Medium | Yes | ✅ Complete |
-| 11 | VNN pipeline JSON config | 5 | VNN | Medium | — (integration) | ⏳ Pending |
+| 11 | VNN pipeline JSON config | 5 | VNN | Medium | — (integration) | ✅ Complete |
 | 12 | Two-level target hierarchy | 4 | VNN | Large | No (workaround exists) | ⏳ Pending |
 | 13 | Agent-side directory creation | 4 | VNN | Medium | No (workaround exists) | ⏳ Pending |
 | 14 | Active story lock richness | 4 | VNN | Small | No | ⏳ Pending |
-| 15 | End-to-end validation | 5 | Both | Medium | — (validation) | ⏳ Pending |
-| 16 | Documentation update | 5 | Both | Small | — (polish) | ✅ Partial (README done) |
+| 15 | End-to-end validation | 5 | Both | Medium | — (validation) | ✅ Complete |
+| 16 | Documentation update | 5 | Both | Small | — (polish) | ✅ Complete |
 
 ### Dependency graph
 
@@ -395,4 +403,4 @@ Phase 1 unblocks everything. Phases 2 and 3 can proceed in parallel. Phase 4 is 
 - Phase 2: SWE issue store (YAML frontmatter), diagnostic report handler + 9 parsers, prompt builders (fix/coder/review), GitHub session adapter, full SWE pipeline JSON config
 - Phase 3: Conversation ID continuation (`retry_data` in `TickContext`), rejection audit trail (`log_rejection`), VNN plugin module (7 hook callables)
 
-**Remaining work**: Phase 4 (VNN architectural gaps) and Phase 5.2–5.4 (VNN config, end-to-end validation, compatibility doc updates).
+**Remaining work**: Phase 4 (VNN architectural gaps — deferred per user decision). Phase 5 is complete.

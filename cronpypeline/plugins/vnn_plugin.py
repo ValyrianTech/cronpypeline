@@ -8,6 +8,8 @@ Provides:
 - `check_completed_compilations`: pre_tick hook to check for completed compilations.
 - `cleanup_stale_compilation_markers`: pre_tick hook to remove stale compilation markers.
 - `discover_stories`: pre_tick hook to scan story directories and update registry.
+- `vnn_pre_tick`: composite pre_tick hook that runs all VNN pre_tick hooks in sequence.
+- `vnn_post_tick`: composite post_tick hook that runs all VNN post_tick hooks in sequence.
 """
 
 import json
@@ -240,3 +242,40 @@ def discover_stories(context: dict) -> bool:
     reg_path.write_text(json.dumps({"stories": stories}, indent=2))
 
     return True
+
+
+# --- Composite hooks ---
+
+_VNN_PRE_TICK_HOOKS = [
+    queue_empty_global,
+    discover_stories,
+    sync_story_states,
+    cleanup_inconsistent_state,
+    check_completed_compilations,
+    cleanup_stale_compilation_markers,
+]
+
+_VNN_POST_TICK_HOOKS = [
+    log_rejection,
+]
+
+
+def vnn_pre_tick(context: dict) -> bool:
+    """Composite pre_tick hook: run all VNN pre_tick hooks in sequence.
+
+    Returns False (skip tick) if any hook returns False.
+    Hooks run in order: queue_empty_global, discover_stories, sync_story_states,
+    cleanup_inconsistent_state, check_completed_compilations,
+    cleanup_stale_compilation_markers.
+    """
+    for hook in _VNN_PRE_TICK_HOOKS:
+        result = hook(context)
+        if result is False:
+            return False
+    return True
+
+
+def vnn_post_tick(context: dict, result: ActionResult) -> None:
+    """Composite post_tick hook: run all VNN post_tick hooks in sequence."""
+    for hook in _VNN_POST_TICK_HOOKS:
+        hook(context, result)

@@ -226,11 +226,11 @@ The pipeline does **not** know which story will be researched — it queues a ge
 
 ### Remaining partial items
 
-1. **Queue empty as global pre-condition** — use `and` conditions on each stage or a `pre_tick` hook
-2. **Dynamic target discovery** — use externally-updated registry file + `pre_tick` hook
-3. **Conversation ID continuation** — `entry_id` stored in processing marker but not reused; custom handler needed
-4. **Queue entry format compatibility** — `ConversationQueueHandler` produces entries with different field names than VNN's `conversation_queue_monitor` expects; custom handler or handler extension needed
-5. **Rejection audit trail** — cronpypeline tracks rejection count but not detailed audit log; `post_tick` hook needed for `rejection_log.json`
+1. ~~**Queue empty as global pre-condition**~~ — ✅ Resolved. `queue_empty_global` pre_tick hook in `vnn_plugin.py`, composed into `vnn_pre_tick` composite hook.
+2. ~~**Dynamic target discovery**~~ — ✅ Resolved. `discover_stories` pre_tick hook scans workspace and writes `.VNN/stories.json` registry. Config uses `targets.type = "registry"`.
+3. ~~**Conversation ID continuation**~~ — ✅ Resolved. `entry_id` stored in processing marker and reused as `conversation_id` on retry (implemented in `ConversationQueueHandler`).
+4. ~~**Queue entry format compatibility**~~ — ✅ Resolved. `ConversationQueueHandler` configured with `prompt_field="content"`, `default_fields` including `sender`/`conversation_id`/`folder_name`/`model_name`/`runs_left`.
+5. ~~**Rejection audit trail**~~ — ✅ Resolved. `log_rejection` post_tick hook in `vnn_plugin.py`, composed into `vnn_post_tick` composite hook. Appends to `.VNN/rejection_log.json`.
 
 ### Architectural gaps (require structural solutions)
 
@@ -242,9 +242,18 @@ The pipeline does **not** know which story will be researched — it queues a ge
 
 **The article processing stages** (research → writing → publishing → revision) map well to cronpypeline's per-target stage model — marker-based state, retry/rejection tracking, and conversation queue integration are all directly supported.
 
-**However, a full migration requires addressing the architectural gaps first:**
-- The **queue entry format mismatch** must be fixed (custom handler or extend `ConversationQueueHandler`) — without this, queued agents won't be picked up by Serendipity's `conversation_queue_monitor`
-- The **two-level target hierarchy** requires deciding whether to use two pipelines or extend `TargetSpec`
-- The **agent-side directory creation** for the research stage requires rethinking the control flow or using a `pre_tick` hook
+**All previously identified partial items are now resolved.** The VNN pipeline config (`configs/vnn_pipeline.json`) implements:
+- Story-level stages: research → writing → publishing → revision (detector chain order: revision → publishing → writing → research)
+- Composite `vnn_pre_tick` hook: queue empty gate, story discovery, state sync, cleanup, compilation checks
+- Composite `vnn_post_tick` hook: rejection audit trail
+- `target_lock: true` for active story blocking
+- Registry-based targets (`.VNN/stories.json` updated by `discover_stories` hook)
+- Serendipity-compatible queue entries (`content` field, `sender`/`conversation_id`/`folder_name`/`model_name`/`runs_left`)
+- Rejection/revision loop with `max_rejections` give-up and `invalidates` to clear `rejected-article.md`
 
-The three remaining partial items from the original analysis (queue empty, dynamic targets, conversation ID) have clear workarounds. The five new partial items and three architectural gaps identified in the fresh review require more work but are not insurmountable. A phased migration — starting with the story-level stages (writing, publishing, revision) and addressing the country-level stages (compilation, ranking) and research stage separately — is recommended.
+**The three architectural gaps remain** (Phase 4 — deferred):
+- Two-level target hierarchy (country + story) — workaround: story-level pipeline only, compilation/ranking handled externally
+- Agent-side directory creation — workaround: `discover_stories` hook + pre-existing story directories
+- Active story lock richness — workaround: `target_lock: true` for blocking, `sync_story_states` for diagnostics
+
+**Validation**: VNN pipeline config loads and dry-runs correctly (see `tests/test_vnn_config.py` — 19 tests, `tests/test_e2e_migration.py` — 7 VNN validation tests including multi-tick simulation, rejection/revision loop, give-up, and queue entry format verification).

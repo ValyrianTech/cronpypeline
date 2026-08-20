@@ -353,30 +353,28 @@ class Pipeline:
             if ss.is_stale and ss.is_processing:
                 return self._handle_stale(ss, target, target_dir, target_config, dry_run, verbose)
 
-        # Find first actionable stage
-        stage_state = target_state.first_actionable_stage
-        if stage_state is None:
-            return TickResult(
-                target=target,
-                stage_id=None,
-                status=TickResultStatus.NO_WORK,
-                message="All stages complete or blocked",
-            )
-
-        # Evaluate trigger condition
-        trigger = stage_state.stage.trigger
+        # Find first actionable stage whose trigger condition is met
         trigger_context = {
             "target": target,
             "target_dir": str(target_dir),
             "workspace_dir": str(self.workspace_dir),
             "target_config": target_config,
         }
-        if not evaluate_trigger(trigger, target_dir, context=trigger_context):
+        stage_state = None
+        # If target_lock is enabled, no stage is actionable while any stage is processing
+        if not (self.config.target_lock and target_state.has_processing):
+            for stage in active_stages:
+                ss = target_state.stage_states.get(stage.id)
+                if ss and ss.is_actionable:
+                    if evaluate_trigger(stage.trigger, target_dir, context=trigger_context):
+                        stage_state = ss
+                        break
+        if stage_state is None:
             return TickResult(
                 target=target,
-                stage_id=stage_state.stage.id,
+                stage_id=None,
                 status=TickResultStatus.NO_WORK,
-                message=f"Trigger not met for stage {stage_state.stage.id}",
+                message="All stages complete or blocked",
             )
 
         # Dry run
