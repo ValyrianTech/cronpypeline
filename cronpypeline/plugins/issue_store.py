@@ -1,0 +1,234 @@
+"""SWE issue store plugin — markdown files with YAML frontmatter.
+
+Issues are stored as individual .md files in .SWE/issues/ with YAML frontmatter
+containing metadata fields (id, source, type, status, attempts, etc.) and a
+markdown body with the issue description.
+
+This module uses a simple built-in frontmatter parser (no external YAML dependency).
+"""
+
+from dataclasses import dataclass, field as dc_field
+from pathlib import Path
+from typing import Any, Optional
+
+
+# ─── Frontmatter parsing/serialization ──────────────────────────────────────
+
+
+def _parse_value(raw: str) -> Any:
+    """Parse a single YAML-like scalar value."""
+    raw = raw.strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        inner = raw[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_value(v.strip()) for v in inner.split(",")]
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return raw
+
+
+def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Parse YAML frontmatter from a markdown string.
+
+    Returns (frontmatter_dict, body_text).
+    """
+    if not text.startswith("---"):
+        return {}, text
+
+    lines = text.split("\n")
+    # First line is ---
+    end_idx = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_idx = i
+            break
+
+    if end_idx is None:
+        return {}, text
+
+    fm_lines = lines[1:end_idx]
+    body = "\n".join(lines[end_idx + 1:])
+
+    fm: dict[str, Any] = {}
+    for line in fm_lines:
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        fm[key.strip()] = _parse_value(value)
+
+    return fm, body
+
+
+def _serialize_value(value: Any) -> str:
+    """Serialize a value to YAML-like scalar format."""
+    if isinstance(value, list):
+        return "[" + ", ".join(_serialize_value(v) for v in value) + "]"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return str(value)
+    return str(value)
+
+
+def serialize_frontmatter(fm: dict[str, Any]) -> str:
+    """Serialize a dict to YAML-like frontmatter text (without --- delimiters)."""
+    lines = []
+    for key, value in fm.items():
+        lines.append(f"{key}: {_serialize_value(value)}")
+    return "\n".join(lines) + "\n"
+
+
+# ─── Issue dataclass ────────────────────────────────────────────────────────
+
+
+@dataclass
+class Issue:
+    """A single issue from the SWE issue store."""
+    id: Any
+    status: str = "open"
+    source: Optional[str] = None
+    type: Optional[str] = None
+    attempts: int = 0
+    hivemind_score: Optional[float] = None
+    rank: Optional[int] = None
+    repo: Optional[str] = None
+    labels: list[str] = dc_field(default_factory=list)
+    github_number: Optional[int] = None
+    github_url: Optional[str] = None
+    created_at: Optional[str] = None
+    body: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "id": self.id,
+            "status": self.status,
+            "attempts": self.attempts,
+            "labels": self.labels,
+            "body": self.body,
+        }
+        if self.source is not None:
+            d["source"] = self.source
+        if self.type is not None:
+            d["type"] = self.type
+        if self.hivemind_score is not None:
+            d["hivemind_score"] = self.hivemind_score
+        if self.rank is not None:
+            d["rank"] = self.rank
+        if self.repo is not None:
+            d["repo"] = self.repo
+        if self.github_number is not None:
+            d["github_number"] = self.github_number
+        if self.github_url is not None:
+            d["github_url"] = self.github_url
+        if self.created_at is not None:
+            d["created_at"] = self.created_at
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Issue":
+        return cls(
+            id=d.get("id"),
+            status=d.get("status", "open"),
+            source=d.get("source"),
+            type=d.get("type"),
+            attempts=d.get("attempts", 0),
+            hivemind_score=d.get("hivemind_score"),
+            rank=d.get("rank"),
+            repo=d.get("repo"),
+            labels=d.get("labels", []),
+            github_number=d.get("github_number"),
+            github_url=d.get("github_url"),
+            created_at=d.get("created_at"),
+            body=d.get("body", ""),
+        )
+
+
+# ─── Issue store operations ─────────────────────────────────────────────────
+
+
+def _issues_dir(target_dir: Path | str) -> Path:
+    return Path(target_dir) / ".SWE" / "issues"
+
+
+def _read_issue_file(path: Path) -> Issue:
+    text = path.read_text()
+    fm, body = parse_frontmatter(text)
+    fm["body"] = body
+    return Issue.from_dict(fm)
+
+
+def _write_issue_file(path: Path, issue: Issue) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fm = issue.to_dict()
+    body = fm.pop("body", "")
+    fm_text = serialize_frontmatter(fm)
+    path.write_text(f"---\n{fm_text}---\n{body}")
+
+
+def load_issues(target_dir: Path | str) -> list[Issue]:
+    """Load all issues from .SWE/issues/*.md."""
+    issues_path = _issues_dir(target_dir)
+    if not issues_path.exists():
+        return []
+    issues = []
+    for path in sorted(issues_path.glob("*.md")):
+        issue = _read_issue_file(path)
+        if issue.id is None:
+            continue
+        issues.append(issue)
+    return issues
+
+
+def get_issue(target_dir: Path | str, issue_id: Any) -> Optional[Issue]:
+    """Get a single issue by id. Returns None if not found."""
+    issues = load_issues(target_dir)
+    for issue in issues:
+        if issue.id == issue_id:
+            return issue
+    return None
+
+
+def set_issue_status(target_dir: Path | str, issue_id: Any, status: str) -> bool:
+    """Update an issue's status field. Returns True if updated, False if not found."""
+    issues_path = _issues_dir(target_dir)
+    if not issues_path.exists():
+        return False
+    for path in issues_path.glob("*.md"):
+        issue = _read_issue_file(path)
+        if issue.id == issue_id:
+            issue.status = status
+            _write_issue_file(path, issue)
+            return True
+    return False
+
+
+def create_issue(target_dir: Path | str, issue_data: dict[str, Any], body: str = "") -> Issue:
+    """Create a new issue .md file with frontmatter."""
+    issue = Issue.from_dict(issue_data)
+    issue.body = body
+    filename = f"{issue.id}.md"
+    path = _issues_dir(target_dir) / filename
+    _write_issue_file(path, issue)
+    return issue
+
+
+def finalize_issue_outcome(target_dir: Path | str, issue_id: Any, outcome: str) -> bool:
+    """Set final status and increment attempts counter."""
+    issues_path = _issues_dir(target_dir)
+    if not issues_path.exists():
+        return False
+    for path in issues_path.glob("*.md"):
+        issue = _read_issue_file(path)
+        if issue.id == issue_id:
+            issue.status = outcome
+            issue.attempts += 1
+            _write_issue_file(path, issue)
+            return True
+    return False

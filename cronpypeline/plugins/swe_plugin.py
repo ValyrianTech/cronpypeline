@@ -10,27 +10,17 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from cronpypeline.plugins.issue_store import load_issues, set_issue_status, get_issue
+
 
 def detect_open_issue(context: dict) -> bool:
     """Trigger: detect if there's an open issue to work on.
 
-    Checks for issues with status "open" in the target's issue tracker file.
+    Scans .SWE/issues/*.md files with YAML frontmatter for status: open.
     """
     target_dir = Path(context.get("target_dir", "."))
-    issues_file = target_dir / ".SWE" / "issues.json"
-
-    if not issues_file.exists():
-        return False
-
-    try:
-        issues = json.loads(issues_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return False
-
-    for issue in issues:
-        if issue.get("status") == "open":
-            return True
-    return False
+    issues = load_issues(target_dir)
+    return any(issue.status == "open" for issue in issues)
 
 
 def detect_agent_forgot_marker(context: dict) -> bool:
@@ -67,7 +57,7 @@ def detect_agent_forgot_marker(context: dict) -> bool:
     queue_dir = context.get("queue_dir")
     if queue_dir:
         queue_path = Path(queue_dir)
-        if queue_path.exists() and any(queue_path.iterfile()):
+        if queue_path.exists() and any(queue_path.iterdir()):
             return False
 
     return True
@@ -98,28 +88,53 @@ def cleanup_git_branch(action, context):
 def reset_issue_status(action, context):
     """Action: reset issue status to 'open' after failure.
 
-    Updates the issue's status in issues.json back to 'open'.
+    Updates the issue's frontmatter status field back to 'open'.
     """
     target_dir = context.target_dir
-    issues_file = target_dir / ".SWE" / "issues.json"
-
-    if not issues_file.exists():
-        return False, "No issues file found"
-
-    try:
-        issues = json.loads(issues_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return False, "Could not parse issues file"
-
     issue_id = action.params.get("issue_id")
-    updated = False
-    for issue in issues:
-        if issue.get("id") == issue_id or issue.get("number") == issue_id:
-            issue["status"] = "open"
-            updated = True
-            break
 
-    if updated:
-        issues_file.write_text(json.dumps(issues, indent=2))
+    result = set_issue_status(target_dir, issue_id, "open")
+    if result:
         return True, f"Reset issue {issue_id} to open"
     return False, f"Issue {issue_id} not found"
+
+
+def sync_session_mode(context: dict, mode_file: str = None) -> bool:
+    """Pre-tick hook: sync .SWE/github_session.json to the pipeline mode_file.
+
+    Reads the GitHub session file from the target's .SWE directory. If the session
+    is active, writes {"mode": "github"} to the mode_file. Otherwise writes
+    {"mode": "default"}.
+
+    The mode_file path can be passed explicitly or resolved from target_config.
+
+    Returns True to allow the tick to proceed.
+    """
+    target_dir = Path(context.get("target_dir", "."))
+    session_file = target_dir / ".SWE" / "github_session.json"
+
+    # Resolve mode_file path
+    if mode_file is None:
+        target_config = context.get("target_config", {})
+        mode_file = target_config.get("mode_file")
+
+    if mode_file is None:
+        return True  # No mode_file configured, nothing to sync
+
+    mode_path = Path(mode_file)
+
+    # Determine mode from session file
+    mode = "default"
+    if session_file.exists():
+        try:
+            session_data = json.loads(session_file.read_text())
+            if session_data.get("active") is True:
+                mode = "github"
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Write mode file
+    mode_path.parent.mkdir(parents=True, exist_ok=True)
+    mode_path.write_text(json.dumps({"mode": mode}))
+
+    return True

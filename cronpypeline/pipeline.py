@@ -603,6 +603,7 @@ class Pipeline:
             verbose=verbose,
             target_config=target_config,
             retry_count=retry_count + 1,
+            retry_data=stage_state.processing_data,
         )
         result = execute_action(stage.action, ctx)
 

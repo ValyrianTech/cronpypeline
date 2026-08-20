@@ -34,6 +34,7 @@ class TickContext:
     pipeline: Any = None
     target_config: dict[str, Any] = dc_field(default_factory=dict)
     retry_count: int = 0
+    retry_data: Optional[dict[str, Any]] = None
 
     @property
     def target_dir(self) -> Path:
