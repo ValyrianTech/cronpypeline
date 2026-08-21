@@ -1,6 +1,7 @@
 """Tests for cronpypeline.plugins — conversation_queue and swe_plugin."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from cronpypeline.actions import TickContext
@@ -580,3 +581,308 @@ class TestResetIssueStatus:
 
         result = reset_issue_status(action, ctx)
         assert result[0] is False
+
+
+class TestConversationQueueRetryTemplate:
+    """Tests for conversation queue retry with reminder_prompt_template."""
+
+    def test_retry_uses_reminder_prompt_template(self, tmp_path):
+        """On retry with reminder_prompt_template, should use that template."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            prompt_field="content",
+            default_fields={"sender": "test", "runs_left": 3},
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "Agent",
+                "prompt": "original",
+                "reminder_prompt_template": "Reminder for {target}",
+            },
+        )
+        ctx = TickContext(
+            target="my-repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            retry_count=1,
+        )
+        result = handler.execute(action, ctx)
+        assert result.success is True
+
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        assert entry["content"] == "Reminder for my-repo"
+        assert entry["runs_left"] == 2  # 3 - 1 = 2
+
+    def test_flatten_target_config_keys(self, tmp_path):
+        """Target config keys should be flattened into template variables."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            prompt_field="content",
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "Agent",
+                "prompt_template": "Run {test_cmd} for {target}",
+            },
+        )
+        ctx = TickContext(
+            target="my-repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"test_cmd": "pytest"},
+        )
+        result = handler.execute(action, ctx)
+        assert result.success is True
+
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        assert entry["content"] == "Run pytest for my-repo"
+
+    def test_agent_settings_not_found(self, tmp_path):
+        """When agent settings file doesn't exist, should proceed without error."""
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            prompt_field="content",
+            agent_settings_dir=agent_settings_dir,
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "NonExistentAgent", "prompt": "test"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+        assert result.success is True
+
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        assert "agent_config" not in entry
+
+    def test_agent_settings_flatten_override_only_defaults(self, tmp_path):
+        """Flatten agent settings should only override entries that match defaults."""
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+        (agent_settings_dir / "Agent.json").write_text(json.dumps({
+            "model": "gpt-4",
+            "custom_field": "custom_value",
+        }))
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            prompt_field="content",
+            default_fields={"model": "default_model"},
+            agent_settings_dir=agent_settings_dir,
+            flatten_agent_settings=True,
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "Agent", "prompt": "test", "model": "custom_from_action"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+        assert result.success is True
+
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        # model from action params should not be overridden by agent settings
+        assert entry["model"] == "custom_from_action"
+        # custom_field from agent settings should be added
+        assert entry["custom_field"] == "custom_value"
+
+
+class TestDetectAgentForgotMarkerEdgeCases:
+    """Tests for detect_agent_forgot_marker edge cases."""
+
+    def test_git_log_fails_returns_false(self, tmp_path):
+        """When git log fails, should return False."""
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+        # task.json exists but no coding_complete.marker
+        (target_dir / "task.json").write_text("{}")
+
+        context = {"target_dir": str(target_dir), "queue_dir": ""}
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="")
+            result = detect_agent_forgot_marker(context)
+
+        assert result is False
+
+    def test_git_timeout_returns_false(self, tmp_path):
+        """When git log times out, should return False."""
+        import subprocess as sp
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+        (target_dir / "task.json").write_text("{}")
+
+        context = {"target_dir": str(target_dir), "queue_dir": ""}
+
+        with patch("subprocess.run", side_effect=sp.TimeoutExpired(cmd="git", timeout=10)):
+            result = detect_agent_forgot_marker(context)
+
+        assert result is False
+
+    def test_queue_not_empty_returns_false(self, tmp_path):
+        """When queue has entries, should return False."""
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+        (target_dir / "task.json").write_text("{}")
+
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        (queue_dir / "entry.json").write_text("{}")
+
+        context = {
+            "target_dir": str(target_dir),
+            "queue_dir": str(queue_dir),
+        }
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="abc123\n")
+            result = detect_agent_forgot_marker(context)
+
+        assert result is False
+
+
+class TestCleanupGitBranchEdgeCases:
+    """Tests for cleanup_git_branch edge cases."""
+
+    def test_timeout_does_not_raise(self, tmp_path):
+        """Timeout during git command should not raise."""
+        import subprocess as sp
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={"task_branch": "task-branch"},
+        )
+
+        with patch("subprocess.run", side_effect=sp.TimeoutExpired(cmd="git", timeout=30)):
+            result = cleanup_git_branch(action, ctx)
+
+        assert result[0] is True
+
+    def test_filenotfounderror_does_not_raise(self, tmp_path):
+        """FileNotFoundError (git not installed) should not raise."""
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={"task_branch": "task-branch"},
+        )
+
+        with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
+            result = cleanup_git_branch(action, ctx)
+
+        assert result[0] is True
+
+
+class TestSyncSessionMode:
+    """Tests for sync_session_mode hook."""
+
+    def test_no_mode_file_returns_true(self, tmp_path):
+        """When no mode_file configured, should return True without doing anything."""
+        from cronpypeline.plugins.swe_plugin import sync_session_mode
+
+        context = {"target_dir": str(tmp_path), "target_config": {}}
+        assert sync_session_mode(context) is True
+
+    def test_active_session_writes_github_mode(self, tmp_path):
+        """Active GitHub session should write 'github' mode to mode_file."""
+        from cronpypeline.plugins.swe_plugin import sync_session_mode
+
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+        swe_dir = target_dir / ".SWE"
+        swe_dir.mkdir()
+        (swe_dir / "github_session.json").write_text(json.dumps({"active": True}))
+
+        mode_file = tmp_path / "mode.json"
+
+        context = {
+            "target_dir": str(target_dir),
+            "target_config": {"mode_file": str(mode_file)},
+        }
+        result = sync_session_mode(context)
+        assert result is True
+
+        mode_data = json.loads(mode_file.read_text())
+        assert mode_data["mode"] == "github"
+
+    def test_inactive_session_writes_default_mode(self, tmp_path):
+        """Inactive GitHub session should write 'default' mode to mode_file."""
+        from cronpypeline.plugins.swe_plugin import sync_session_mode
+
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+        swe_dir = target_dir / ".SWE"
+        swe_dir.mkdir()
+        (swe_dir / "github_session.json").write_text(json.dumps({"active": False}))
+
+        mode_file = tmp_path / "mode.json"
+
+        context = {
+            "target_dir": str(target_dir),
+            "target_config": {"mode_file": str(mode_file)},
+        }
+        result = sync_session_mode(context)
+        assert result is True
+
+        mode_data = json.loads(mode_file.read_text())
+        assert mode_data["mode"] == "default"
+
+    def test_no_session_file_writes_default_mode(self, tmp_path):
+        """No session file should write 'default' mode."""
+        from cronpypeline.plugins.swe_plugin import sync_session_mode
+
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        mode_file = tmp_path / "mode.json"
+
+        context = {
+            "target_dir": str(target_dir),
+            "target_config": {"mode_file": str(mode_file)},
+        }
+        result = sync_session_mode(context)
+        assert result is True
+
+        mode_data = json.loads(mode_file.read_text())
+        assert mode_data["mode"] == "default"
+
+    def test_invalid_session_json_writes_default(self, tmp_path):
+        """Invalid JSON in session file should default to 'default' mode."""
+        from cronpypeline.plugins.swe_plugin import sync_session_mode
+
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+        swe_dir = target_dir / ".SWE"
+        swe_dir.mkdir()
+        (swe_dir / "github_session.json").write_text("{invalid json")
+
+        mode_file = tmp_path / "mode.json"
+
+        context = {
+            "target_dir": str(target_dir),
+            "target_config": {"mode_file": str(mode_file)},
+        }
+        result = sync_session_mode(context)
+        assert result is True
+
+        mode_data = json.loads(mode_file.read_text())
+        assert mode_data["mode"] == "default"

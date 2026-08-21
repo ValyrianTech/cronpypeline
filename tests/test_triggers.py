@@ -312,3 +312,110 @@ def check_context(context):
             sys.path.remove(str(tmp_path))
             if "ctx_trigger_mod" in sys.modules:
                 del sys.modules["ctx_trigger_mod"]
+
+
+class TestResolveCustomCallableErrors:
+    """Tests for resolve_custom_callable error paths."""
+
+    def test_resolve_no_dot_raises_value_error(self):
+        """Path without a dot should raise ValueError."""
+        with pytest.raises(ValueError, match="Invalid callable path"):
+            resolve_custom_callable("nomoduleseparator")
+
+
+class TestMarkerStateEdgeCases:
+    """Tests for marker_state trigger edge cases."""
+
+    def test_json_decode_error_returns_false(self, tmp_path):
+        """Invalid JSON in marker file should return False."""
+        (tmp_path / "bad.json").write_text("{invalid json")
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="bad.json",
+            field="status",
+            op="eq",
+            value="open",
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_os_error_returns_false(self, tmp_path):
+        """OSError reading marker file should return False."""
+        import json
+        data = {"status": "open"}
+        (tmp_path / "task.json").write_text(json.dumps(data))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="status",
+            op="eq",
+            value="open",
+        )
+        # Make file unreadable
+        import os
+        os.chmod(tmp_path / "task.json", 0o000)
+        try:
+            assert evaluate_trigger(trigger, tmp_path) is False
+        finally:
+            os.chmod(tmp_path / "task.json", 0o644)
+
+    def test_ne_operator(self, tmp_path):
+        """ne operator should return True when field doesn't match."""
+        (tmp_path / "task.json").write_text(json.dumps({"status": "closed"}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="status",
+            op="ne",
+            value="open",
+        )
+        assert evaluate_trigger(trigger, tmp_path) is True
+
+    def test_gt_operator(self, tmp_path):
+        """gt operator should return True when field is greater than value."""
+        (tmp_path / "task.json").write_text(json.dumps({"count": 10}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="count",
+            op="gt",
+            value=5,
+        )
+        assert evaluate_trigger(trigger, tmp_path) is True
+
+    def test_lte_operator(self, tmp_path):
+        """lte operator should return True when field is less than or equal."""
+        (tmp_path / "task.json").write_text(json.dumps({"count": 5}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="count",
+            op="lte",
+            value=5,
+        )
+        assert evaluate_trigger(trigger, tmp_path) is True
+
+    def test_unknown_operator_raises_value_error(self, tmp_path):
+        """Unknown operator should raise ValueError."""
+        (tmp_path / "task.json").write_text(json.dumps({"status": "open"}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="status",
+            op="contains",
+            value="open",
+        )
+        with pytest.raises(ValueError, match="Unknown operator"):
+            evaluate_trigger(trigger, tmp_path)
+
+
+class TestEvaluateTriggerUnknownType:
+    """Tests for evaluate_trigger with unknown trigger type."""
+
+    def test_unknown_trigger_type_raises_value_error(self, tmp_path):
+        """Unknown trigger type should raise ValueError."""
+        # Create a trigger with an invalid type by bypassing the enum
+        trigger = TriggerCondition(type=TriggerType.FILE_MISSING, path="test.md")
+        # Monkey-patch the type to an unknown value
+        trigger.type = "unknown_type"
+        with pytest.raises(ValueError, match="No evaluator"):
+            evaluate_trigger(trigger, tmp_path)

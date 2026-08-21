@@ -380,3 +380,12 @@ class TestTargetSpec:
         })
         assert t.type == TargetType.SINGLE
         assert t.name == "my-repo"
+
+
+class TestPipelineConfigFromFile:
+    """Tests for PipelineConfig.from_file edge cases."""
+
+    def test_from_file_none_path_raises_value_error(self):
+        """from_file with None path should raise ValueError."""
+        with pytest.raises(ValueError, match="Config file path is required"):
+            PipelineConfig.from_file(None)

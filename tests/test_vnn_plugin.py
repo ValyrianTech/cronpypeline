@@ -369,3 +369,500 @@ class TestVnnCleanupInconsistentState:
         result = cleanup_inconsistent_state(context)
         assert result is not False
         assert (target_dir / "done.md").exists()
+
+
+class TestLogRejectionEdgeCases:
+    """Tests for log_rejection edge cases."""
+
+    def test_log_rejection_no_marker_is_noop(self, tmp_path):
+        """log_rejection should be a no-op when no rejection marker exists."""
+        from cronpypeline.plugins.vnn_plugin import log_rejection
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+            "stage_id": "A0",
+        }
+        result = ActionResult(success=False, stderr="test error")
+
+        # Should not raise
+        log_rejection(context, result)
+        assert not (target_dir / ".VNN" / "rejection_log.json").exists()
+
+    def test_log_rejection_invalid_json_falls_back_to_empty(self, tmp_path):
+        """log_rejection with invalid JSON in rejection marker should use empty data."""
+        from cronpypeline.plugins.vnn_plugin import log_rejection
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        (target_dir / ".rejection").write_text("{invalid json}")
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+            "stage_id": "A0",
+        }
+        result = ActionResult(success=False, stderr="test error")
+
+        log_rejection(context, result)
+
+        log_file = target_dir / ".VNN" / "rejection_log.json"
+        assert log_file.exists()
+        log_data = json.loads(log_file.read_text())
+        assert log_data[0]["rejection_count"] == 0
+        assert log_data[0]["reason"] == "test error"
+
+    def test_log_rejection_existing_log_not_list_reset(self, tmp_path):
+        """log_rejection with non-list existing log should reset to list."""
+        from cronpypeline.plugins.vnn_plugin import log_rejection
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        (target_dir / ".rejection").write_text(json.dumps({"rejection_count": 1, "reason": "bad"}))
+
+        vnn_dir = target_dir / ".VNN"
+        vnn_dir.mkdir()
+        log_file = vnn_dir / "rejection_log.json"
+        log_file.write_text('{"not": "a list"}')
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+            "stage_id": "A0",
+        }
+        result = ActionResult(success=False, stderr="err")
+
+        log_rejection(context, result)
+
+        log_data = json.loads(log_file.read_text())
+        assert isinstance(log_data, list)
+        assert len(log_data) == 1
+
+    def test_log_rejection_with_none_result(self, tmp_path):
+        """log_rejection with None result should not crash."""
+        from cronpypeline.plugins.vnn_plugin import log_rejection
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        (target_dir / ".rejection").write_text(json.dumps({"rejection_count": 2}))
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+            "stage_id": "A0",
+        }
+
+        log_rejection(context, None)
+
+        log_file = target_dir / ".VNN" / "rejection_log.json"
+        assert log_file.exists()
+        log_data = json.loads(log_file.read_text())
+        assert log_data[0]["rejection_count"] == 2
+        assert log_data[0]["reason"] == ""
+
+    def test_log_rejection_os_error_on_read_treated_as_empty(self, tmp_path):
+        """OSError reading existing log should be treated as empty list."""
+        from unittest.mock import patch
+        from cronpypeline.plugins.vnn_plugin import log_rejection
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        (target_dir / ".rejection").write_text(json.dumps({"rejection_count": 1}))
+
+        # Pre-create the log file so log_file.exists() returns True
+        vnn_dir = target_dir / ".VNN"
+        vnn_dir.mkdir(parents=True, exist_ok=True)
+        log_file = vnn_dir / "rejection_log.json"
+        log_file.write_text("corrupt data")
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+            "stage_id": "A0",
+        }
+        result = ActionResult(success=False, stderr="err")
+
+        # Mock only json.loads for the log file read to raise OSError
+        original_json_loads = json.loads
+
+        def mock_loads(data):
+            if isinstance(data, str) and "corrupt" in data:
+                raise OSError("io error")
+            return original_json_loads(data)
+
+        with patch("json.loads", side_effect=mock_loads):
+            log_rejection(context, result)
+
+        # Log should have been written with just the new entry
+        log_data = original_json_loads(log_file.read_text())
+        assert len(log_data) == 1
+        assert log_data[0]["rejection_count"] == 1
+
+
+class TestQueueEmptyGlobalEdgeCases:
+    """Tests for queue_empty_global edge cases."""
+
+    def test_no_queue_dir_returns_true(self):
+        """When no queue_dir in config, should return True."""
+        from cronpypeline.plugins.vnn_plugin import queue_empty_global
+
+        assert queue_empty_global({"target_config": {}}) is True
+
+    def test_nonexistent_queue_dir_returns_true(self, tmp_path):
+        """Non-existent queue dir should return True."""
+        from cronpypeline.plugins.vnn_plugin import queue_empty_global
+
+        context = {"target_config": {"queue_dir": str(tmp_path / "nonexistent")}}
+        assert queue_empty_global(context) is True
+
+    def test_queue_with_json_files_returns_false(self, tmp_path):
+        """Queue dir with .json files should return False."""
+        from cronpypeline.plugins.vnn_plugin import queue_empty_global
+
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        (queue_dir / "entry1.json").write_text("{}")
+
+        context = {"target_config": {"queue_dir": str(queue_dir)}}
+        assert queue_empty_global(context) is False
+
+
+class TestSyncStoryStatesEdgeCases:
+    """Tests for sync_story_states edge cases."""
+
+    def test_existing_ranking_not_dict_reset(self, tmp_path):
+        """Non-dict ranking file should be reset to empty dict."""
+        from cronpypeline.plugins.vnn_plugin import sync_story_states
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        vnn_dir = target_dir / ".VNN"
+        vnn_dir.mkdir()
+        ranking_file = vnn_dir / "ranking.json"
+        ranking_file.write_text('["not", "a", "dict"]')
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+            "workspace_dir": str(tmp_path),
+            "target_config": {},
+        }
+
+        result = sync_story_states(context)
+        assert result is True
+        data = json.loads(ranking_file.read_text())
+        assert isinstance(data, dict)
+        assert "story-1" in data
+
+    def test_existing_ranking_invalid_json_reset(self, tmp_path):
+        """Invalid JSON ranking file should be reset to empty dict."""
+        from cronpypeline.plugins.vnn_plugin import sync_story_states
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        vnn_dir = target_dir / ".VNN"
+        vnn_dir.mkdir()
+        ranking_file = vnn_dir / "ranking.json"
+        ranking_file.write_text("{invalid json")
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+            "workspace_dir": str(tmp_path),
+            "target_config": {},
+        }
+
+        result = sync_story_states(context)
+        assert result is True
+        data = json.loads(ranking_file.read_text())
+        assert isinstance(data, dict)
+
+
+class TestCheckCompletedCompilations:
+    """Tests for check_completed_compilations hook."""
+
+    def test_no_compilation_marker_returns_true(self, tmp_path):
+        """No compilation marker should return True immediately."""
+        from cronpypeline.plugins.vnn_plugin import check_completed_compilations
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+        }
+        assert check_completed_compilations(context) is True
+
+    def test_compilation_marker_updates_state(self, tmp_path):
+        """Compilation marker should update compilation_state.json."""
+        from cronpypeline.plugins.vnn_plugin import check_completed_compilations
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        (target_dir / ".compilation_complete").write_text(
+            json.dumps({"timestamp": 12345, "output": "success"})
+        )
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+        }
+        result = check_completed_compilations(context)
+        assert result is True
+
+        state_file = target_dir / ".VNN" / "compilation_state.json"
+        assert state_file.exists()
+        state = json.loads(state_file.read_text())
+        assert state["story-1"]["completed"] is True
+        assert state["story-1"]["output"] == "success"
+
+    def test_compilation_marker_invalid_json(self, tmp_path):
+        """Invalid JSON in compilation marker should use empty data."""
+        from cronpypeline.plugins.vnn_plugin import check_completed_compilations
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        (target_dir / ".compilation_complete").write_text("{invalid json}")
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+        }
+        result = check_completed_compilations(context)
+        assert result is True
+
+        state_file = target_dir / ".VNN" / "compilation_state.json"
+        state = json.loads(state_file.read_text())
+        assert state["story-1"]["completed"] is True
+        assert state["story-1"]["output"] == ""
+
+    def test_compilation_state_invalid_json_reset(self, tmp_path):
+        """Invalid JSON in compilation_state.json should be reset."""
+        from cronpypeline.plugins.vnn_plugin import check_completed_compilations
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        (target_dir / ".compilation_complete").write_text(json.dumps({"output": "ok"}))
+
+        vnn_dir = target_dir / ".VNN"
+        vnn_dir.mkdir()
+        state_file = vnn_dir / "compilation_state.json"
+        state_file.write_text("{invalid json}")
+
+        context = {
+            "target": "story-1",
+            "target_dir": str(target_dir),
+        }
+        result = check_completed_compilations(context)
+        assert result is True
+        state = json.loads(state_file.read_text())
+        assert isinstance(state, dict)
+
+
+class TestCleanupStaleCompilationMarkers:
+    """Tests for cleanup_stale_compilation_markers hook."""
+
+    def test_no_marker_returns_true(self, tmp_path):
+        """No compilation marker should return True."""
+        from cronpypeline.plugins.vnn_plugin import cleanup_stale_compilation_markers
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+
+        context = {
+            "target_dir": str(target_dir),
+            "target_config": {},
+        }
+        assert cleanup_stale_compilation_markers(context) is True
+
+    def test_stale_marker_removed(self, tmp_path):
+        """Stale compilation marker older than timeout should be removed."""
+        import os
+        import time as _time
+        from cronpypeline.plugins.vnn_plugin import cleanup_stale_compilation_markers
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        marker = target_dir / ".compilation_complete"
+        marker.write_text("{}")
+
+        # Set mtime to 2 hours ago
+        old_time = _time.time() - 7200
+        os.utime(marker, (old_time, old_time))
+
+        context = {
+            "target_dir": str(target_dir),
+            "target_config": {"compilation_timeout_minutes": 60},
+        }
+        result = cleanup_stale_compilation_markers(context)
+        assert result is True
+        assert not marker.exists()
+
+    def test_fresh_marker_kept(self, tmp_path):
+        """Fresh compilation marker should not be removed."""
+        from cronpypeline.plugins.vnn_plugin import cleanup_stale_compilation_markers
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        marker = target_dir / ".compilation_complete"
+        marker.write_text("{}")
+
+        context = {
+            "target_dir": str(target_dir),
+            "target_config": {"compilation_timeout_minutes": 60},
+        }
+        result = cleanup_stale_compilation_markers(context)
+        assert result is True
+        assert marker.exists()
+
+    def test_os_error_on_stat_returns_true(self, tmp_path):
+        """OSError on stat should be caught and return True."""
+        from unittest.mock import patch
+        from cronpypeline.plugins.vnn_plugin import cleanup_stale_compilation_markers
+
+        target_dir = tmp_path / "story-1"
+        target_dir.mkdir()
+        marker = target_dir / ".compilation_complete"
+        marker.write_text("{}")
+
+        context = {
+            "target_dir": str(target_dir),
+            "target_config": {"compilation_timeout_minutes": 60},
+        }
+
+        original_stat = Path.stat
+
+        def stat_side_effect(self, *args, **kwargs):
+            if not hasattr(stat_side_effect, "_called"):
+                stat_side_effect._called = True
+                return original_stat(self, *args, **kwargs)
+            raise OSError("permission denied")
+
+        with patch("pathlib.Path.stat", stat_side_effect):
+            result = cleanup_stale_compilation_markers(context)
+        assert result is True
+        assert marker.exists()
+
+
+class TestDiscoverStories:
+    """Tests for discover_stories hook."""
+
+    def test_discovers_story_directories(self, tmp_path):
+        """Should find directories with .VNN or article.md."""
+        from cronpypeline.plugins.vnn_plugin import discover_stories
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # Story with .VNN
+        (workspace / "story-1").mkdir()
+        (workspace / "story-1" / ".VNN").mkdir()
+
+        # Story with article.md
+        (workspace / "story-2").mkdir()
+        (workspace / "story-2" / "article.md").touch()
+
+        # Not a story
+        (workspace / "not-a-story").mkdir()
+
+        context = {
+            "workspace_dir": str(workspace),
+            "target_config": {},
+        }
+        result = discover_stories(context)
+        assert result is True
+
+        registry = json.loads((workspace / ".VNN" / "stories.json").read_text())
+        assert "story-1" in registry["stories"]
+        assert "story-2" in registry["stories"]
+        assert "not-a-story" not in registry["stories"]
+
+    def test_empty_workspace(self, tmp_path):
+        """Empty workspace should produce empty stories list."""
+        from cronpypeline.plugins.vnn_plugin import discover_stories
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        context = {
+            "workspace_dir": str(workspace),
+            "target_config": {},
+        }
+        result = discover_stories(context)
+        assert result is True
+
+        registry = json.loads((workspace / ".VNN" / "stories.json").read_text())
+        assert registry["stories"] == []
+
+    def test_non_dir_files_skipped(self, tmp_path):
+        """Non-directory files in workspace should be skipped."""
+        from cronpypeline.plugins.vnn_plugin import discover_stories
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # A regular file (not a directory) — should be skipped
+        (workspace / "readme.txt").write_text("not a story")
+
+        # A real story directory
+        (workspace / "story-1").mkdir()
+        (workspace / "story-1" / ".VNN").mkdir()
+
+        context = {
+            "workspace_dir": str(workspace),
+            "target_config": {},
+        }
+        result = discover_stories(context)
+        assert result is True
+
+        registry = json.loads((workspace / ".VNN" / "stories.json").read_text())
+        assert "story-1" in registry["stories"]
+        assert "readme.txt" not in registry["stories"]
+
+
+class TestVnnCompositeHooks:
+    """Tests for composite VNN hooks."""
+
+    def test_vnn_pre_tick_all_pass(self, tmp_path):
+        """vnn_pre_tick should return True when all hooks pass."""
+        from cronpypeline.plugins.vnn_plugin import vnn_pre_tick
+
+        context = {
+            "target_dir": str(tmp_path),
+            "target_config": {},
+            "workspace_dir": str(tmp_path),
+            "target": "test",
+        }
+        assert vnn_pre_tick(context) is True
+
+    def test_vnn_pre_tick_queue_not_empty_returns_false(self, tmp_path):
+        """vnn_pre_tick should return False when queue is not empty."""
+        from cronpypeline.plugins.vnn_plugin import vnn_pre_tick
+
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        (queue_dir / "entry.json").write_text("{}")
+
+        context = {
+            "target_dir": str(tmp_path),
+            "target_config": {"queue_dir": str(queue_dir)},
+            "workspace_dir": str(tmp_path),
+            "target": "test",
+        }
+        assert vnn_pre_tick(context) is False
+
+    def test_vnn_post_tick_runs_all_hooks(self, tmp_path):
+        """vnn_post_tick should run all post-tick hooks without error."""
+        from cronpypeline.plugins.vnn_plugin import vnn_post_tick
+
+        context = {
+            "target_dir": str(tmp_path),
+            "target": "test",
+            "stage_id": "A0",
+        }
+        result = ActionResult(success=False, stderr="err")
+        vnn_post_tick(context, result)

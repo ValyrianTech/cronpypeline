@@ -152,3 +152,15 @@ class TestReportConfig:
         c = ReportConfig.from_dict({})
         assert c.template is not None
         assert c.extension == ".md"
+
+    def test_format_with_keyerror_returns_template(self):
+        """Template with missing key should return the original template."""
+        config = ReportConfig(template="{missing_key}")
+        report = format_report(config)
+        assert report == "{missing_key}"
+
+    def test_format_with_indexerror_returns_template(self):
+        """Template with invalid index should return the original template."""
+        config = ReportConfig(template="{0}")
+        report = format_report(config)
+        assert report == "{0}"

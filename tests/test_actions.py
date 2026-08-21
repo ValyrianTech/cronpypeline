@@ -1,5 +1,6 @@
 """Tests for cronpypeline.actions — built-in action handlers and TickContext."""
 
+import pytest
 from unittest.mock import MagicMock, patch
 
 from cronpypeline.actions import (
@@ -548,6 +549,237 @@ def my_action(action, context):
             sys.path.remove(str(tmp_path))
             if "dispatch_mod" in sys.modules:
                 del sys.modules["dispatch_mod"]
+
+
+class TestFormatTemplateEdgeCases:
+    """Tests for format_template error handling."""
+
+    def test_keyerror_returns_original(self):
+        result = format_template("Hello {missing}", {"name": "world"})
+        assert result == "Hello {missing}"
+
+    def test_indexerror_returns_original(self):
+        result = format_template("Hello {0}", {})
+        assert result == "Hello {0}"
+
+    def test_valueerror_returns_original(self):
+        result = format_template("Hello {name!x}", {"name": "world"})
+        assert result == "Hello {name!x}"
+
+
+class TestActionHandlerBase:
+    """Tests for ActionHandler base class."""
+
+    def test_base_execute_raises_not_implemented(self, tmp_path):
+        handler = ActionResult.__class__  # dummy
+        from cronpypeline.actions import ActionHandler
+        base = ActionHandler()
+        ctx = TickContext(target="test", workspace_dir=tmp_path)
+        action = ActionSpec(type=ActionType.COMMAND, params={})
+        with pytest.raises(NotImplementedError):
+            base.execute(action, ctx)
+
+    def test_base_check_complete_raises_not_implemented(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        base = ActionHandler()
+        ctx = TickContext(target="test", workspace_dir=tmp_path)
+        action = ActionSpec(type=ActionType.COMMAND, params={})
+        with pytest.raises(NotImplementedError):
+            base.check_complete(action, ctx)
+
+
+class TestSubprocessActionHandlerEdgeCases:
+    """Tests for subprocess handler edge cases."""
+
+    def test_subprocess_timeout(self, tmp_path):
+        """Subprocess that times out should return timed_out result."""
+        script = tmp_path / "slow_script.py"
+        script.write_text("import time; time.sleep(10)\n")
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": str(script), "args": []},
+            timeout_seconds=1,
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is False
+        assert result.timed_out is True
+
+    def test_subprocess_non_py_script(self, tmp_path):
+        """Non-.py script should be executed directly."""
+        script = tmp_path / "script.sh"
+        script.write_text("#!/bin/bash\necho 'shell works'\n")
+        script.chmod(0o755)
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": str(script), "args": []},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is True
+        assert "shell works" in result.stdout
+
+
+class TestCustomActionHandlerReturnTypes:
+    """Tests for custom action handler return type adaptation."""
+
+    def test_custom_action_returns_dict(self, tmp_path):
+        module_code = """
+def my_action(action, context):
+    return {"success": True, "output": "dict output", "extra": "data"}
+"""
+        (tmp_path / "dict_mod.py").write_text(module_code)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            action = ActionSpec(
+                type=ActionType.CUSTOM,
+                params={"callable": "dict_mod.my_action"},
+            )
+            ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+            handler = CustomActionHandler()
+            result = handler.execute(action, ctx)
+            assert result.success is True
+            assert "dict output" in result.stdout
+            assert result.data["extra"] == "data"
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "dict_mod" in sys.modules:
+                del sys.modules["dict_mod"]
+
+    def test_custom_action_returns_bool_true(self, tmp_path):
+        module_code = """
+def my_action(action, context):
+    return True
+"""
+        (tmp_path / "bool_mod.py").write_text(module_code)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            action = ActionSpec(
+                type=ActionType.CUSTOM,
+                params={"callable": "bool_mod.my_action"},
+            )
+            ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+            handler = CustomActionHandler()
+            result = handler.execute(action, ctx)
+            assert result.success is True
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "bool_mod" in sys.modules:
+                del sys.modules["bool_mod"]
+
+    def test_custom_action_returns_string(self, tmp_path):
+        module_code = """
+def my_action(action, context):
+    return "just a string"
+"""
+        (tmp_path / "str_mod.py").write_text(module_code)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            action = ActionSpec(
+                type=ActionType.CUSTOM,
+                params={"callable": "str_mod.my_action"},
+            )
+            ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+            handler = CustomActionHandler()
+            result = handler.execute(action, ctx)
+            assert result.success is True
+            assert "just a string" in result.stdout
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "str_mod" in sys.modules:
+                del sys.modules["str_mod"]
+
+
+class TestHttpRequestActionHandlerErrors:
+    """Tests for HTTP request handler error handling."""
+
+    def test_http_error_is_failure(self, tmp_path):
+        """HTTPError (e.g. 500) should be caught and return failure."""
+        from unittest.mock import patch
+        from urllib.error import HTTPError
+        from urllib.request import Request
+
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "http://localhost:12345/api", "method": "GET"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        error = HTTPError("http://localhost:12345/api", 500, "Internal Server Error", {}, None)
+
+        with patch("urllib.request.urlopen", side_effect=error):
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == 500
+        assert "HTTP 500" in result.stderr
+
+    def test_http_error_read_failure(self, tmp_path):
+        """HTTPError where reading body also fails should still return failure."""
+        from unittest.mock import MagicMock, patch
+        from urllib.error import HTTPError
+
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "http://localhost:12345/api", "method": "GET"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        error = HTTPError("http://localhost:12345/api", 503, "Service Unavailable", {}, None)
+        error.read = MagicMock(side_effect=OSError("read failed"))
+
+        with patch("urllib.request.urlopen", side_effect=error):
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == 503
+
+    def test_url_error_socket_timeout(self, tmp_path):
+        """URLError with socket.timeout reason should set timed_out."""
+        import socket
+        from unittest.mock import patch
+        from urllib.error import URLError
+
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "http://localhost:12345/api", "method": "GET"},
+            timeout_seconds=1,
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", side_effect=URLError(socket.timeout("timed out"))):
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.timed_out is True
+
+
+class TestExecuteActionErrors:
+    """Tests for execute_action dispatcher error handling."""
+
+    def test_no_handler_registered_raises_error(self, tmp_path):
+        """Unregistered action type should raise ValueError."""
+        from cronpypeline.actions import _HANDLERS
+        from cronpypeline.config import ActionType as AT
+
+        action = ActionSpec(type=AT.COMMAND, params={"command": "echo test"})
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+
+        # Temporarily remove the command handler
+        saved = _HANDLERS.pop(AT.COMMAND)
+        try:
+            with pytest.raises(ValueError, match="No handler registered"):
+                execute_action(action, ctx)
+        finally:
+            _HANDLERS[AT.COMMAND] = saved
 
 
 class TestActionResult:

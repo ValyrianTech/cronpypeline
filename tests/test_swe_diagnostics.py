@@ -320,3 +320,193 @@ class TestRunDiagnostic:
         result = run_diagnostic(action, ctx)
         content = Path(result.data["report_path"]).read_text()
         assert "exit_code" in content.lower() or "exit" in content.lower()
+
+
+class TestParseCoverageFallback:
+    """Tests for coverage parser fallback regex."""
+
+    def test_parse_coverage_fallback_regex(self):
+        """When TOTAL line not found, should use fallback percentage regex."""
+        output = "Coverage: 75.5%"
+        result = parse_coverage_output(output)
+        assert result["coverage"] == 75.5
+        assert result["status"] == "FAIL"
+
+
+class TestParseBanditNoMatch:
+    """Tests for bandit parser with no match."""
+
+    def test_parse_no_match(self):
+        """When 'Total issues' not found, should default to 0."""
+        output = "Some other bandit output"
+        result = parse_bandit_output(output)
+        assert result["issues"] == 0
+        assert result["status"] == "PASS"
+
+
+class TestParseRadonEdgeCases:
+    """Tests for radon parser edge cases."""
+
+    def test_line_with_less_than_three_parts(self):
+        """Lines with fewer than 3 parts should be skipped."""
+        output = "src/main.py\nsrc/utils.py A 2.0"
+        result = parse_radon_output(output)
+        assert result["average_complexity"] == 2.0
+        assert result["status"] == "PASS"
+
+    def test_value_error_on_complexity(self):
+        """Lines where complexity can't be parsed should be skipped."""
+        output = "src/main.py A not_a_number"
+        result = parse_radon_output(output)
+        assert result["average_complexity"] == 0.0
+        assert result["status"] == "PASS"
+
+
+class TestResolveParser:
+    """Tests for _resolve_parser."""
+
+    def test_empty_path_returns_none(self):
+        from cronpypeline.plugins.swe_diagnostics import _resolve_parser
+        assert _resolve_parser("") is None
+
+    def test_no_module_path_returns_none(self):
+        from cronpypeline.plugins.swe_diagnostics import _resolve_parser
+        assert _resolve_parser("nofunc") is None
+
+    def test_import_error_returns_none(self):
+        from cronpypeline.plugins.swe_diagnostics import _resolve_parser
+        assert _resolve_parser("nonexistent_module_xyz.func") is None
+
+    def test_attribute_error_returns_none(self):
+        from cronpypeline.plugins.swe_diagnostics import _resolve_parser
+        assert _resolve_parser("cronpypeline.plugins.swe_diagnostics.nonexistent_func") is None
+
+
+class TestRunDiagnosticEdgeCases:
+    """Tests for run_diagnostic edge cases."""
+
+    def test_target_config_variables_in_command(self, tmp_path):
+        """Target config keys should be available as template variables in command."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "echo {test_cmd}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"test_cmd": "pytest"},
+        )
+
+        result = run_diagnostic(action, ctx)
+        assert result.success is True
+        content = Path(result.data["report_path"]).read_text()
+        assert "pytest" in content
+
+    def test_command_timeout(self, tmp_path):
+        """Command timeout should return failure with timeout message."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "sleep 300",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+
+        from unittest.mock import patch
+        import subprocess as sp
+        with patch("subprocess.run", side_effect=sp.TimeoutExpired(cmd="sleep 300", timeout=300)):
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is False
+        assert "timed out" in result.stderr.lower()
+
+    def test_os_error_from_command(self, tmp_path):
+        """OSError from command should return failure."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "echo test",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+
+        from unittest.mock import patch
+        with patch("subprocess.run", side_effect=OSError("command failed")):
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is False
+        assert "command failed" in result.stderr
+
+    def test_parser_exception_returns_parse_error(self, tmp_path):
+        """When parser raises an exception, parsed should have parse_error."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        # Create a module with a bad parser
+        import sys
+        bad_parser_mod = tmp_path / "bad_parser_mod.py"
+        bad_parser_mod.write_text("""
+def bad_parser(output):
+    raise ValueError("bad parser")
+""")
+        sys.path.insert(0, str(tmp_path))
+        try:
+            action = ActionSpec(
+                type=ActionType.CUSTOM,
+                params={
+                    "command": "echo test",
+                    "report_dir": str(report_dir),
+                    "parser": "bad_parser_mod.bad_parser",
+                },
+            )
+            ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+
+            result = run_diagnostic(action, ctx)
+            assert result.success is True
+            content = Path(result.data["report_path"]).read_text()
+            assert "parse_error" in content or "UNKNOWN" in content
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "bad_parser_mod" in sys.modules:
+                del sys.modules["bad_parser_mod"]
+
+    def test_report_name_without_timestamp(self, tmp_path):
+        """Report name without {timestamp} should be used as-is."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "echo test",
+                "report_dir": str(report_dir),
+                "report_name": "fixed_name.md",
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+
+        result = run_diagnostic(action, ctx)
+        assert result.success is True
+        report_path = Path(result.data["report_path"])
+        assert report_path.name == "fixed_name.md"

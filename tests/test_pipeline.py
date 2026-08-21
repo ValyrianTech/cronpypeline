@@ -2107,3 +2107,806 @@ class TestTickResult:
         s = str(r)
         assert "repo" in s
         assert "A0" in s
+
+
+class TestTickLockFailures:
+    """Tests for lock acquisition failures."""
+
+    def test_tick_lock_failed(self, tmp_path):
+        """When lock can't be acquired, tick should return LOCK_FAILED."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        # Acquire lock with another FileLock to block
+        from cronpypeline.lock import FileLock
+        other_lock = FileLock(workspace / "pipeline.lock")
+        other_lock.acquire()
+
+        try:
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.LOCK_FAILED
+        finally:
+            other_lock.release()
+
+    def test_tick_all_lock_failed(self, tmp_path):
+        """When lock can't be acquired, tick_all should return LOCK_FAILED."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["my-repo"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        from cronpypeline.lock import FileLock
+        other_lock = FileLock(workspace / "pipeline.lock")
+        other_lock.acquire()
+
+        try:
+            results = pipeline.tick_all()
+            assert len(results) == 1
+            assert results[0].status == TickResultStatus.LOCK_FAILED
+        finally:
+            other_lock.release()
+
+
+class TestTickConfigFileDisabled:
+    """Tests for config_file enabled toggle."""
+
+    def test_config_file_disables_pipeline(self, tmp_path):
+        """When config_file has enabled=False, tick should return DISABLED."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        config_file = tmp_path / "toggle.json"
+        config_file.write_text(json.dumps({"enabled": False}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "config_file": str(config_file),
+            "targets": {"type": "static", "items": ["my-repo"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick()
+        assert result.status == TickResultStatus.DISABLED
+
+    def test_config_file_invalid_json_treated_as_enabled(self, tmp_path):
+        """Invalid JSON in config_file should be treated as enabled."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        config_file = tmp_path / "toggle.json"
+        config_file.write_text("{invalid json")
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "config_file": str(config_file),
+            "targets": {"type": "static", "items": ["my-repo"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick()
+        # Should not be DISABLED — should proceed normally
+        assert result.status != TickResultStatus.DISABLED
+
+    def test_config_file_os_error_treated_as_enabled(self, tmp_path):
+        """OSError reading config_file should be treated as enabled."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        # Point to a path that will cause OSError (use a directory)
+        config_file = tmp_path / "toggle_dir"
+        config_file.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "config_file": str(config_file),
+            "targets": {"type": "static", "items": ["my-repo"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick()
+        assert result.status != TickResultStatus.DISABLED
+
+
+class TestTickNoTargets:
+    """Tests for tick with no targets."""
+
+    def test_tick_no_targets_returns_no_work(self, tmp_path):
+        """When no targets are configured, tick should return NO_WORK."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": []},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick()
+        assert result.status == TickResultStatus.NO_WORK
+
+
+class TestTickModeFiltering:
+    """Tests for mode-based stage filtering in tick."""
+
+    def test_stage_filtered_by_mode(self, tmp_path):
+        """Stages not in current mode should be filtered out."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        mode_file = tmp_path / "mode.json"
+        mode_file.write_text(json.dumps({"mode": "github"}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "mode_file": str(mode_file),
+            "targets": {"type": "static", "items": ["my-repo"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "GitHub Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "modes": ["github"],
+                },
+                {
+                    "id": "A1",
+                    "name": "Default Step",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    "modes": ["default"],
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        # A0 should be actionable (in github mode), A1 should be filtered out
+        assert result.status == TickResultStatus.DRY_RUN
+        assert result.stage_id == "A0"
+
+    def test_mode_file_invalid_json_returns_none(self, tmp_path):
+        """Invalid JSON in mode_file should result in None mode (all stages active)."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        mode_file = tmp_path / "mode.json"
+        mode_file.write_text("{invalid json")
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "mode_file": str(mode_file),
+            "targets": {"type": "static", "items": ["my-repo"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "modes": ["github"],
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        # With None mode, stage.modes check is skipped, so A0 should be actionable
+        assert result.status == TickResultStatus.DRY_RUN
+
+
+class TestTickTargetStateNone:
+    """Tests for target_state being None."""
+
+    def test_target_state_none_returns_no_work(self, tmp_path):
+        """When target_state is None, should return NO_WORK."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        # Don't create the target directory — it will be created by _tick_single_inner
+        # but PipelineState.derive won't have any state for it if all stages are disabled
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["my-repo"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Disabled",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "enabled": False,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        # With all stages disabled, target_state should be None
+        assert result.status == TickResultStatus.NO_WORK
+
+
+class TestTickProducesMarkers:
+    """Tests for action.produces markers."""
+
+    def test_produces_markers_created_on_success(self, tmp_path):
+        """Markers in action.produces should be created after successful action."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {
+                        "type": "command",
+                        "params": {"command": "echo hi"},
+                        "produces": [
+                            {"type": "file", "name": "produced.txt"},
+                        ],
+                    },
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (workspace / "my-repo" / "produced.txt").exists()
+
+
+class TestTickChainEdgeCases:
+    """Tests for chaining edge cases."""
+
+    def test_chain_skips_disabled_stage(self, tmp_path):
+        """Chaining should skip disabled stages."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Disabled Step",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    "enabled": False,
+                },
+                {
+                    "id": "A2",
+                    "name": "Step 3",
+                    "trigger": {"type": "file_missing", "path": "c.md"},
+                    "action": {"type": "command", "params": {"command": "echo c"}},
+                    "markers": {"completion": {"type": "file", "name": "c.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        # A1 should be skipped, A2 should be chained
+        assert "A2" in result.chained_stages
+
+    def test_chain_breaks_on_trigger_failure(self, tmp_path):
+        """Chaining should break when next stage trigger doesn't fire."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Step 2",
+                    "trigger": {"type": "file_exists", "path": "nonexistent.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert result.chained_stages == []
+
+    def test_chain_breaks_on_queue_agent(self, tmp_path):
+        """Chaining should break when next stage is queue_agent."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Queue Step",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert result.chained_stages == []
+
+    def test_chain_breaks_on_action_failure(self, tmp_path):
+        """Chaining should break when chained action fails."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Failing Step",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "false"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        # A0 succeeds, A1 fails — chain breaks
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert result.chained_stages == []
+
+    def test_chain_with_produces_and_invalidates(self, tmp_path):
+        """Chained stage should create produced markers and invalidate others."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+        # Create a marker to be invalidated
+        (target_dir / "old.md").touch()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Step 2",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {
+                        "type": "command",
+                        "params": {"command": "echo b"},
+                        "produces": [{"type": "file", "name": "chained_produced.txt"}],
+                    },
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    "invalidates": [{"type": "file", "name": "old.md"}],
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert "A1" in result.chained_stages
+        assert (target_dir / "chained_produced.txt").exists()
+        assert not (target_dir / "old.md").exists()
+
+    def test_chain_no_chained_returns_normal_result(self, tmp_path):
+        """When chain is enabled but no stages chain, should return normal result."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Step 2",
+                    "trigger": {"type": "file_exists", "path": "nonexistent.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        # A0 succeeds, A1 trigger doesn't fire, no chaining
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert result.stage_id == "A0"
+        assert result.chained_stages == []
+
+
+class TestTickStaleDryRun:
+    """Tests for stale processing marker handling in dry run."""
+
+    def test_stale_dry_run_returns_dry_run(self, tmp_path):
+        """Stale processing marker in dry run should return DRY_RUN."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Create a stale processing marker
+        import json as _json
+        proc_path = target_dir / ".processing"
+        proc_path.write_text(_json.dumps({"queue_file": "/nonexistent/queue/entry.json"}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                    },
+                    "timeout_minutes": 0,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+
+
+class TestTickProcessingRetryCount:
+    """Tests for processing marker retry_count preservation."""
+
+    def test_processing_marker_preserves_retry_count(self, tmp_path):
+        """When re-queueing, retry_count from processing_data should be preserved."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Create a stale processing marker with retry_count
+        import json as _json
+        proc_path = target_dir / ".processing"
+        proc_path.write_text(_json.dumps({
+            "queue_file": "/nonexistent/queue/entry.json",
+            "retry_count": 2,
+        }))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                    },
+                    "timeout_minutes": 0,
+                    "max_retries": 5,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        # Should re-queue with retry_count = 3
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        proc_data = _json.loads(proc_path.read_text())
+        assert proc_data["retry_count"] == 3
+
+
+class TestTickInnerMultiTargetModeFiltering:
+    """Tests for mode-based stage filtering in _tick_inner with multiple targets."""
+
+    def test_multi_target_disabled_stage_skipped(self, tmp_path):
+        """Disabled stages should be skipped in multi-target tick."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo-a").mkdir()
+        (workspace / "repo-b").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo-a", "repo-b"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Disabled",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "enabled": False,
+                },
+                {
+                    "id": "A1",
+                    "name": "Active",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(dry_run=True)
+        # A0 is disabled, A1 should be actionable
+        assert result.status == TickResultStatus.DRY_RUN
+        assert result.stage_id == "A1"
+
+    def test_multi_target_mode_filtered_stage_skipped(self, tmp_path):
+        """Stages not in current mode should be skipped in multi-target tick."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo-a").mkdir()
+        (workspace / "repo-b").mkdir()
+
+        mode_file = tmp_path / "mode.json"
+        mode_file.write_text(json.dumps({"mode": "github"}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "mode_file": str(mode_file),
+            "targets": {"type": "static", "items": ["repo-a", "repo-b"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Default Only",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "modes": ["default"],
+                },
+                {
+                    "id": "A1",
+                    "name": "GitHub",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    "modes": ["github"],
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(dry_run=True)
+        # A0 is filtered out (mode=default, current=github), A1 should be actionable
+        assert result.status == TickResultStatus.DRY_RUN
+        assert result.stage_id == "A1"
+
+
+class TestTickQueueAgentProcessingData:
+    """Tests for queue_agent processing_data retry_count preservation."""
+
+    def test_processing_data_retry_count_preserved(self, tmp_path):
+        """When stage_state has processing_data with retry_count, it should be preserved."""
+        from unittest.mock import patch
+        from cronpypeline.state import PipelineState
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test", "prompt": "do"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                    },
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        class MockQueueHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(success=True, stdout="ok")
+            def check_complete(self, action, context):
+                return False
+
+        register_handler(ActionType.QUEUE_AGENT, MockQueueHandler())
+
+        # Mock PipelineState.derive to inject processing_data while keeping stage actionable
+        original_derive = PipelineState.derive
+
+        def mock_derive(self, targets, target_configs=None):
+            original_derive(self, targets, target_configs)
+            for ts in self.target_states.values():
+                for ss in ts.stage_states.values():
+                    ss.processing_data = {"retry_count": 3}
+                    ss.is_processing = False
+
+        with patch.object(PipelineState, "derive", mock_derive):
+            result = pipeline.tick(target="my-repo")
+
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        proc_path = target_dir / ".processing"
+        assert proc_path.exists()
+        import json as _json
+        proc_data = _json.loads(proc_path.read_text())
+        assert proc_data["retry_count"] == 3
+
+
+class TestTickTargetStateNoneDefensive:
+    """Test the defensive target_state is None check."""
+
+    def test_target_state_none_returns_no_work(self, tmp_path):
+        """When target_state is None (shouldn't normally happen), return NO_WORK."""
+        from unittest.mock import patch
+        from cronpypeline.state import PipelineState
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        # Mock derive to not create target_state for the target
+        def mock_derive(self, targets, target_configs=None):
+            self.target_states = {}
+
+        with patch.object(PipelineState, "derive", mock_derive):
+            result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.NO_WORK
+        assert result.message == "No state derived"

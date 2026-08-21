@@ -3,6 +3,7 @@
 import json
 import os
 import time
+from pathlib import Path
 
 from cronpypeline.markers import (
     MarkerSpec,
@@ -12,6 +13,7 @@ from cronpypeline.markers import (
     marker_exists,
     read_marker,
 )
+from cronpypeline.markers import marker_age_seconds
 
 
 class TestMarkerSpec:
@@ -310,3 +312,72 @@ class TestDynamicMarkerNaming:
         assert (tmp_path / "repo1_done.marker").exists()
         delete_marker(m, tmp_path, context={"target": "repo1"})
         assert not (tmp_path / "repo1_done.marker").exists()
+
+
+class TestMarkerSpecResolveTarget:
+    """Tests for MarkerSpec.resolve_target edge cases."""
+
+    def test_resolve_target_returns_none_when_no_target(self):
+        """resolve_target should return None when target is not set."""
+        m = MarkerSpec(name="test.marker", type=MarkerType.SYMLINK, directory=".")
+        assert m.target is None
+        assert m.resolve_target() is None
+        assert m.resolve_target({"key": "val"}) is None
+
+
+class TestCreateMarkerEdgeCases:
+    """Tests for create_marker error paths."""
+
+    def test_symlink_marker_no_target_raises_value_error(self, tmp_path):
+        """Symlink marker with no target should raise ValueError."""
+        import pytest
+        m = MarkerSpec(name="link.marker", type=MarkerType.SYMLINK, directory=".")
+        with pytest.raises(ValueError, match="no target"):
+            create_marker(m, tmp_path)
+
+    def test_unknown_marker_type_raises_value_error(self, tmp_path):
+        """Unknown marker type should raise ValueError."""
+        import pytest
+        m = MarkerSpec(name="unknown.marker", type=MarkerType.FILE, directory=".")
+        m.type = "unknown_type"
+        with pytest.raises(ValueError, match="Unknown marker type"):
+            create_marker(m, tmp_path)
+
+
+class TestReadMarkerEdgeCases:
+    """Tests for read_marker edge cases."""
+
+    def test_read_json_marker_decode_error_returns_none(self, tmp_path):
+        """read_marker on invalid JSON should return None."""
+        (tmp_path / "bad.json").write_text("{invalid json")
+        m = MarkerSpec(name="bad.json", type=MarkerType.JSON, directory=".")
+        assert read_marker(m, tmp_path) is None
+
+    def test_read_marker_unknown_type_returns_none(self, tmp_path):
+        """read_marker for unknown type should return None."""
+        (tmp_path / "test.marker").touch()
+        m = MarkerSpec(name="test.marker", type=MarkerType.FILE, directory=".")
+        m.type = "unknown_type"
+        assert read_marker(m, tmp_path) is None
+
+
+class TestMarkerAgeSecondsEdgeCases:
+    """Tests for marker_age_seconds edge cases."""
+
+    def test_marker_age_os_error_returns_none(self, tmp_path):
+        """marker_age_seconds should return None on OSError."""
+        from unittest.mock import patch
+        m = MarkerSpec(name="test.marker", type=MarkerType.FILE, directory=".")
+        create_marker(m, tmp_path)
+
+        original_stat = Path.stat
+
+        def stat_side_effect(self, *args, **kwargs):
+            # First call (from path.exists()) succeeds, second call raises
+            if not hasattr(stat_side_effect, "_called"):
+                stat_side_effect._called = True
+                return original_stat(self, *args, **kwargs)
+            raise OSError("permission denied")
+
+        with patch("pathlib.Path.stat", stat_side_effect):
+            assert marker_age_seconds(m, tmp_path) is None

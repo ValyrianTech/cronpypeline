@@ -387,3 +387,182 @@ class TestPipelineState:
         assert "repo2" in targets
         assert "repo3" in targets
         assert "repo1" not in targets
+
+
+class TestStageStateRejectionCount:
+    """Tests for rejection_count derivation from rejection marker."""
+
+    def test_rejection_count_read_from_marker(self, tmp_path):
+        """rejection_count should be read from rejection marker JSON data."""
+        stage = Stage(
+            id="A0",
+            name="Review",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "rejection": MarkerSpec(name=".rejection", type=MarkerType.JSON, content={}),
+            },
+        )
+        # Create rejection marker with rejection_count
+        create_marker(stage.markers["rejection"], tmp_path)
+        import json
+        rej_path = tmp_path / ".rejection"
+        rej_path.write_text(json.dumps({"rejection_count": 3, "reason": "bad"}))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_rejected is True
+        assert state.rejection_count == 3
+
+
+class TestStageStateProcessingQueueFile:
+    """Tests for processing staleness with queue_file."""
+
+    def test_processing_with_nonexistent_queue_file_is_stale(self, tmp_path):
+        """Processing marker with queue_file that doesn't exist should be stale."""
+        stage = Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+        import json
+        proc_path = tmp_path / ".processing"
+        proc_path.write_text(json.dumps({"queue_file": "/nonexistent/queue/entry.json"}))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is True
+
+    def test_processing_with_existing_queue_file_not_stale(self, tmp_path):
+        """Processing marker with queue_file that exists should not be stale."""
+        stage = Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+        queue_file = tmp_path / "queue" / "entry.json"
+        queue_file.parent.mkdir()
+        queue_file.touch()
+
+        import json
+        proc_path = tmp_path / ".processing"
+        proc_path.write_text(json.dumps({"queue_file": str(queue_file)}))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is False
+
+
+class TestTargetStateDisabledStage:
+    """Tests for disabled stages in TargetState."""
+
+    def test_disabled_stage_skipped_in_derive(self, tmp_path):
+        """Disabled stages should not appear in stage_states."""
+        stage1 = Stage(
+            id="A0",
+            name="Disabled",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo a"}),
+            markers={"completion": MarkerSpec(name="a.md", type=MarkerType.FILE)},
+            enabled=False,
+        )
+        stage2 = Stage(
+            id="A1",
+            name="Active",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="b.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo b"}),
+            markers={"completion": MarkerSpec(name="b.md", type=MarkerType.FILE)},
+        )
+        ts = TargetState(target="repo", stages=[stage1, stage2])
+        ts.derive(tmp_path)
+        assert "A0" not in ts.stage_states
+        assert "A1" in ts.stage_states
+
+    def test_disabled_stage_skipped_in_first_actionable(self, tmp_path):
+        """Disabled stages should be skipped in first_actionable_stage."""
+        stage1 = Stage(
+            id="A0",
+            name="Disabled",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo a"}),
+            markers={"completion": MarkerSpec(name="a.md", type=MarkerType.FILE)},
+            enabled=False,
+        )
+        stage2 = Stage(
+            id="A1",
+            name="Active",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="b.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo b"}),
+            markers={"completion": MarkerSpec(name="b.md", type=MarkerType.FILE)},
+        )
+        ts = TargetState(target="repo", stages=[stage1, stage2])
+        ts.derive(tmp_path)
+        first = ts.first_actionable_stage
+        assert first is not None
+        assert first.stage.id == "A1"
+
+
+class TestTargetStateTargetLock:
+    """Tests for target_lock behavior."""
+
+    def test_target_lock_blocks_actionable_when_processing(self, tmp_path):
+        """With target_lock, no stage should be actionable while any stage is processing."""
+        stage1 = Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo a"}),
+            markers={
+                "completion": MarkerSpec(name="a.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+        stage2 = Stage(
+            id="A1",
+            name="Next",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="b.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo b"}),
+            markers={"completion": MarkerSpec(name="b.md", type=MarkerType.FILE)},
+        )
+        # Create processing marker
+        create_marker(stage1.markers["processing"], tmp_path)
+
+        ts = TargetState(target="repo", stages=[stage1, stage2], target_lock=True)
+        ts.derive(tmp_path)
+        assert ts.has_processing is True
+        assert ts.first_actionable_stage is None
+
+
+class TestPipelineStateFlattenConfig:
+    """Tests for PipelineState flattening target_config into context."""
+
+    def test_flatten_target_config_keys_into_context(self, tmp_path):
+        """Target config keys should be flattened into the derivation context."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+
+        stage = Stage(
+            id="A0",
+            name="Step 1",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo a"}),
+            markers={"completion": MarkerSpec(name="a.md", type=MarkerType.FILE)},
+        )
+        state = PipelineState(workspace_dir=workspace, stages=[stage])
+        state.derive(["repo1"], target_configs={"repo1": {"test_cmd": "pytest", "threshold": 90}})
+        # The target state should exist
+        assert "repo1" in state.target_states

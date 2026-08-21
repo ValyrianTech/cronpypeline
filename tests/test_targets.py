@@ -204,3 +204,31 @@ class TestTargetDataclass:
     def test_target_default_config(self):
         t = Target(name="repo1")
         assert t.config == {}
+
+
+class TestUnknownTargetType:
+    """Tests for unknown target type handling."""
+
+    def test_load_targets_unknown_type_raises_value_error(self):
+        """Unknown target type should raise ValueError."""
+        spec = TargetSpec(type=TargetType.STATIC, items=[])
+        spec.type = "unknown_type"
+        with pytest.raises(ValueError, match="Unknown target type"):
+            load_targets(spec)
+
+    def test_load_targets_with_config_unknown_type_raises_value_error(self):
+        """Unknown target type should raise ValueError in load_targets_with_config."""
+        spec = TargetSpec(type=TargetType.STATIC, items=[])
+        spec.type = "unknown_type"
+        with pytest.raises(ValueError, match="Unknown target type"):
+            load_targets_with_config(spec)
+
+    def test_load_targets_with_config_registry_missing_file_raises(self, tmp_path):
+        """Registry file not found should raise FileNotFoundError in load_targets_with_config."""
+        spec = TargetSpec(
+            type=TargetType.REGISTRY,
+            file=str(tmp_path / "nonexistent.json"),
+            key="repos",
+        )
+        with pytest.raises((FileNotFoundError, IOError)):
+            load_targets_with_config(spec)

@@ -134,3 +134,103 @@ class TestCLIMain:
     def test_cli_missing_config_file(self, tmp_path):
         exit_code = main(["--config", str(tmp_path / "nonexistent.json")])
         assert exit_code != 0
+
+    def test_cli_invalid_config_returns_error(self, tmp_path):
+        """Config file with invalid JSON should return error code 1."""
+        config_file = tmp_path / "bad.json"
+        config_file.write_text("{invalid json")
+        exit_code = main(["--config", str(config_file)])
+        assert exit_code == 1
+
+    def test_cli_reset_stage(self, tmp_path):
+        """--reset-stage should delete the completion marker."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "a.md").touch()
+        exit_code = main(["--config", str(config_file), "--target", "my-repo", "--reset-stage", "A0"])
+        assert exit_code == 0
+        assert not (workspace / "my-repo" / "a.md").exists()
+
+    def test_cli_reset_stage_no_target_defaults_to_dot(self, tmp_path):
+        """--reset-stage without --target should use '.' as target."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        (workspace / "a.md").touch()
+        exit_code = main(["--config", str(config_file), "--reset-stage", "A0"])
+        assert exit_code == 0
+        assert not (workspace / "a.md").exists()
+
+    def test_cli_reset_stage_unknown_stage(self, tmp_path):
+        """--reset-stage with unknown stage ID should still return 0."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        (workspace / "my-repo").mkdir()
+        exit_code = main(["--config", str(config_file), "--target", "my-repo", "--reset-stage", "UNKNOWN"])
+        assert exit_code == 0
+
+    def test_cli_reset_target(self, tmp_path):
+        """--reset-target should delete all markers for the target."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "a.md").touch()
+        exit_code = main(["--config", str(config_file), "--reset-target", "my-repo"])
+        assert exit_code == 0
+        assert not (workspace / "my-repo" / "a.md").exists()
+
+    def test_cli_all_targets_action_failed_returns_error(self, tmp_path):
+        """--all with a failing action should return error code 1."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        config_data = json.loads(config_file.read_text())
+        config_data["stages"][0]["action"]["params"]["command"] = "false"
+        config_data["targets"] = {"type": "static", "items": ["repo1"]}
+        config_file.write_text(json.dumps(config_data))
+        (workspace / "repo1").mkdir()
+        exit_code = main(["--config", str(config_file), "--all"])
+        assert exit_code == 1
+
+    def test_cli_single_tick_action_failed_returns_error(self, tmp_path):
+        """Single tick with a failing action should return error code 1."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        config_data = json.loads(config_file.read_text())
+        config_data["stages"][0]["action"]["params"]["command"] = "false"
+        config_file.write_text(json.dumps(config_data))
+        (workspace / "my-repo").mkdir()
+        exit_code = main(["--config", str(config_file), "--target", "my-repo"])
+        assert exit_code == 1
+
+    def test_cli_status_all_targets(self, tmp_path):
+        """--status without --target should show status for all targets."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        (workspace / "my-repo").mkdir()
+        exit_code = main(["--config", str(config_file), "--status"])
+        assert exit_code == 0
+
+    def test_cli_module_guard_calls_sys_exit(self, tmp_path):
+        """The if __name__ == '__main__' guard should call sys.exit(main())."""
+        from pathlib import Path
+        from unittest.mock import patch
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+        config_data = {
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        }
+        config_file = tmp_path / "pipeline.json"
+        config_file.write_text(json.dumps(config_data))
+
+        cli_path = Path(__file__).parent.parent / "cronpypeline" / "cli.py"
+        source = cli_path.read_text()
+
+        with patch("sys.exit") as mock_exit, \
+             patch("sys.argv", ["cronpypeline", "--config", str(config_file), "--target", "my-repo"]):
+            exec(compile(source, str(cli_path), "exec"), {"__name__": "__main__"})
+            mock_exit.assert_called_once_with(0)

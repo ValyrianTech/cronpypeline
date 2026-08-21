@@ -312,3 +312,111 @@ class TestQueueReviewAgent:
         result = queue_review_agent(action, ctx)
         assert result.success is True
         assert result.dry_run is True
+
+
+class TestBuildFixPromptExtraInstructions:
+    """Tests for build_fix_prompt with extra_instructions."""
+
+    def test_prompt_with_extra_instructions(self):
+        prompt = build_fix_prompt(
+            report_content="# Report\nFAIL",
+            report_name="lint",
+            target="repo",
+            extra_instructions="Also fix the tests",
+        )
+        assert "Also fix the tests" in prompt
+        assert "Additional Instructions" in prompt
+
+
+class TestBuildCoderPromptExtraFields:
+    """Tests for build_coder_prompt with extra fields."""
+
+    def test_prompt_with_github_url(self, tmp_path):
+        create_issue(tmp_path, {
+            "id": 42,
+            "source": "review",
+            "type": "bug",
+            "status": "open",
+            "repo": "org/repo",
+            "github_url": "https://github.com/org/repo/issues/42",
+        }, body="Fix the bug")
+
+        issue = get_issue(tmp_path, 42)
+        prompt = build_coder_prompt(
+            issue=issue,
+            target="org/repo",
+            integration_sha="abc123",
+            extra_instructions="Use best practices",
+        )
+        assert "https://github.com/org/repo/issues/42" in prompt
+        assert "abc123" in prompt
+        assert "Use best practices" in prompt
+        assert "Additional Instructions" in prompt
+
+
+class TestBuildReviewPromptExtraFields:
+    """Tests for build_review_prompt with extra fields."""
+
+    def test_prompt_with_integration_sha_and_diff_stats(self):
+        prompt = build_review_prompt(
+            target="org/repo",
+            cycle_number=1,
+            diff_stats="5 files changed",
+            integration_sha="abc12345",
+            extra_instructions="Be thorough",
+        )
+        assert "abc12345" in prompt
+        assert "5 files changed" in prompt
+        assert "Be thorough" in prompt
+        assert "Additional Instructions" in prompt
+
+
+class TestGetIntegrationShaFailure:
+    """Tests for _get_integration_sha error handling."""
+
+    def test_timeout_returns_empty(self, tmp_path):
+        from cronpypeline.plugins.swe_prompts import _get_integration_sha
+        with patch("subprocess.run", side_effect=__import__("subprocess").TimeoutExpired(cmd="git", timeout=10)):
+            result = _get_integration_sha(tmp_path)
+        assert result == ""
+
+    def test_filenotfound_returns_empty(self, tmp_path):
+        from cronpypeline.plugins.swe_prompts import _get_integration_sha
+        with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
+            result = _get_integration_sha(tmp_path)
+        assert result == ""
+
+
+class TestGetDiffStatsFailure:
+    """Tests for _get_diff_stats error handling."""
+
+    def test_timeout_returns_empty(self, tmp_path):
+        from cronpypeline.plugins.swe_prompts import _get_diff_stats
+        with patch("subprocess.run", side_effect=__import__("subprocess").TimeoutExpired(cmd="git", timeout=10)):
+            result = _get_diff_stats(tmp_path)
+        assert result == ""
+
+    def test_filenotfound_returns_empty(self, tmp_path):
+        from cronpypeline.plugins.swe_prompts import _get_diff_stats
+        with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
+            result = _get_diff_stats(tmp_path)
+        assert result == ""
+
+
+class TestQueueCoderAgentDryRun:
+    """Tests for queue_coder_agent dry run."""
+
+    def test_dry_run_does_not_write(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "issue_id": 42,
+                "agent": "CoderAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=True)
+
+        result = queue_coder_agent(action, ctx)
+        assert result.success is True
+        assert result.dry_run is True

@@ -303,3 +303,113 @@ class TestIssueDataclass:
         assert issue.source is None
         assert issue.labels == []
         assert issue.body == ""
+
+
+class TestParseFrontmatterEdgeCases:
+    """Tests for parse_frontmatter edge cases."""
+
+    def test_no_closing_delimiter(self):
+        """Frontmatter without closing --- should return empty dict and full text."""
+        fm, body = parse_frontmatter("---\nid: 42\nstatus: open\nNo closing delimiter")
+        assert fm == {}
+        assert "No closing delimiter" in body
+
+    def test_line_without_colon_skipped(self):
+        """Lines without a colon in frontmatter should be skipped."""
+        fm, body = parse_frontmatter("---\nid: 42\nthis line has no colon\nstatus: open\n---\nBody")
+        assert fm["id"] == 42
+        assert fm["status"] == "open"
+        assert "this line has no colon" not in fm
+
+
+class TestIssueToDictAllFields:
+    """Tests for Issue.to_dict with all optional fields."""
+
+    def test_to_dict_includes_all_optional_fields(self):
+        """All optional fields should be included when set."""
+        issue = Issue(
+            id=42,
+            status="open",
+            source="github",
+            type="bug",
+            hivemind_score=0.85,
+            rank=3,
+            repo="org/repo",
+            github_number=123,
+            github_url="https://github.com/org/repo/issues/123",
+            created_at="2024-01-01",
+            labels=["bug", "urgent"],
+            body="Issue body",
+        )
+        d = issue.to_dict()
+        assert d["hivemind_score"] == 0.85
+        assert d["rank"] == 3
+        assert d["repo"] == "org/repo"
+        assert d["github_number"] == 123
+        assert d["github_url"] == "https://github.com/org/repo/issues/123"
+        assert d["created_at"] == "2024-01-01"
+
+
+class TestIssuesDirRaises:
+    """Tests for _issues_dir with None target_dir."""
+
+    def test_none_target_dir_raises_value_error(self):
+        """_issues_dir with None should raise ValueError."""
+        from cronpypeline.plugins.issue_store import _issues_dir
+        import pytest
+        with pytest.raises(ValueError, match="target_dir is required"):
+            _issues_dir(None)
+
+
+class TestCreateIssueWithNoneData:
+    """Tests for create_issue with None issue_data."""
+
+    def test_create_issue_none_data_defaults_to_empty(self, tmp_path):
+        """create_issue with None issue_data should use empty dict."""
+        issue = create_issue(tmp_path, issue_data=None, body="Test body")
+        assert issue.body == "Test body"
+
+
+class TestFinalizeIssueOutcomeNotFound:
+    """Tests for finalize_issue_outcome when issue not found."""
+
+    def test_finalize_issue_not_found_returns_false(self, tmp_path):
+        """finalize_issue_outcome with non-existent issue should return False."""
+        issues_dir = tmp_path / ".SWE" / "issues"
+        _write_issue_file(issues_dir, "issue-1", {"id": 1, "status": "open"})
+
+        result = finalize_issue_outcome(tmp_path, 999, "done")
+        assert result is False
+
+    def test_finalize_issue_no_issues_dir_returns_false(self, tmp_path):
+        """finalize_issue_outcome with no issues dir should return False."""
+        result = finalize_issue_outcome(tmp_path, 1, "done")
+        assert result is False
+
+
+class TestGetIssueNotFound:
+    """Tests for get_issue when issue not found."""
+
+    def test_get_issue_not_found_returns_none(self, tmp_path):
+        """get_issue with non-existent issue should return None."""
+        issues_dir = tmp_path / ".SWE" / "issues"
+        _write_issue_file(issues_dir, "issue-1", {"id": 1, "status": "open"})
+
+        result = get_issue(tmp_path, 999)
+        assert result is None
+
+
+class TestSerializeValueBool:
+    """Tests for _serialize_value with boolean values."""
+
+    def test_serialize_true(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value(True) == "true"
+
+    def test_serialize_false(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value(False) == "false"
+
+    def test_serialize_float(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value(3.14) == "3.14"

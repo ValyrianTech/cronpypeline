@@ -148,3 +148,58 @@ class TestFileLockReleaseWithoutAcquire:
         lock.release()
         # Second release should not raise
         lock.release()
+
+
+class TestFileLockConstructor:
+    """Tests for FileLock constructor edge cases."""
+
+    def test_none_lock_file_raises_value_error(self):
+        """None lock_file should raise ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="lock_file is required"):
+            FileLock(None)
+
+
+class TestFileLockReleaseWithFd:
+    """Tests for release path with actual fd."""
+
+    def test_release_closes_fd(self, tmp_path):
+        """Release should close the file descriptor and set _fd to None."""
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        lock.acquire()
+        assert lock._fd is not None
+        lock.release()
+        assert lock._fd is None
+        assert lock._acquired is False
+
+    def test_context_manager_exit_calls_release(self, tmp_path):
+        """__exit__ should call release and clean up."""
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        with lock:
+            assert lock._acquired is True
+        assert lock._acquired is False
+
+
+class TestFileLockIsAcquired:
+    """Tests for is_acquired property."""
+
+    def test_is_acquired_false_before_acquire(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        assert lock.is_acquired is False
+
+    def test_is_acquired_true_after_acquire(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        lock.acquire()
+        assert lock.is_acquired is True
+        lock.release()
+
+    def test_is_acquired_false_after_release(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        lock.acquire()
+        lock.release()
+        assert lock.is_acquired is False
