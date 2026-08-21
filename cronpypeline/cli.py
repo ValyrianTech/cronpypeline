@@ -13,7 +13,10 @@ from cronpypeline.pipeline import Pipeline, TickResultStatus
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the argument parser."""
+    """Build the argument parser.
+
+    :returns: A configured :class:`argparse.ArgumentParser` instance.
+    """
     parser = argparse.ArgumentParser(
         prog="cronpypeline",
         description="Cron-friendly, stateful, multi-stage agentic pipelines.",

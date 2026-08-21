@@ -33,19 +33,34 @@ def resolve_custom_callable(callable_path: str) -> Callable[..., Any]:
 
 
 def _eval_file_missing(trigger: TriggerCondition, base_dir: Path) -> bool:
-    """Evaluate whether a file is missing."""
+    """Evaluate whether a file is missing.
+
+    :param trigger: Trigger condition with ``path``.
+    :param base_dir: Base directory to check in.
+    :returns: True if the file does not exist, False otherwise.
+    """
     path = base_dir / (trigger.path or "")
     return not path.exists()
 
 
 def _eval_file_exists(trigger: TriggerCondition, base_dir: Path) -> bool:
-    """Evaluate whether a file exists."""
+    """Evaluate whether a file exists.
+
+    :param trigger: Trigger condition with ``path``.
+    :param base_dir: Base directory to check in.
+    :returns: True if the file exists, False otherwise.
+    """
     path = base_dir / (trigger.path or "")
     return path.exists()
 
 
 def _eval_file_older_than(trigger: TriggerCondition, base_dir: Path) -> bool:
-    """Evaluate whether a file is older than the configured threshold."""
+    """Evaluate whether a file is older than the configured threshold.
+
+    :param trigger: Trigger condition with ``path`` and ``minutes``.
+    :param base_dir: Base directory to check in.
+    :returns: True if the file age exceeds the threshold, False otherwise.
+    """
     path = base_dir / (trigger.path or "")
     if not path.exists():
         return False
@@ -87,7 +102,12 @@ def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
 
 
 def _eval_queue_empty(trigger: TriggerCondition, base_dir: Path) -> bool:
-    """Evaluate whether a queue directory is empty."""
+    """Evaluate whether a queue directory is empty.
+
+    :param trigger: Trigger condition with ``queue_dir``.
+    :param base_dir: Base directory (unused).
+    :returns: True if the queue directory is empty or doesn't exist.
+    """
     queue_dir = Path(trigger.queue_dir or "")
     if not queue_dir.exists():
         return True
@@ -95,17 +115,35 @@ def _eval_queue_empty(trigger: TriggerCondition, base_dir: Path) -> bool:
 
 
 def _eval_and(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
-    """Evaluate whether all sub-conditions are true."""
+    """Evaluate whether all sub-conditions are true.
+
+    :param trigger: Trigger condition with ``conditions`` list.
+    :param base_dir: Base directory to pass to sub-conditions.
+    :param context: Optional context dict for custom callables.
+    :returns: True if all sub-conditions evaluate to True.
+    """
     return all(evaluate_trigger(c, base_dir, context) for c in trigger.conditions)
 
 
 def _eval_or(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
-    """Evaluate whether any sub-condition is true."""
+    """Evaluate whether any sub-condition is true.
+
+    :param trigger: Trigger condition with ``conditions`` list.
+    :param base_dir: Base directory to pass to sub-conditions.
+    :param context: Optional context dict for custom callables.
+    :returns: True if any sub-condition evaluates to True.
+    """
     return any(evaluate_trigger(c, base_dir, context) for c in trigger.conditions)
 
 
 def _eval_custom(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
-    """Evaluate a user-provided custom callable."""
+    """Evaluate a user-provided custom callable.
+
+    :param trigger: Trigger condition with ``callable`` dotted path.
+    :param base_dir: Base directory (unused, passed via context).
+    :param context: Context dict passed to the custom callable.
+    :returns: True if the callable returns a truthy value.
+    """
     func = resolve_custom_callable(trigger.callable or "")
     ctx = context or {}
     return bool(func(ctx))

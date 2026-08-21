@@ -134,7 +134,10 @@ class Issue:
     body: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize the issue to a dict (excluding None optional fields)."""
+        """Serialize the issue to a dict (excluding None optional fields).
+
+        :returns: Dict with issue fields, omitting optional fields that are None.
+        """
         d: dict[str, Any] = {
             "id": self.id,
             "status": self.status,
@@ -188,14 +191,23 @@ class Issue:
 
 
 def _issues_dir(target_dir: Optional[Path | str] = None) -> Path:
-    """Return the path to the issues directory for a target."""
+    """Return the path to the issues directory for a target.
+
+    :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
+    :returns: Path to the issues directory.
+    :raises ValueError: If ``target_dir`` is None.
+    """
     if target_dir is None:
         raise ValueError("target_dir is required")
     return Path(target_dir) / ".SWE" / "issues"
 
 
 def _read_issue_file(path: Path) -> Issue:
-    """Read a single issue file and parse frontmatter."""
+    """Read a single issue file and parse frontmatter.
+
+    :param path: Path to the issue ``.md`` file.
+    :returns: An :class:`Issue` instance parsed from the file.
+    """
     text = path.read_text()
     fm, body = parse_frontmatter(text)
     fm["body"] = body
@@ -203,7 +215,11 @@ def _read_issue_file(path: Path) -> Issue:
 
 
 def _write_issue_file(path: Path, issue: Issue) -> None:
-    """Write an issue to a file with frontmatter."""
+    """Write an issue to a file with frontmatter.
+
+    :param path: Path to write the issue ``.md`` file to.
+    :param issue: Issue instance to serialize.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fm = issue.to_dict()
     body = fm.pop("body", "")

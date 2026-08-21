@@ -11,7 +11,10 @@ from typing import Any
 
 
 def generate_timestamp() -> str:
-    """Generate a timestamp string in YYYYMMDD_HHMMSS format."""
+    """Generate a timestamp string in YYYYMMDD_HHMMSS format.
+
+    :returns: Timestamp string.
+    """
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 

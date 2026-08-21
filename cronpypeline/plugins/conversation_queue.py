@@ -171,5 +171,7 @@ def register():
     Note: This is a no-op placeholder. The actual handler must be instantiated
     with queue_dir and registered via ``Pipeline.__init__()`` from action_handler config,
     or manually via ``register_handler(ActionType.QUEUE_AGENT, ConversationQueueHandler(...))``.
+
+    :returns: None.
     """
     pass
