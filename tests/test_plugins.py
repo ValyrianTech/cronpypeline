@@ -66,7 +66,7 @@ class TestConversationQueueHandler:
             },
         )
         ctx = TickContext(target="my-repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
-        result = handler.execute(action, ctx)
+        handler.execute(action, ctx)
 
         files = list(queue_dir.glob("*.json"))
         entry = json.loads(files[0].read_text())
@@ -91,7 +91,7 @@ class TestConversationQueueHandler:
             verbose=False,
             target_config={"issue_id": "42", "test_cmd": "pytest"},
         )
-        result = handler.execute(action, ctx)
+        handler.execute(action, ctx)
 
         files = list(queue_dir.glob("*.json"))
         entry = json.loads(files[0].read_text())
@@ -116,7 +116,7 @@ class TestConversationQueueHandler:
             verbose=False,
             target_config={"test_cmd": "tox"},
         )
-        result = handler.execute(action, ctx)
+        handler.execute(action, ctx)
 
         files = list(queue_dir.glob("*.json"))
         entry = json.loads(files[0].read_text())
@@ -137,7 +137,7 @@ class TestConversationQueueHandler:
             },
         )
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
-        result = handler.execute(action, ctx)
+        handler.execute(action, ctx)
 
         files = list(queue_dir.glob("*.json"))
         entry = json.loads(files[0].read_text())
@@ -215,7 +215,7 @@ class TestConversationQueueSerendipityFormat:
         ctx = TickContext(target="my-repo", workspace_dir=tmp_path, dry_run=False)
         handler.execute(action, ctx)
 
-        entry = json.loads(list(queue_dir.glob("*.json"))[0].read_text())
+        entry = json.loads(next(iter(queue_dir.glob("*.json"))).read_text())
         assert "content" in entry
         assert entry["content"] == "Fix issue 42"
         assert "prompt" not in entry
@@ -232,7 +232,7 @@ class TestConversationQueueSerendipityFormat:
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
         handler.execute(action, ctx)
 
-        entry = json.loads(list(queue_dir.glob("*.json"))[0].read_text())
+        entry = json.loads(next(iter(queue_dir.glob("*.json"))).read_text())
         assert "prompt" in entry
         assert "content" not in entry
 
@@ -258,7 +258,7 @@ class TestConversationQueueSerendipityFormat:
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
         handler.execute(action, ctx)
 
-        entry = json.loads(list(queue_dir.glob("*.json"))[0].read_text())
+        entry = json.loads(next(iter(queue_dir.glob("*.json"))).read_text())
         assert entry["sender"] == "SWE_PIPELINE"
         assert entry["conversation_id"] == ""
         assert entry["folder_name"] == "SWE"
@@ -280,7 +280,7 @@ class TestConversationQueueSerendipityFormat:
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
         handler.execute(action, ctx)
 
-        entry = json.loads(list(queue_dir.glob("*.json"))[0].read_text())
+        entry = json.loads(next(iter(queue_dir.glob("*.json"))).read_text())
         assert entry["model_name"] == "gpt-4"
 
     def test_flatten_agent_settings(self, tmp_path):
@@ -308,7 +308,7 @@ class TestConversationQueueSerendipityFormat:
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
         handler.execute(action, ctx)
 
-        entry = json.loads(list(queue_dir.glob("*.json"))[0].read_text())
+        entry = json.loads(next(iter(queue_dir.glob("*.json"))).read_text())
         assert entry["user_name"] == "coder"
         assert entry["model_name"] == "gpt-4"
         assert entry["temperature"] == 0.5
@@ -335,7 +335,7 @@ class TestConversationQueueSerendipityFormat:
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
         handler.execute(action, ctx)
 
-        entry = json.loads(list(queue_dir.glob("*.json"))[0].read_text())
+        entry = json.loads(next(iter(queue_dir.glob("*.json"))).read_text())
         assert "agent_config" in entry
         assert entry["agent_config"]["system_prompt"] == "You are a coder"
 
@@ -355,7 +355,7 @@ class TestConversationQueueSerendipityFormat:
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, retry_count=1)
         handler.execute(action, ctx)
 
-        entry = json.loads(list(queue_dir.glob("*.json"))[0].read_text())
+        entry = json.loads(next(iter(queue_dir.glob("*.json"))).read_text())
         assert entry["runs_left"] == 2
 
     def test_runs_left_does_not_go_below_zero(self, tmp_path):
@@ -373,7 +373,7 @@ class TestConversationQueueSerendipityFormat:
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, retry_count=5)
         handler.execute(action, ctx)
 
-        entry = json.loads(list(queue_dir.glob("*.json"))[0].read_text())
+        entry = json.loads(next(iter(queue_dir.glob("*.json"))).read_text())
         assert entry["runs_left"] == 0
 
     def test_serendipity_full_format(self, tmp_path):
@@ -408,7 +408,7 @@ class TestConversationQueueSerendipityFormat:
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
         result = handler.execute(action, ctx)
 
-        entry = json.loads(list(queue_dir.glob("*.json"))[0].read_text())
+        entry = json.loads(next(iter(queue_dir.glob("*.json"))).read_text())
         assert entry["content"] == "Fix issue 42"
         assert entry["agent"] == "CoderAgent"
         assert entry["sender"] == "SWE_PIPELINE"

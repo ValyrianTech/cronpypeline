@@ -247,7 +247,7 @@ class TestVNNMultiTickSimulation:
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
-        mock = _make_mock_handler(queue_dir)
+        _make_mock_handler(queue_dir)
 
         # Tick 1: research stage fires (research.md missing)
         r1 = pipeline.tick(target="story-1")
@@ -297,7 +297,7 @@ class TestVNNMultiTickSimulation:
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
-        mock = _make_mock_handler(queue_dir)
+        _make_mock_handler(queue_dir)
 
         # Pre-seed: research already done
         (story_dir / "research.md").write_text("# Research")
@@ -361,7 +361,7 @@ class TestVNNMultiTickSimulation:
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
-        mock = _make_mock_handler(queue_dir)
+        _make_mock_handler(queue_dir)
 
         # Pre-seed: research and article done
         (story_dir / "research.md").write_text("# Research")
@@ -386,7 +386,7 @@ class TestVNNMultiTickSimulation:
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
-        mock = _make_mock_handler(queue_dir)
+        _make_mock_handler(queue_dir)
 
         # Tick: research stage queues an agent
         r = pipeline.tick(target="story-1")

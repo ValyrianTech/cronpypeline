@@ -148,6 +148,7 @@ class CommandActionHandler(ActionHandler):
                 text=True,
                 timeout=timeout,
                 env={**os.environ, **context.env},
+                check=False,
             )
             return ActionResult(
                 success=proc.returncode == 0,
@@ -197,6 +198,7 @@ class SubprocessActionHandler(ActionHandler):
                 text=True,
                 timeout=timeout,
                 env={**os.environ, **context.env},
+                check=False,
             )
             return ActionResult(
                 success=proc.returncode == 0,
@@ -295,7 +297,7 @@ class HttpRequestActionHandler(ActionHandler):
             body_str = ""
             try:
                 body_str = e.read().decode("utf-8", errors="replace")
-            except Exception:
+            except (OSError, UnicodeDecodeError):
                 pass
             return ActionResult(
                 success=False,

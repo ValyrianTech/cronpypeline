@@ -248,7 +248,7 @@ class Pipeline:
                 except (json.JSONDecodeError, OSError):
                     pass  # Treat unreadable config as enabled
 
-        if target_is_none := not targets:
+        if not targets:
             return TickResult(
                 target="*",
                 stage_id=None,
@@ -386,7 +386,7 @@ class Pipeline:
             )
 
         # Check for rejection give-up (rejection_count >= max_rejections)
-        for stage_id, ss in target_state.stage_states.items():
+        for ss in target_state.stage_states.values():
             if ss.is_rejected and ss.stage.max_rejections > 0:
                 marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
                 if ss.rejection_count >= ss.stage.max_rejections:
@@ -408,7 +408,7 @@ class Pipeline:
                     ss.is_rejected = False  # Allow re-processing
 
         # Check for stale processing markers and handle them
-        for stage_id, ss in target_state.stage_states.items():
+        for ss in target_state.stage_states.values():
             if ss.is_stale and ss.is_processing:
                 return self._handle_stale(ss, target, target_dir, target_config, dry_run, verbose)
 
@@ -424,10 +424,11 @@ class Pipeline:
         if not (self.config.target_lock and target_state.has_processing):
             for stage in active_stages:
                 candidate: StageState | None = target_state.stage_states.get(stage.id)
-                if candidate is not None and candidate.is_actionable:
-                    if evaluate_trigger(stage.trigger, target_dir, context=trigger_context):
-                        stage_state = candidate
-                        break
+                if candidate is not None and candidate.is_actionable and evaluate_trigger(
+                    stage.trigger, target_dir, context=trigger_context
+                ):
+                    stage_state = candidate
+                    break
         if stage_state is None:
             return TickResult(
                 target=target,
@@ -468,16 +469,15 @@ class Pipeline:
         result = execute_action(stage.action, ctx)
 
         # Update processing marker with result data (for stale detection and tracking)
-        if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers and result.success:
-            if result.data:
-                processing_spec = stage.markers["processing"]
-                retry_count = processing_spec.content.get("retry_count", 0)
-                processing_spec.content = {
-                    **processing_spec.content,
-                    "retry_count": retry_count,
-                    **result.data,
-                }
-                create_marker(processing_spec, target_dir, context=marker_ctx)
+        if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers and result.success and result.data:
+            processing_spec = stage.markers["processing"]
+            retry_count = processing_spec.content.get("retry_count", 0)
+            processing_spec.content = {
+                **processing_spec.content,
+                "retry_count": retry_count,
+                **result.data,
+            }
+            create_marker(processing_spec, target_dir, context=marker_ctx)
 
         if not result.success:
             # Run on_fail if configured

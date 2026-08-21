@@ -616,7 +616,7 @@ class TestActionHandlerWiring:
             },
             "stages": [],
         })
-        pipeline = Pipeline(config)
+        Pipeline(config)
 
         from cronpypeline.actions import _HANDLERS
         from cronpypeline.plugins.conversation_queue import ConversationQueueHandler

@@ -184,9 +184,8 @@ def parse_radon_output(output: str, threshold: str = "C", **kwargs: Any) -> dict
                 complexity = float(parts[-1])
                 total_complexity += complexity
                 count += 1
-                if grade in grades_order:
-                    if grades_order.index(grade) > grades_order.index(worst_grade):
-                        worst_grade = grade
+                if grade in grades_order and grades_order.index(grade) > grades_order.index(worst_grade):
+                    worst_grade = grade
             except ValueError:
                 pass
 
@@ -269,6 +268,7 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
             capture_output=True,
             text=True,
             timeout=300,
+            check=False,
         )
         stdout = proc.stdout
         stderr = proc.stderr
@@ -279,7 +279,7 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
             stdout="",
             stderr=f"Command timed out: {command}",
         )
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         return ActionResult(success=False, stderr=str(e))
 
     # Parse output
@@ -288,7 +288,7 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
     if parser:
         try:
             parsed = parser(stdout, **parser_kwargs)
-        except Exception:
+        except (ValueError, KeyError, IndexError, TypeError):
             parsed = {"parse_error": True}
 
     # Build report content

@@ -4,7 +4,7 @@ Provides utilities for writing markdown reports and managing "latest" symlinks.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +14,7 @@ def generate_timestamp() -> str:
 
     :returns: Timestamp string.
     """
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+    return datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
 @dataclass

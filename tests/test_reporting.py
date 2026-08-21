@@ -1,7 +1,7 @@
 """Tests for cronpypeline.reporting — report writing, symlink management."""
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from cronpypeline.reporting import (
     ReportConfig,
@@ -21,14 +21,14 @@ class TestGenerateTimestamp:
         assert len(ts) == 15
         assert ts[8] == "_"
         # Should be parseable
-        datetime.strptime(ts, "%Y%m%d_%H%M%S")
+        datetime.strptime(ts, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
 
     def test_timestamp_is_unique_when_called_apart(self):
         ts1 = generate_timestamp()
         ts2 = generate_timestamp()
         # They might be the same if called in the same second, but format should be valid
-        datetime.strptime(ts1, "%Y%m%d_%H%M%S")
-        datetime.strptime(ts2, "%Y%m%d_%H%M%S")
+        datetime.strptime(ts1, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
+        datetime.strptime(ts2, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
 
 
 class TestWriteReport:

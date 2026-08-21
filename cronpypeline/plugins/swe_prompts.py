@@ -169,6 +169,7 @@ def _get_integration_sha(target_dir: Path) -> str:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -190,6 +191,7 @@ def _get_diff_stats(target_dir: Path) -> str:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if result.returncode == 0:
             return result.stdout.strip()

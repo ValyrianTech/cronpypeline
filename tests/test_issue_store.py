@@ -35,7 +35,7 @@ class TestParseFrontmatter:
 
     def test_parse_string_id(self):
         text = "---\nid: issue-42\nstatus: open\n---\n"
-        fm, body = parse_frontmatter(text)
+        fm, _body = parse_frontmatter(text)
         assert fm["id"] == "issue-42"
         assert fm["status"] == "open"
 

@@ -90,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         pipeline = Pipeline.from_config(config_path)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"Error loading config: {e}", file=sys.stderr)
         return 1
 

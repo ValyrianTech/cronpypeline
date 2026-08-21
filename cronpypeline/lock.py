@@ -77,7 +77,7 @@ class FileLock:
 
         self._acquired = False
 
-    def __enter__(self) -> "FileLock":
+    def __enter__(self) -> "FileLock":  # noqa: PYI034
         self.acquire()
         return self
 

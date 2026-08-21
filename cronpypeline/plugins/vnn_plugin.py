@@ -89,11 +89,7 @@ def queue_empty_global(context: dict[str, Any]) -> bool:
     if not queue_path.exists():
         return True
 
-    # Check for any .json files in the queue
-    if any(queue_path.glob("*.json")):
-        return False
-
-    return True
+    return not any(queue_path.glob("*.json"))
 
 
 def sync_story_states(context: dict[str, Any]) -> bool:

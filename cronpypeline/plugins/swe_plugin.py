@@ -53,6 +53,7 @@ def detect_agent_forgot_marker(context: dict[str, Any]) -> bool:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if result.returncode != 0:
             return False
@@ -88,7 +89,7 @@ def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, 
 
     for cmd in commands:
         try:
-            subprocess.run(cmd, cwd=str(target_dir), capture_output=True, timeout=30)
+            subprocess.run(cmd, cwd=str(target_dir), capture_output=True, timeout=30, check=False)
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
