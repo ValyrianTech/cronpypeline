@@ -161,7 +161,7 @@ def parse_radon_output(output: str, threshold: str = "C", **kwargs: Any) -> dict
 # ─── Parser resolution ──────────────────────────────────────────────────────
 
 
-def _resolve_parser(parser_path: str) -> Optional[Callable]:
+def _resolve_parser(parser_path: str) -> Optional[Callable[..., dict[str, Any]]]:
     """Resolve a dotted path to a callable."""
     if not parser_path:
         return None

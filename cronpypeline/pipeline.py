@@ -51,7 +51,7 @@ class TickResult:
         return f"{self.target} | {stage} -> {self.status.value} | {self.message}"
 
 
-def _instantiate_action_handler(handler_type: str, params: dict) -> ActionHandler:
+def _instantiate_action_handler(handler_type: str, params: dict[str, Any]) -> ActionHandler:
     """Factory: instantiate an action handler from config type + params."""
     if handler_type == "conversation_queue":
         from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
@@ -59,7 +59,7 @@ def _instantiate_action_handler(handler_type: str, params: dict) -> ActionHandle
     raise ValueError(f"Unknown action handler type: {handler_type}")
 
 
-def _build_marker_context(target: str, target_dir: Path, workspace_dir: Path, target_config: dict) -> dict:
+def _build_marker_context(target: str, target_dir: Path, workspace_dir: Path, target_config: dict[str, Any]) -> dict[str, Any]:
     """Build context dict for marker template substitution.
 
     Flattens target_config keys into the top-level context so they can be
@@ -98,7 +98,7 @@ class Pipeline:
             register_handler(ActionType.QUEUE_AGENT, handler)
 
     @classmethod
-    def from_config(cls, path: Path | str) -> "Pipeline":
+    def from_config(cls, path: Optional[Path | str] = None) -> "Pipeline":
         """Create a Pipeline from a JSON config file."""
         config = PipelineConfig.from_file(path)
         return cls(config)
@@ -185,7 +185,7 @@ class Pipeline:
     def _tick_inner(
         self,
         targets: list[str],
-        target_config_map: dict[str, dict],
+        target_config_map: dict[str, dict[str, Any]],
         dry_run: bool,
         verbose: bool,
     ) -> TickResult:
@@ -242,7 +242,7 @@ class Pipeline:
     def _tick_single(
         self,
         target: str,
-        target_config: dict,
+        target_config: dict[str, Any],
         dry_run: bool,
         verbose: bool,
     ) -> TickResult:
@@ -296,7 +296,7 @@ class Pipeline:
     def _tick_single_inner(
         self,
         target: str,
-        target_config: dict,
+        target_config: dict[str, Any],
         dry_run: bool,
         verbose: bool,
     ) -> TickResult:
@@ -360,14 +360,14 @@ class Pipeline:
             "workspace_dir": str(self.workspace_dir),
             "target_config": target_config,
         }
-        stage_state = None
+        stage_state: Optional[StageState] = None
         # If target_lock is enabled, no stage is actionable while any stage is processing
         if not (self.config.target_lock and target_state.has_processing):
             for stage in active_stages:
-                ss = target_state.stage_states.get(stage.id)
-                if ss and ss.is_actionable:
+                candidate: Optional[StageState] = target_state.stage_states.get(stage.id)
+                if candidate is not None and candidate.is_actionable:
                     if evaluate_trigger(stage.trigger, target_dir, context=trigger_context):
-                        stage_state = ss
+                        stage_state = candidate
                         break
         if stage_state is None:
             return TickResult(
@@ -554,7 +554,7 @@ class Pipeline:
         stage_state: StageState,
         target: str,
         target_dir: Path,
-        target_config: dict,
+        target_config: dict[str, Any],
         dry_run: bool,
         verbose: bool,
     ) -> TickResult:
@@ -623,7 +623,7 @@ class Pipeline:
             stdout=result.stdout,
         )
 
-    def status(self, targets: Optional[list[str]] = None) -> dict:
+    def status(self, targets: Optional[list[str]] = None) -> dict[str, Any]:
         """Print pipeline state and exit (no actions)."""
         if targets is None:
             targets = load_targets(self.config.targets)

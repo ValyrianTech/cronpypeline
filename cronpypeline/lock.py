@@ -4,7 +4,8 @@ import fcntl
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Type
+from types import TracebackType
 
 
 class FileLock:
@@ -16,7 +17,9 @@ class FileLock:
     - Supports context manager protocol.
     """
 
-    def __init__(self, lock_file: Path | str, dry_run: bool = False) -> None:
+    def __init__(self, lock_file: Optional[Path | str] = None, dry_run: bool = False) -> None:
+        if lock_file is None:
+            raise ValueError("lock_file is required")
         self.lock_file = Path(lock_file)
         self.dry_run = dry_run
         self._fd: Optional[int] = None
@@ -73,7 +76,12 @@ class FileLock:
         self.acquire()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
         self.release()
 
     @property

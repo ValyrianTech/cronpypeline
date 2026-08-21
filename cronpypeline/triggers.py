@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional
 from cronpypeline.config import TriggerCondition, TriggerType
 
 
-def resolve_custom_callable(callable_path: str) -> Callable:
+def resolve_custom_callable(callable_path: str) -> Callable[..., Any]:
     """Resolve a dotted path like 'mymodule.myfunc' to a callable."""
     parts = callable_path.rsplit(".", 1)
     if len(parts) != 2:
@@ -27,25 +27,25 @@ def resolve_custom_callable(callable_path: str) -> Callable:
 
 
 def _eval_file_missing(trigger: TriggerCondition, base_dir: Path) -> bool:
-    path = base_dir / trigger.path
+    path = base_dir / (trigger.path or "")
     return not path.exists()
 
 
 def _eval_file_exists(trigger: TriggerCondition, base_dir: Path) -> bool:
-    path = base_dir / trigger.path
+    path = base_dir / (trigger.path or "")
     return path.exists()
 
 
 def _eval_file_older_than(trigger: TriggerCondition, base_dir: Path) -> bool:
-    path = base_dir / trigger.path
+    path = base_dir / (trigger.path or "")
     if not path.exists():
         return False
     age_seconds = time.time() - path.stat().st_mtime
-    return age_seconds >= trigger.minutes * 60
+    return age_seconds >= (trigger.minutes or 0) * 60
 
 
 def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
-    path = base_dir / trigger.path
+    path = base_dir / (trigger.path or "")
     if not path.exists():
         return False
     try:
@@ -74,22 +74,22 @@ def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
 
 
 def _eval_queue_empty(trigger: TriggerCondition, base_dir: Path) -> bool:
-    queue_dir = Path(trigger.queue_dir)
+    queue_dir = Path(trigger.queue_dir or "")
     if not queue_dir.exists():
         return True
     return not any(queue_dir.iterdir())
 
 
-def _eval_and(trigger: TriggerCondition, base_dir: Path, context: Optional[dict] = None) -> bool:
+def _eval_and(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
     return all(evaluate_trigger(c, base_dir, context) for c in trigger.conditions)
 
 
-def _eval_or(trigger: TriggerCondition, base_dir: Path, context: Optional[dict] = None) -> bool:
+def _eval_or(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
     return any(evaluate_trigger(c, base_dir, context) for c in trigger.conditions)
 
 
-def _eval_custom(trigger: TriggerCondition, base_dir: Path, context: Optional[dict] = None) -> bool:
-    func = resolve_custom_callable(trigger.callable)
+def _eval_custom(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
+    func = resolve_custom_callable(trigger.callable or "")
     ctx = context or {}
     return bool(func(ctx))
 
@@ -106,7 +106,7 @@ _EVALUATORS = {
 def evaluate_trigger(
     trigger: TriggerCondition,
     base_dir: Path,
-    context: Optional[dict] = None,
+    context: Optional[dict[str, Any]] = None,
 ) -> bool:
     """Evaluate a trigger condition against the filesystem state.
 

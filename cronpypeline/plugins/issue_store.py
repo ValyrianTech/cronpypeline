@@ -153,7 +153,9 @@ class Issue:
 # ─── Issue store operations ─────────────────────────────────────────────────
 
 
-def _issues_dir(target_dir: Path | str) -> Path:
+def _issues_dir(target_dir: Optional[Path | str] = None) -> Path:
+    if target_dir is None:
+        raise ValueError("target_dir is required")
     return Path(target_dir) / ".SWE" / "issues"
 
 
@@ -172,7 +174,7 @@ def _write_issue_file(path: Path, issue: Issue) -> None:
     path.write_text(f"---\n{fm_text}---\n{body}")
 
 
-def load_issues(target_dir: Path | str) -> list[Issue]:
+def load_issues(target_dir: Optional[Path | str] = None) -> list[Issue]:
     """Load all issues from .SWE/issues/*.md."""
     issues_path = _issues_dir(target_dir)
     if not issues_path.exists():
@@ -186,7 +188,7 @@ def load_issues(target_dir: Path | str) -> list[Issue]:
     return issues
 
 
-def get_issue(target_dir: Path | str, issue_id: Any) -> Optional[Issue]:
+def get_issue(target_dir: Optional[Path | str] = None, issue_id: Any = None) -> Optional[Issue]:
     """Get a single issue by id. Returns None if not found."""
     issues = load_issues(target_dir)
     for issue in issues:
@@ -195,7 +197,7 @@ def get_issue(target_dir: Path | str, issue_id: Any) -> Optional[Issue]:
     return None
 
 
-def set_issue_status(target_dir: Path | str, issue_id: Any, status: str) -> bool:
+def set_issue_status(target_dir: Optional[Path | str] = None, issue_id: Any = None, status: str = "open") -> bool:
     """Update an issue's status field. Returns True if updated, False if not found."""
     issues_path = _issues_dir(target_dir)
     if not issues_path.exists():
@@ -209,8 +211,10 @@ def set_issue_status(target_dir: Path | str, issue_id: Any, status: str) -> bool
     return False
 
 
-def create_issue(target_dir: Path | str, issue_data: dict[str, Any], body: str = "") -> Issue:
+def create_issue(target_dir: Optional[Path | str] = None, issue_data: Optional[dict[str, Any]] = None, body: str = "") -> Issue:
     """Create a new issue .md file with frontmatter."""
+    if issue_data is None:
+        issue_data = {}
     issue = Issue.from_dict(issue_data)
     issue.body = body
     filename = f"{issue.id}.md"
@@ -219,7 +223,7 @@ def create_issue(target_dir: Path | str, issue_data: dict[str, Any], body: str =
     return issue
 
 
-def finalize_issue_outcome(target_dir: Path | str, issue_id: Any, outcome: str) -> bool:
+def finalize_issue_outcome(target_dir: Optional[Path | str] = None, issue_id: Any = None, outcome: str = "") -> bool:
     """Set final status and increment attempts counter."""
     issues_path = _issues_dir(target_dir)
     if not issues_path.exists():

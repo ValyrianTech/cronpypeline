@@ -20,7 +20,7 @@ from typing import Any, Optional
 from cronpypeline.actions import ActionResult
 
 
-def log_rejection(context: dict, result: ActionResult) -> None:
+def log_rejection(context: dict[str, Any], result: ActionResult) -> None:
     """Post-tick hook: append to rejection_log.json when a rejection occurs.
 
     Checks if a rejection marker exists in the target directory. If so,
@@ -67,7 +67,7 @@ def log_rejection(context: dict, result: ActionResult) -> None:
     log_file.write_text(json.dumps(existing_log, indent=2))
 
 
-def queue_empty_global(context: dict) -> bool:
+def queue_empty_global(context: dict[str, Any]) -> bool:
     """Pre-tick hook: return False if conversation queue is not empty.
 
     Acts as a global gate — when the queue has pending entries, no new
@@ -90,7 +90,7 @@ def queue_empty_global(context: dict) -> bool:
     return True
 
 
-def sync_story_states(context: dict) -> bool:
+def sync_story_states(context: dict[str, Any]) -> bool:
     """Pre-tick hook: sync ranking.json with filesystem state.
 
     Scans the target directory for story state markers (article.md,
@@ -132,7 +132,7 @@ def sync_story_states(context: dict) -> bool:
     return True
 
 
-def cleanup_inconsistent_state(context: dict) -> bool:
+def cleanup_inconsistent_state(context: dict[str, Any]) -> bool:
     """Pre-tick hook: resolve marker conflicts.
 
     If both a processing marker and a completion marker exist, the processing
@@ -149,7 +149,7 @@ def cleanup_inconsistent_state(context: dict) -> bool:
     return True
 
 
-def check_completed_compilations(context: dict) -> bool:
+def check_completed_compilations(context: dict[str, Any]) -> bool:
     """Pre-tick hook: check for completed compilation markers.
 
     Scans for .compilation_complete markers and updates story state
@@ -190,7 +190,7 @@ def check_completed_compilations(context: dict) -> bool:
     return True
 
 
-def cleanup_stale_compilation_markers(context: dict) -> bool:
+def cleanup_stale_compilation_markers(context: dict[str, Any]) -> bool:
     """Pre-tick hook: remove stale compilation markers.
 
     Removes .compilation_complete markers that are older than the configured
@@ -216,7 +216,7 @@ def cleanup_stale_compilation_markers(context: dict) -> bool:
     return True
 
 
-def discover_stories(context: dict) -> bool:
+def discover_stories(context: dict[str, Any]) -> bool:
     """Pre-tick hook: scan story directories and update registry file.
 
     Scans the workspace directory for story subdirectories and writes
@@ -260,7 +260,7 @@ _VNN_POST_TICK_HOOKS = [
 ]
 
 
-def vnn_pre_tick(context: dict) -> bool:
+def vnn_pre_tick(context: dict[str, Any]) -> bool:
     """Composite pre_tick hook: run all VNN pre_tick hooks in sequence.
 
     Returns False (skip tick) if any hook returns False.
@@ -275,7 +275,7 @@ def vnn_pre_tick(context: dict) -> bool:
     return True
 
 
-def vnn_post_tick(context: dict, result: ActionResult) -> None:
+def vnn_post_tick(context: dict[str, Any], result: ActionResult) -> None:
     """Composite post_tick hook: run all VNN post_tick hooks in sequence."""
     for hook in _VNN_POST_TICK_HOOKS:
         hook(context, result)

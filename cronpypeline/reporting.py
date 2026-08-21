@@ -22,7 +22,7 @@ class ReportConfig:
     extension: str = ".md"
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ReportConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "ReportConfig":
         return cls(
             template=data.get("template", "# Report — {timestamp}\n\n{content}\n"),
             extension=data.get("extension", ".md"),

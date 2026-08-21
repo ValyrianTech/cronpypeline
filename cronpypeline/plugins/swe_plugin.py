@@ -8,12 +8,13 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
+from cronpypeline.actions import ActionSpec, TickContext
 from cronpypeline.plugins.issue_store import load_issues, set_issue_status, get_issue
 
 
-def detect_open_issue(context: dict) -> bool:
+def detect_open_issue(context: dict[str, Any]) -> bool:
     """Trigger: detect if there's an open issue to work on.
 
     Scans .SWE/issues/*.md files with YAML frontmatter for status: open.
@@ -23,7 +24,7 @@ def detect_open_issue(context: dict) -> bool:
     return any(issue.status == "open" for issue in issues)
 
 
-def detect_agent_forgot_marker(context: dict) -> bool:
+def detect_agent_forgot_marker(context: dict[str, Any]) -> bool:
     """Trigger: detect if agent forgot to write completion marker.
 
     Fires when: queue is empty + git commits exist on branch but no completion marker.
@@ -63,7 +64,7 @@ def detect_agent_forgot_marker(context: dict) -> bool:
     return True
 
 
-def cleanup_git_branch(action, context):
+def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
     """Action: clean up git branch after failure.
 
     Runs 'git checkout integration && git branch -D {task_branch}'.
@@ -85,7 +86,7 @@ def cleanup_git_branch(action, context):
     return True, f"Cleaned up branch {task_branch}"
 
 
-def reset_issue_status(action, context):
+def reset_issue_status(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
     """Action: reset issue status to 'open' after failure.
 
     Updates the issue's frontmatter status field back to 'open'.
@@ -99,7 +100,7 @@ def reset_issue_status(action, context):
     return False, f"Issue {issue_id} not found"
 
 
-def sync_session_mode(context: dict, mode_file: str = None) -> bool:
+def sync_session_mode(context: dict[str, Any], mode_file: Optional[str] = None) -> bool:
     """Pre-tick hook: sync .SWE/github_session.json to the pipeline mode_file.
 
     Reads the GitHub session file from the target's .SWE directory. If the session

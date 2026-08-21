@@ -170,7 +170,7 @@ def _get_diff_stats(target_dir: Path) -> str:
 # ─── Queue action callables ─────────────────────────────────────────────────
 
 
-def _build_queue_handler(params: dict) -> ConversationQueueHandler:
+def _build_queue_handler(params: dict[str, Any]) -> ConversationQueueHandler:
     """Build a ConversationQueueHandler from action params."""
     return ConversationQueueHandler(
         queue_dir=params.get("queue_dir", ""),

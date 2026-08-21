@@ -58,7 +58,7 @@ class TriggerCondition:
     conditions: list["TriggerCondition"] = dc_field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TriggerCondition":
+    def from_dict(cls, data: dict[str, Any]) -> "TriggerCondition":
         try:
             trigger_type = TriggerType(data["type"])
         except ValueError:
@@ -93,7 +93,7 @@ class ActionSpec:
     produces: list[MarkerSpec] = dc_field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ActionSpec":
+    def from_dict(cls, data: dict[str, Any]) -> "ActionSpec":
         try:
             action_type = ActionType(data["type"])
         except ValueError:
@@ -128,7 +128,7 @@ class Stage:
     max_rejections: int = 0
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Stage":
+    def from_dict(cls, data: dict[str, Any]) -> "Stage":
         markers = {}
         for marker_role, marker_data in data.get("markers", {}).items():
             markers[marker_role] = MarkerSpec.from_dict(marker_data)
@@ -167,12 +167,12 @@ class TargetSpec:
     type: TargetType
     file: Optional[str] = None
     key: Optional[str] = None
-    filter: Optional[dict] = None
+    filter: Optional[dict[str, Any]] = None
     items: Optional[list[str]] = None
     name: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TargetSpec":
+    def from_dict(cls, data: dict[str, Any]) -> "TargetSpec":
         return cls(
             type=TargetType(data["type"]),
             file=data.get("file"),
@@ -193,7 +193,7 @@ class ActionHandlerConfig:
     params: dict[str, Any] = dc_field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ActionHandlerConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "ActionHandlerConfig":
         params = data.get("params", {})
         if not params:
             params = {k: v for k, v in data.items() if k != "type"}
@@ -212,7 +212,7 @@ class HookConfig:
     callable: str
 
     @classmethod
-    def from_dict(cls, data: dict) -> "HookConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "HookConfig":
         return cls(callable=data["callable"])
 
 
@@ -233,14 +233,19 @@ class PipelineConfig:
     target_lock: bool = False
 
     @classmethod
-    def from_dict(cls, data: dict) -> "PipelineConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "PipelineConfig":
         stages = [Stage.from_dict(s) for s in data.get("stages", [])]
 
         # Validate: no duplicate stage IDs
         stage_ids = [s.id for s in stages]
         if len(stage_ids) != len(set(stage_ids)):
-            seen = set()
-            dupes = [sid for sid in stage_ids if sid in seen or seen.add(sid)]
+            seen: set[str] = set()
+            dupes: list[str] = []
+            for sid in stage_ids:
+                if sid in seen:
+                    dupes.append(sid)
+                else:
+                    seen.add(sid)
             raise ValueError(f"Duplicate stage id(s): {dupes}")
 
         targets = None
@@ -275,7 +280,9 @@ class PipelineConfig:
         )
 
     @classmethod
-    def from_file(cls, path: Path | str) -> "PipelineConfig":
+    def from_file(cls, path: Optional[Path | str] = None) -> "PipelineConfig":
+        if path is None:
+            raise ValueError("Config file path is required")
         path = Path(path)
         data = json.loads(path.read_text())
         return cls.from_dict(data)

@@ -8,7 +8,7 @@ import json
 import time
 from dataclasses import dataclass, field as dc_field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from cronpypeline.config import Stage
 from cronpypeline.markers import marker_exists, read_marker, marker_age_seconds
@@ -23,11 +23,11 @@ class StageState:
     is_given_up: bool = False
     is_stale: bool = False
     retry_count: int = 0
-    processing_data: Optional[dict] = None
+    processing_data: Optional[dict[str, Any]] = None
     rejection_count: int = 0
     is_rejected: bool = False
 
-    def derive(self, base_dir: Path, context: Optional[dict] = None) -> None:
+    def derive(self, base_dir: Path, context: Optional[dict[str, Any]] = None) -> None:
         """Derive state from the filesystem."""
         markers = self.stage.markers
         ctx = context or {}
@@ -85,7 +85,7 @@ class TargetState:
     stage_states: dict[str, StageState] = dc_field(default_factory=dict)
     target_lock: bool = False
 
-    def derive(self, base_dir: Path, context: Optional[dict] = None) -> None:
+    def derive(self, base_dir: Path, context: Optional[dict[str, Any]] = None) -> None:
         """Derive state for all stages."""
         self.stage_states = {}
         for stage in self.stages:
@@ -125,7 +125,7 @@ class PipelineState:
     target_states: dict[str, TargetState] = dc_field(default_factory=dict)
     target_lock: bool = False
 
-    def derive(self, targets: list[str], target_configs: Optional[dict[str, dict]] = None) -> None:
+    def derive(self, targets: list[str], target_configs: Optional[dict[str, dict[str, Any]]] = None) -> None:
         """Derive state for all targets.
 
         Args:

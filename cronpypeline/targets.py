@@ -19,7 +19,7 @@ class Target:
     config: dict[str, Any] = dc_field(default_factory=dict)
 
 
-def _matches_filter(item: dict, filter_dict: dict) -> bool:
+def _matches_filter(item: dict[str, Any], filter_dict: dict[str, Any]) -> bool:
     """Check if a registry item matches all filter criteria."""
     for key, value in filter_dict.items():
         if item.get(key) != value:
@@ -46,7 +46,7 @@ def load_targets(spec: Optional[TargetSpec]) -> list[str]:
         return [spec.name] if spec.name else ["."]
 
     if spec.type == TargetType.REGISTRY:
-        registry_path = Path(spec.file)
+        registry_path = Path(spec.file or "")
         if not registry_path.exists():
             raise FileNotFoundError(f"Registry file not found: {registry_path}")
 
@@ -83,7 +83,7 @@ def load_targets_with_config(spec: Optional[TargetSpec]) -> list[Target]:
         return [Target(name=spec.name, config={})] if spec.name else [Target(name=".", config={})]
 
     if spec.type == TargetType.REGISTRY:
-        registry_path = Path(spec.file)
+        registry_path = Path(spec.file or "")
         if not registry_path.exists():
             raise FileNotFoundError(f"Registry file not found: {registry_path}")
 
