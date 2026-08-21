@@ -26,6 +26,7 @@ from cronpypeline.actions import TickContext, ActionResult, execute_action, regi
 
 
 class TickResultStatus(str, Enum):
+    """Status values for a tick result."""
     ACTION_EXECUTED = "action_executed"
     ACTION_FAILED = "action_failed"
     NO_WORK = "no_work"
@@ -37,7 +38,16 @@ class TickResultStatus(str, Enum):
 
 @dataclass
 class TickResult:
-    """Result of a single tick for a single target."""
+    """Result of a single tick for a single target.
+
+    :ivar target: Target name.
+    :ivar stage_id: Stage ID that was executed, or None.
+    :ivar status: Tick result status.
+    :ivar message: Human-readable result message.
+    :ivar stdout: Captured stdout from the action.
+    :ivar stderr: Captured stderr from the action.
+    :ivar chained_stages: List of stage IDs chained through in this tick.
+    """
     target: str
     stage_id: Optional[str]
     status: TickResultStatus
@@ -52,7 +62,13 @@ class TickResult:
 
 
 def _instantiate_action_handler(handler_type: str, params: dict[str, Any]) -> ActionHandler:
-    """Factory: instantiate an action handler from config type + params."""
+    """Factory: instantiate an action handler from config type + params.
+
+    :param handler_type: Handler type identifier (e.g. ``"conversation_queue"``).
+    :param params: Handler-specific parameters.
+    :returns: Instantiated action handler.
+    :raises ValueError: If the handler type is unknown.
+    """
     if handler_type == "conversation_queue":
         from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
         return ConversationQueueHandler(**params)
@@ -64,6 +80,12 @@ def _build_marker_context(target: str, target_dir: Path, workspace_dir: Path, ta
 
     Flattens target_config keys into the top-level context so they can be
     used directly in templates (e.g. {slug} instead of {target_config[slug]}).
+
+    :param target: Target name.
+    :param target_dir: Full path to target directory.
+    :param workspace_dir: Full path to workspace.
+    :param target_config: Per-target configuration dict.
+    :returns: Context dict with flattened keys for template substitution.
     """
     ctx = {
         "target": target,
@@ -79,7 +101,10 @@ def _build_marker_context(target: str, target_dir: Path, workspace_dir: Path, ta
 
 
 class Pipeline:
-    """Cron-friendly pipeline orchestrator."""
+    """Cron-friendly pipeline orchestrator.
+
+    :param config: Pipeline configuration loaded from JSON.
+    """
 
     def __init__(self, config: PipelineConfig) -> None:
         self.config = config
@@ -99,7 +124,11 @@ class Pipeline:
 
     @classmethod
     def from_config(cls, path: Optional[Path | str] = None) -> "Pipeline":
-        """Create a Pipeline from a JSON config file."""
+        """Create a Pipeline from a JSON config file.
+
+        :param path: Path to the JSON config file.
+        :returns: A :class:`Pipeline` instance.
+        """
         config = PipelineConfig.from_file(path)
         return cls(config)
 
@@ -111,13 +140,10 @@ class Pipeline:
     ) -> TickResult:
         """Execute one tick of the pipeline.
 
-        Args:
-            target: Limit to a single target. If None, picks first target with work.
-            dry_run: Show planned action without executing.
-            verbose: Verbose output.
-
-        Returns:
-            TickResult describing what happened.
+        :param target: Limit to a single target. If None, picks first target with work.
+        :param dry_run: Show planned action without executing.
+        :param verbose: Verbose output.
+        :returns: TickResult describing what happened.
         """
         # Determine targets with config
         if target is None:
@@ -156,8 +182,9 @@ class Pipeline:
     ) -> list[TickResult]:
         """Execute one tick per target (all targets with work).
 
-        Returns:
-            List of TickResults, one per target that had work.
+        :param dry_run: Show planned actions without executing.
+        :param verbose: Verbose output.
+        :returns: List of :class:`TickResult`, one per target that had work.
         """
         target_objs = load_targets_with_config(self.config.targets)
         targets = [t.name for t in target_objs]
@@ -189,7 +216,14 @@ class Pipeline:
         dry_run: bool,
         verbose: bool,
     ) -> TickResult:
-        """Inner tick logic after lock is acquired."""
+        """Inner tick logic after lock is acquired.
+
+        :param targets: List of target names.
+        :param target_config_map: Mapping of target name to config dict.
+        :param dry_run: Whether this is a dry run.
+        :param verbose: Whether verbose output is enabled.
+        :returns: TickResult for the selected target.
+        """
         # Check config_file enabled toggle
         if self.config.config_file:
             toggle_path = Path(self.config.config_file)
@@ -246,7 +280,14 @@ class Pipeline:
         dry_run: bool,
         verbose: bool,
     ) -> TickResult:
-        """Execute a tick for a single target, with pre/post hooks."""
+        """Execute a tick for a single target, with pre/post hooks.
+
+        :param target: Target name.
+        :param target_config: Per-target configuration dict.
+        :param dry_run: Whether this is a dry run.
+        :param verbose: Whether verbose output is enabled.
+        :returns: TickResult for the target.
+        """
         target_dir = self.workspace_dir / target
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -281,7 +322,10 @@ class Pipeline:
         return result
 
     def _get_current_mode(self) -> Optional[str]:
-        """Read the current mode from mode_file. Returns None if no mode_file or unreadable."""
+        """Read the current mode from mode_file.
+
+        :returns: Current mode string, or None if no mode_file or unreadable.
+        """
         if not self.config.mode_file:
             return None
         mode_path = Path(self.config.mode_file)
@@ -300,7 +344,14 @@ class Pipeline:
         dry_run: bool,
         verbose: bool,
     ) -> TickResult:
-        """Execute a tick for a single target (without hooks)."""
+        """Execute a tick for a single target (without hooks).
+
+        :param target: Target name.
+        :param target_config: Per-target configuration dict.
+        :param dry_run: Whether this is a dry run.
+        :param verbose: Whether verbose output is enabled.
+        :returns: TickResult for the target.
+        """
         target_dir = self.workspace_dir / target
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -486,7 +537,12 @@ class Pipeline:
     ) -> Optional[tuple[str, list[str]]]:
         """Attempt to chain to the next stage in the same tick.
 
-        Returns (final_stage_id, list_of_chained_stage_ids) or None.
+        :param target: Target name.
+        :param target_dir: Target directory path.
+        :param dry_run: Whether this is a dry run.
+        :param verbose: Whether verbose output is enabled.
+        :param completed_stage: The stage that just completed.
+        :returns: Tuple of (final_stage_id, list_of_chained_stage_ids), or None.
         """
         stages = self.config.stages
         completed_idx = next(
@@ -558,7 +614,16 @@ class Pipeline:
         dry_run: bool,
         verbose: bool,
     ) -> TickResult:
-        """Handle a stale processing marker."""
+        """Handle a stale processing marker.
+
+        :param stage_state: State of the stale stage.
+        :param target: Target name.
+        :param target_dir: Target directory path.
+        :param target_config: Per-target configuration dict.
+        :param dry_run: Whether this is a dry run.
+        :param verbose: Whether verbose output is enabled.
+        :returns: TickResult — either GAVE_UP, DRY_RUN, or ACTION_EXECUTED.
+        """
         stage = stage_state.stage
         retry_count = stage_state.retry_count
 
@@ -624,7 +689,11 @@ class Pipeline:
         )
 
     def status(self, targets: Optional[list[str]] = None) -> dict[str, Any]:
-        """Print pipeline state and exit (no actions)."""
+        """Get pipeline state snapshot without executing actions.
+
+        :param targets: Optional list of target names to check. If None, checks all.
+        :returns: Dict mapping target names to stage state dicts.
+        """
         if targets is None:
             targets = load_targets(self.config.targets)
 

@@ -16,7 +16,18 @@ from cronpypeline.markers import marker_exists, read_marker, marker_age_seconds
 
 @dataclass
 class StageState:
-    """Derived state for a single stage of a single target."""
+    """Derived state for a single stage of a single target.
+
+    :ivar stage: The :class:`Stage` this state belongs to.
+    :ivar is_complete: Whether the completion marker exists.
+    :ivar is_processing: Whether the processing marker exists.
+    :ivar is_given_up: Whether the give-up marker exists.
+    :ivar is_stale: Whether the processing marker is stale (timeout or queue file gone).
+    :ivar retry_count: Number of retries so far (from processing marker).
+    :ivar processing_data: Raw data from the processing marker, if present.
+    :ivar rejection_count: Number of rejections so far (from rejection marker).
+    :ivar is_rejected: Whether the rejection marker exists.
+    """
     stage: Stage
     is_complete: bool = False
     is_processing: bool = False
@@ -28,7 +39,11 @@ class StageState:
     is_rejected: bool = False
 
     def derive(self, base_dir: Path, context: Optional[dict[str, Any]] = None) -> None:
-        """Derive state from the filesystem."""
+        """Derive state from the filesystem.
+
+        :param base_dir: Target directory to check markers in.
+        :param context: Optional context dict for marker template substitution.
+        """
         markers = self.stage.markers
         ctx = context or {}
 
@@ -79,14 +94,24 @@ class StageState:
 
 @dataclass
 class TargetState:
-    """Derived state for all stages of a single target."""
+    """Derived state for all stages of a single target.
+
+    :ivar target: Target name.
+    :ivar stages: List of :class:`Stage` objects for this target.
+    :ivar stage_states: Mapping of stage ID to :class:`StageState`.
+    :ivar target_lock: Whether cross-stage target locking is enabled.
+    """
     target: str
     stages: list[Stage]
     stage_states: dict[str, StageState] = dc_field(default_factory=dict)
     target_lock: bool = False
 
     def derive(self, base_dir: Path, context: Optional[dict[str, Any]] = None) -> None:
-        """Derive state for all stages."""
+        """Derive state for all stages.
+
+        :param base_dir: Target directory to check markers in.
+        :param context: Optional context dict for marker template substitution.
+        """
         self.stage_states = {}
         for stage in self.stages:
             if not stage.enabled:
@@ -119,7 +144,13 @@ class TargetState:
 
 @dataclass
 class PipelineState:
-    """Derived state for all targets in the pipeline."""
+    """Derived state for all targets in the pipeline.
+
+    :ivar workspace_dir: Root workspace directory.
+    :ivar stages: List of :class:`Stage` objects in the pipeline.
+    :ivar target_states: Mapping of target name to :class:`TargetState`.
+    :ivar target_lock: Whether cross-stage target locking is enabled.
+    """
     workspace_dir: Path
     stages: list[Stage]
     target_states: dict[str, TargetState] = dc_field(default_factory=dict)
@@ -128,9 +159,8 @@ class PipelineState:
     def derive(self, targets: list[str], target_configs: Optional[dict[str, dict[str, Any]]] = None) -> None:
         """Derive state for all targets.
 
-        Args:
-            targets: List of target names.
-            target_configs: Optional mapping of target name to per-target config dict.
+        :param targets: List of target names.
+        :param target_configs: Optional mapping of target name to per-target config dict.
         """
         self.target_states = {}
         target_configs = target_configs or {}
@@ -152,7 +182,11 @@ class PipelineState:
             self.target_states[target] = target_state
 
     def get_target_with_work(self, targets: list[str]) -> Optional[str]:
-        """Return the first target that has actionable work, or None."""
+        """Return the first target that has actionable work, or None.
+
+        :param targets: List of target names to check.
+        :returns: First target name with work, or None.
+        """
         for target in targets:
             ts = self.target_states.get(target)
             if ts and ts.first_actionable_stage is not None:
@@ -160,7 +194,11 @@ class PipelineState:
         return None
 
     def get_all_targets_with_work(self, targets: list[str]) -> list[str]:
-        """Return all targets that have actionable work."""
+        """Return all targets that have actionable work.
+
+        :param targets: List of target names to check.
+        :returns: List of target names with work.
+        """
         result = []
         for target in targets:
             ts = self.target_states.get(target)

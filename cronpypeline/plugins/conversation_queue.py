@@ -20,15 +20,14 @@ class ConversationQueueHandler(ActionHandler):
 
     The JSON file format is compatible with Serendipity's conversation_queue_monitor.
 
-    Args:
-        queue_dir: Directory to write queue entry JSON files.
-        agent_settings_dir: Optional directory with per-agent JSON settings.
-        prompt_field: Name of the field for the prompt text (default "prompt").
-            Set to "content" for Serendipity compatibility.
-        default_fields: Static fields injected into every queue entry.
-            E.g. {"sender": "SWE_PIPELINE", "folder_name": "SWE", "runs_left": 3}.
-        flatten_agent_settings: When True, merge agent settings flat into the entry
-            instead of nesting under "agent_config".
+    :param queue_dir: Directory to write queue entry JSON files.
+    :param agent_settings_dir: Optional directory with per-agent JSON settings.
+    :param prompt_field: Name of the field for the prompt text (default ``"prompt"``).
+        Set to ``"content"`` for Serendipity compatibility.
+    :param default_fields: Static fields injected into every queue entry.
+        E.g. ``{"sender": "SWE_PIPELINE", "folder_name": "SWE", "runs_left": 3}``.
+    :param flatten_agent_settings: When True, merge agent settings flat into the entry
+        instead of nesting under ``"agent_config"``.
     """
 
     def __init__(
@@ -46,6 +45,12 @@ class ConversationQueueHandler(ActionHandler):
         self.flatten_agent_settings = flatten_agent_settings
 
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
+        """Execute the queue action: build a prompt and write a JSON entry.
+
+        :param action: Action spec with agent, prompt/prompt_template, and optional params.
+        :param context: Tick context for template substitution and retry handling.
+        :returns: Result with queue file path and entry ID.
+        """
         if context.dry_run:
             return ActionResult(success=True, dry_run=True)
 
@@ -149,7 +154,12 @@ class ConversationQueueHandler(ActionHandler):
         )
 
     def check_complete(self, action: ActionSpec, context: TickContext) -> bool:
-        """Check if the queue is empty (all agents have finished)."""
+        """Check if the queue is empty (all agents have finished).
+
+        :param action: Action spec (unused).
+        :param context: Tick context (unused).
+        :returns: True if the queue directory is empty or doesn't exist.
+        """
         if not self.queue_dir.exists():
             return True
         return not any(self.queue_dir.iterdir())
@@ -159,7 +169,7 @@ def register():
     """Register the conversation queue handler.
 
     Note: This is a no-op placeholder. The actual handler must be instantiated
-    with queue_dir and registered via Pipeline.__init__() from action_handler config,
-    or manually via register_handler(ActionType.QUEUE_AGENT, ConversationQueueHandler(...)).
+    with queue_dir and registered via ``Pipeline.__init__()`` from action_handler config,
+    or manually via ``register_handler(ActionType.QUEUE_AGENT, ConversationQueueHandler(...))``.
     """
     pass

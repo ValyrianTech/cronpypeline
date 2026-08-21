@@ -28,7 +28,14 @@ def build_fix_prompt(
     target: str,
     extra_instructions: str = "",
 ) -> str:
-    """Build a prompt for a fix agent from a diagnostic report."""
+    """Build a prompt for a fix agent from a diagnostic report.
+
+    :param report_content: Full text content of the diagnostic report.
+    :param report_name: Filename of the report (for reference in the prompt).
+    :param target: Target repository name.
+    :param extra_instructions: Optional additional instructions to append.
+    :returns: Formatted prompt string.
+    """
     prompt = f"""You are working on repository: {target}
 
 A diagnostic report ({report_name}) has identified issues that need fixing.
@@ -53,7 +60,14 @@ def build_coder_prompt(
     integration_sha: str = "",
     extra_instructions: str = "",
 ) -> str:
-    """Build a prompt for a coder agent from an issue."""
+    """Build a prompt for a coder agent from an issue.
+
+    :param issue: Issue object with details and description.
+    :param target: Target repository name.
+    :param integration_sha: Current HEAD SHA of the integration branch.
+    :param extra_instructions: Optional additional instructions to append.
+    :returns: Formatted prompt string.
+    """
     prompt = f"""You are working on repository: {target}
 
 ## Issue Details
@@ -98,7 +112,17 @@ def build_review_prompt(
     pr_url: str = "",
     extra_instructions: str = "",
 ) -> str:
-    """Build a prompt for a review agent."""
+    """Build a prompt for a review agent.
+
+    :param target: Target repository name.
+    :param cycle_number: Review cycle number.
+    :param diff_stats: Git diff stats string.
+    :param integration_sha: Current HEAD sha of the integration branch.
+    :param pr_number: Optional PR number.
+    :param pr_url: Optional PR URL.
+    :param extra_instructions: Optional additional instructions to append.
+    :returns: Formatted prompt string.
+    """
     prompt = f"""You are reviewing changes in repository: {target}
 
 ## Review Context
@@ -134,7 +158,11 @@ Provide your review as structured feedback. If the changes are acceptable, appro
 
 
 def _get_integration_sha(target_dir: Path) -> str:
-    """Get the current HEAD SHA of the integration branch."""
+    """Get the current HEAD SHA of the integration branch.
+
+    :param target_dir: Target directory to run git in.
+    :returns: Short SHA string, or empty string on failure.
+    """
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -151,7 +179,11 @@ def _get_integration_sha(target_dir: Path) -> str:
 
 
 def _get_diff_stats(target_dir: Path) -> str:
-    """Get diff stats for the current branch vs integration."""
+    """Get diff stats for the current branch vs integration.
+
+    :param target_dir: Target directory to run git in.
+    :returns: Diff stats string, or empty string on failure.
+    """
     try:
         result = subprocess.run(
             ["git", "diff", "--stat", "integration"],
@@ -171,7 +203,11 @@ def _get_diff_stats(target_dir: Path) -> str:
 
 
 def _build_queue_handler(params: dict[str, Any]) -> ConversationQueueHandler:
-    """Build a ConversationQueueHandler from action params."""
+    """Build a ConversationQueueHandler from action params.
+
+    :param params: Action params dict with queue_dir and optional settings.
+    :returns: A :class:`ConversationQueueHandler` instance.
+    """
     return ConversationQueueHandler(
         queue_dir=params.get("queue_dir", ""),
         agent_settings_dir=params.get("agent_settings_dir"),
@@ -193,6 +229,10 @@ def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
         - default_fields: Static fields for queue entry
         - flatten_agent_settings: Whether to flatten agent settings
         - extra_instructions: Optional extra instructions for the prompt
+
+    :param action: Action spec with report_path and queue params.
+    :param context: Tick context with target and directories.
+    :returns: Result from the queue handler.
     """
     if context.dry_run:
         return ActionResult(success=True, dry_run=True)
@@ -240,6 +280,10 @@ def queue_coder_agent(action: ActionSpec, context: TickContext) -> ActionResult:
         - default_fields: Static fields for queue entry
         - flatten_agent_settings: Whether to flatten agent settings
         - extra_instructions: Optional extra instructions for the prompt
+
+    :param action: Action spec with issue_id and queue params.
+    :param context: Tick context with target and directories.
+    :returns: Result from the queue handler.
     """
     if context.dry_run:
         return ActionResult(success=True, dry_run=True)
@@ -288,6 +332,10 @@ def queue_review_agent(action: ActionSpec, context: TickContext) -> ActionResult
         - pr_number: Optional PR number
         - pr_url: Optional PR URL
         - extra_instructions: Optional extra instructions for the prompt
+
+    :param action: Action spec with review and queue params.
+    :param context: Tick context with target and directories.
+    :returns: Result from the queue handler.
     """
     if context.dry_run:
         return ActionResult(success=True, dry_run=True)

@@ -17,6 +17,7 @@ from cronpypeline.markers import MarkerSpec
 
 
 class TriggerType(str, Enum):
+    """Supported trigger condition types for stage activation."""
     FILE_MISSING = "file_missing"
     FILE_EXISTS = "file_exists"
     FILE_OLDER_THAN = "file_older_than"
@@ -28,6 +29,7 @@ class TriggerType(str, Enum):
 
 
 class ActionType(str, Enum):
+    """Supported action types for stage execution."""
     COMMAND = "command"
     QUEUE_AGENT = "queue_agent"
     SUBPROCESS = "subprocess"
@@ -36,6 +38,7 @@ class ActionType(str, Enum):
 
 
 class TargetType(str, Enum):
+    """Supported target specification types."""
     REGISTRY = "registry"
     STATIC = "static"
     SINGLE = "single"
@@ -46,7 +49,18 @@ class TargetType(str, Enum):
 
 @dataclass
 class TriggerCondition:
-    """When a stage should fire."""
+    """When a stage should fire.
+
+    :ivar type: The trigger type (file_missing, file_exists, etc.).
+    :ivar path: File path for file-based triggers.
+    :ivar minutes: Threshold in minutes for file_older_than.
+    :ivar field: JSON field name for marker_state.
+    :ivar op: Comparison operator for marker_state (eq, ne, lt, lte, gt, gte).
+    :ivar value: Expected value for marker_state comparison.
+    :ivar queue_dir: Queue directory path for queue_empty.
+    :ivar callable: Dotted path to custom callable for custom triggers.
+    :ivar conditions: Sub-conditions for and/or composite triggers.
+    """
     type: TriggerType
     path: Optional[str] = None
     minutes: Optional[int] = None
@@ -59,6 +73,12 @@ class TriggerCondition:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TriggerCondition":
+        """Create a TriggerCondition from a JSON config dict.
+
+        :param data: Dictionary with ``type`` and type-specific fields.
+        :returns: A :class:`TriggerCondition` instance.
+        :raises ValueError: If the trigger type is unknown.
+        """
         try:
             trigger_type = TriggerType(data["type"])
         except ValueError:
@@ -86,7 +106,13 @@ class TriggerCondition:
 
 @dataclass
 class ActionSpec:
-    """What to do when a stage triggers."""
+    """What to do when a stage triggers.
+
+    :ivar type: The action type (command, queue_agent, subprocess, etc.).
+    :ivar params: Type-specific parameters.
+    :ivar timeout_seconds: Execution timeout in seconds.
+    :ivar produces: Markers created on success.
+    """
     type: ActionType
     params: dict[str, Any] = dc_field(default_factory=dict)
     timeout_seconds: Optional[int] = None
@@ -94,6 +120,12 @@ class ActionSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ActionSpec":
+        """Create an ActionSpec from a JSON config dict.
+
+        :param data: Dictionary with ``type`` and optional ``params``, ``timeout_seconds``, ``produces``.
+        :returns: An :class:`ActionSpec` instance.
+        :raises ValueError: If the action type is unknown.
+        """
         try:
             action_type = ActionType(data["type"])
         except ValueError:
@@ -112,7 +144,22 @@ class ActionSpec:
 
 @dataclass
 class Stage:
-    """A single stage in the pipeline detector chain."""
+    """A single stage in the pipeline detector chain.
+
+    :ivar id: Unique stage identifier (e.g. ``"A0"``, ``"C-select"``).
+    :ivar name: Human-readable name.
+    :ivar trigger: When this stage should fire.
+    :ivar action: What to do when the stage triggers.
+    :ivar chain: Whether same-tick chaining is allowed (mechanical only).
+    :ivar timeout_minutes: Per-stage timeout for stale detection.
+    :ivar max_retries: Max attempts before give-up.
+    :ivar enabled: Whether this stage is active.
+    :ivar markers: Completion/processing/give_up/rejection marker specs.
+    :ivar on_fail: Revert/rollback action on failure.
+    :ivar invalidates: Markers from other stages to delete on success.
+    :ivar modes: Active modes for this stage (empty = always active).
+    :ivar max_rejections: Max rejections before give-up (0 = disabled).
+    """
     id: str
     name: str
     trigger: TriggerCondition
@@ -129,6 +176,11 @@ class Stage:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Stage":
+        """Create a Stage from a JSON config dict.
+
+        :param data: Dictionary with ``id``, ``name``, ``trigger``, ``action``, and optional fields.
+        :returns: A :class:`Stage` instance.
+        """
         markers = {}
         for marker_role, marker_data in data.get("markers", {}).items():
             markers[marker_role] = MarkerSpec.from_dict(marker_data)
@@ -163,7 +215,15 @@ class Stage:
 
 @dataclass
 class TargetSpec:
-    """How targets (repos, countries, etc.) are loaded."""
+    """How targets (repos, countries, etc.) are loaded.
+
+    :ivar type: Target type (registry, static, single).
+    :ivar file: Path to registry JSON file (registry type).
+    :ivar key: Key in registry file (registry type).
+    :ivar filter: Filter criteria for registry items.
+    :ivar items: Fixed list of target names (static type).
+    :ivar name: Single target name (single type).
+    """
     type: TargetType
     file: Optional[str] = None
     key: Optional[str] = None
@@ -173,6 +233,12 @@ class TargetSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TargetSpec":
+        """Create a TargetSpec from a JSON config dict.
+
+        :param data: Dictionary with ``type`` and type-specific fields.
+        :returns: A :class:`TargetSpec` instance.
+        :raises ValueError: If the target type is unknown.
+        """
         return cls(
             type=TargetType(data["type"]),
             file=data.get("file"),
@@ -188,12 +254,21 @@ class TargetSpec:
 
 @dataclass
 class ActionHandlerConfig:
-    """Configuration for the action handler plugin."""
+    """Configuration for the action handler plugin.
+
+    :ivar type: Handler type identifier (e.g. ``"conversation_queue"``).
+    :ivar params: Handler-specific parameters.
+    """
     type: str
     params: dict[str, Any] = dc_field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ActionHandlerConfig":
+        """Create an ActionHandlerConfig from a JSON config dict.
+
+        :param data: Dictionary with ``type`` and optional ``params``.
+        :returns: An :class:`ActionHandlerConfig` instance.
+        """
         params = data.get("params", {})
         if not params:
             params = {k: v for k, v in data.items() if k != "type"}
@@ -208,17 +283,39 @@ class ActionHandlerConfig:
 
 @dataclass
 class HookConfig:
-    """Configuration for a pre-tick or post-tick hook."""
+    """Configuration for a pre-tick or post-tick hook.
+
+    :ivar callable: Dotted path to the hook callable (e.g. ``"my_plugin.pre_tick_sync"``).
+    """
     callable: str
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "HookConfig":
+        """Create a HookConfig from a JSON config dict.
+
+        :param data: Dictionary with ``callable``.
+        :returns: A :class:`HookConfig` instance.
+        """
         return cls(callable=data["callable"])
 
 
 @dataclass
 class PipelineConfig:
-    """Top-level pipeline configuration loaded from JSON."""
+    """Top-level pipeline configuration loaded from JSON.
+
+    :ivar name: Pipeline name.
+    :ivar workspace_dir: Root workspace directory.
+    :ivar stages: Ordered list of stage definitions.
+    :ivar lock_file: Lock file path (relative to workspace).
+    :ivar config_file: Optional pipeline config toggle file.
+    :ivar targets: Target specification.
+    :ivar action_handler: Action handler plugin config.
+    :ivar log_file: Optional log file path.
+    :ivar pre_tick: Pre-tick hook config.
+    :ivar post_tick: Post-tick hook config.
+    :ivar mode_file: Path to JSON file with ``{"mode": "..."}`` for mode switching.
+    :ivar target_lock: Cross-stage lock — blocks all stages for a target while any stage is processing.
+    """
     name: str
     workspace_dir: str
     stages: list[Stage]
@@ -234,6 +331,12 @@ class PipelineConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PipelineConfig":
+        """Create a PipelineConfig from a parsed JSON dict.
+
+        :param data: Dictionary with ``name``, ``workspace_dir``, ``stages``, and optional fields.
+        :returns: A :class:`PipelineConfig` instance.
+        :raises ValueError: If duplicate stage IDs are found.
+        """
         stages = [Stage.from_dict(s) for s in data.get("stages", [])]
 
         # Validate: no duplicate stage IDs
@@ -281,6 +384,12 @@ class PipelineConfig:
 
     @classmethod
     def from_file(cls, path: Optional[Path | str] = None) -> "PipelineConfig":
+        """Load a PipelineConfig from a JSON file.
+
+        :param path: Path to the JSON config file.
+        :returns: A :class:`PipelineConfig` instance.
+        :raises ValueError: If path is None.
+        """
         if path is None:
             raise ValueError("Config file path is required")
         path = Path(path)

@@ -16,7 +16,12 @@ from typing import Any, Optional
 
 
 def _format_template(template: str, context: dict[str, Any]) -> str:
-    """Substitute {key} placeholders in template using context dict."""
+    """Substitute {key} placeholders in template using context dict.
+
+    :param template: Template string with ``{key}`` placeholders.
+    :param context: Mapping of keys to substitution values.
+    :returns: Formatted string, or the original template if substitution fails.
+    """
     if not context or "{" not in template:
         return template
     try:
@@ -26,6 +31,7 @@ def _format_template(template: str, context: dict[str, Any]) -> str:
 
 
 class MarkerType(str, Enum):
+    """Supported marker types on the filesystem."""
     FILE = "file"
     JSON = "json"
     SYMLINK = "symlink"
@@ -35,12 +41,11 @@ class MarkerType(str, Enum):
 class MarkerSpec:
     """Specification for a filesystem marker.
 
-    Attributes:
-        name: Filename (e.g. "latest.md", ".processing")
-        type: Marker type (file / json / symlink)
-        directory: Directory relative to workspace/target dir
-        content: For JSON markers — field values to write
-        target: For symlink markers — target path
+    :ivar name: Filename (e.g. ``latest.md``, ``.processing``).
+    :ivar type: Marker type (file / json / symlink).
+    :ivar directory: Directory relative to workspace/target dir.
+    :ivar content: For JSON markers — field values to write.
+    :ivar target: For symlink markers — target path.
     """
     name: str
     type: MarkerType
@@ -50,7 +55,11 @@ class MarkerSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MarkerSpec":
-        """Create MarkerSpec from a JSON config dict."""
+        """Create MarkerSpec from a JSON config dict.
+
+        :param data: Dictionary with ``name``, ``type``, and optional keys.
+        :returns: A :class:`MarkerSpec` instance.
+        """
         return cls(
             name=data["name"],
             type=MarkerType(data["type"]),
@@ -62,8 +71,12 @@ class MarkerSpec:
     def resolve_path(self, base_dir: Path, context: Optional[dict[str, Any]] = None) -> Path:
         """Resolve the full path of this marker relative to base_dir.
 
-        If context is provided, template-substitutes {key} placeholders
+        If context is provided, template-substitutes ``{key}`` placeholders
         in name and directory.
+
+        :param base_dir: Base directory to resolve against.
+        :param context: Optional context dict for template substitution.
+        :returns: Full :class:`~pathlib.Path` to the marker.
         """
         ctx = context or {}
         name = _format_template(self.name, ctx)
@@ -71,14 +84,24 @@ class MarkerSpec:
         return base_dir / directory / name
 
     def resolve_target(self, context: Optional[dict[str, Any]] = None) -> Optional[str]:
-        """Resolve symlink target with optional context substitution."""
+        """Resolve symlink target with optional context substitution.
+
+        :param context: Optional context dict for template substitution.
+        :returns: Resolved target string, or None if no target is set.
+        """
         if self.target is None:
             return None
         return _format_template(self.target, context or {})
 
 
 def create_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, Any]] = None) -> None:
-    """Create a marker on the filesystem."""
+    """Create a marker on the filesystem.
+
+    :param spec: Marker specification describing what to create.
+    :param base_dir: Base directory to create the marker in.
+    :param context: Optional context dict for template substitution.
+    :raises ValueError: If the marker type is a symlink with no target, or unknown type.
+    """
     path = spec.resolve_path(base_dir, context)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -103,7 +126,13 @@ def create_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, 
 
 
 def read_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
-    """Read marker content. Returns None if marker doesn't exist."""
+    """Read marker content.
+
+    :param spec: Marker specification to read.
+    :param base_dir: Base directory to read from.
+    :param context: Optional context dict for template substitution.
+    :returns: Marker content dict, or None if the marker doesn't exist.
+    """
     path = spec.resolve_path(base_dir, context)
 
     if not path.exists() and not path.is_symlink():
@@ -126,20 +155,37 @@ def read_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, An
 
 
 def marker_exists(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
-    """Check if a marker exists on the filesystem."""
+    """Check if a marker exists on the filesystem.
+
+    :param spec: Marker specification to check.
+    :param base_dir: Base directory to check in.
+    :param context: Optional context dict for template substitution.
+    :returns: True if the marker exists, False otherwise.
+    """
     path = spec.resolve_path(base_dir, context)
     return path.exists() or path.is_symlink()
 
 
 def delete_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, Any]] = None) -> None:
-    """Delete a marker from the filesystem. No-op if it doesn't exist."""
+    """Delete a marker from the filesystem. No-op if it doesn't exist.
+
+    :param spec: Marker specification to delete.
+    :param base_dir: Base directory to delete from.
+    :param context: Optional context dict for template substitution.
+    """
     path = spec.resolve_path(base_dir, context)
     if path.is_symlink() or path.exists():
         path.unlink()
 
 
 def marker_age_seconds(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, Any]] = None) -> Optional[float]:
-    """Get the age of a marker in seconds. Returns None if marker doesn't exist."""
+    """Get the age of a marker in seconds.
+
+    :param spec: Marker specification to check.
+    :param base_dir: Base directory to check in.
+    :param context: Optional context dict for template substitution.
+    :returns: Age in seconds, or None if the marker doesn't exist.
+    """
     path = spec.resolve_path(base_dir, context)
     if not path.exists() and not path.is_symlink():
         return None

@@ -24,8 +24,11 @@ def log_rejection(context: dict[str, Any], result: ActionResult) -> None:
     """Post-tick hook: append to rejection_log.json when a rejection occurs.
 
     Checks if a rejection marker exists in the target directory. If so,
-    appends a detailed entry to .VNN/rejection_log.json with timestamp,
+    appends a detailed entry to ``.VNN/rejection_log.json`` with timestamp,
     target, stage, rejection count, and reason.
+
+    :param context: Hook context dict with ``target_dir`` and ``target``.
+    :param result: Tick result from the completed tick.
     """
     target_dir = Path(context.get("target_dir", "."))
     rejection_marker = target_dir / ".rejection"
@@ -71,7 +74,10 @@ def queue_empty_global(context: dict[str, Any]) -> bool:
     """Pre-tick hook: return False if conversation queue is not empty.
 
     Acts as a global gate — when the queue has pending entries, no new
-    work should be queued. Returns True (proceed) when queue is empty.
+    work should be queued.
+
+    :param context: Hook context dict with ``target_config``.
+    :returns: True (proceed) when queue is empty, False otherwise.
     """
     target_config = context.get("target_config", {})
     queue_dir = target_config.get("queue_dir")
@@ -94,8 +100,11 @@ def sync_story_states(context: dict[str, Any]) -> bool:
     """Pre-tick hook: sync ranking.json with filesystem state.
 
     Scans the target directory for story state markers (article.md,
-    published.json, rejected-article.md, etc.) and updates .VNN/ranking.json
+    published.json, rejected-article.md, etc.) and updates ``.VNN/ranking.json``
     to reflect the current state of each story.
+
+    :param context: Hook context dict with ``target_dir`` and ``target``.
+    :returns: True to allow the tick to proceed.
     """
     target_dir = Path(context.get("target_dir", "."))
     target = context.get("target", "")
@@ -137,6 +146,9 @@ def cleanup_inconsistent_state(context: dict[str, Any]) -> bool:
 
     If both a processing marker and a completion marker exist, the processing
     marker is stale (agent completed but marker wasn't cleaned up). Remove it.
+
+    :param context: Hook context dict with ``target_dir``.
+    :returns: True to allow the tick to proceed.
     """
     target_dir = Path(context.get("target_dir", "."))
 
@@ -152,8 +164,11 @@ def cleanup_inconsistent_state(context: dict[str, Any]) -> bool:
 def check_completed_compilations(context: dict[str, Any]) -> bool:
     """Pre-tick hook: check for completed compilation markers.
 
-    Scans for .compilation_complete markers and updates story state
+    Scans for ``.compilation_complete`` markers and updates story state
     accordingly.
+
+    :param context: Hook context dict with ``target_dir`` and ``target``.
+    :returns: True to allow the tick to proceed.
     """
     target_dir = Path(context.get("target_dir", "."))
     target = context.get("target", "")
@@ -193,8 +208,11 @@ def check_completed_compilations(context: dict[str, Any]) -> bool:
 def cleanup_stale_compilation_markers(context: dict[str, Any]) -> bool:
     """Pre-tick hook: remove stale compilation markers.
 
-    Removes .compilation_complete markers that are older than the configured
+    Removes ``.compilation_complete`` markers that are older than the configured
     timeout (default 60 minutes).
+
+    :param context: Hook context dict with ``target_dir`` and ``target_config``.
+    :returns: True to allow the tick to proceed.
     """
     target_dir = Path(context.get("target_dir", "."))
     target_config = context.get("target_config", {})
@@ -221,6 +239,9 @@ def discover_stories(context: dict[str, Any]) -> bool:
 
     Scans the workspace directory for story subdirectories and writes
     a registry file that cronpypeline can use as its target list.
+
+    :param context: Hook context dict with ``workspace_dir`` and ``target_config``.
+    :returns: True to allow the tick to proceed.
     """
     workspace_dir = Path(context.get("workspace_dir", "."))
     target_config = context.get("target_config", {})
@@ -267,6 +288,9 @@ def vnn_pre_tick(context: dict[str, Any]) -> bool:
     Hooks run in order: queue_empty_global, discover_stories, sync_story_states,
     cleanup_inconsistent_state, check_completed_compilations,
     cleanup_stale_compilation_markers.
+
+    :param context: Hook context dict.
+    :returns: True if all hooks pass, False if any hook returns False.
     """
     for hook in _VNN_PRE_TICK_HOOKS:
         result = hook(context)
@@ -276,6 +300,10 @@ def vnn_pre_tick(context: dict[str, Any]) -> bool:
 
 
 def vnn_post_tick(context: dict[str, Any], result: ActionResult) -> None:
-    """Composite post_tick hook: run all VNN post_tick hooks in sequence."""
+    """Composite post_tick hook: run all VNN post_tick hooks in sequence.
+
+    :param context: Hook context dict.
+    :param result: Tick result from the completed tick.
+    """
     for hook in _VNN_POST_TICK_HOOKS:
         hook(context, result)

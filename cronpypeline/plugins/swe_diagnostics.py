@@ -20,7 +20,11 @@ from cronpypeline.reporting import generate_timestamp, write_report, update_late
 
 
 def parse_pytest_output(output: str, **kwargs: Any) -> dict[str, Any]:
-    """Parse pytest output for pass/fail/error/skip counts."""
+    """Parse pytest output for pass/fail/error/skip counts.
+
+    :param output: Raw stdout from pytest.
+    :returns: Dict with ``passed``, ``failed``, ``errors``, ``skipped``, and ``status``.
+    """
     result: dict[str, Any] = {
         "passed": 0,
         "failed": 0,
@@ -44,7 +48,11 @@ def parse_pytest_output(output: str, **kwargs: Any) -> dict[str, Any]:
 
 
 def parse_ruff_output(output: str, **kwargs: Any) -> dict[str, Any]:
-    """Parse ruff output for error count and fixable count."""
+    """Parse ruff output for error count and fixable count.
+
+    :param output: Raw stdout from ruff.
+    :returns: Dict with ``errors``, ``fixable``, and ``status``.
+    """
     result: dict[str, Any] = {"errors": 0, "fixable": 0}
     m = re.search(r"Found (\d+) error", output)
     if m:
@@ -60,7 +68,11 @@ def parse_ruff_output(output: str, **kwargs: Any) -> dict[str, Any]:
 
 
 def parse_mypy_output(output: str, **kwargs: Any) -> dict[str, Any]:
-    """Parse mypy output for error count."""
+    """Parse mypy output for error count.
+
+    :param output: Raw stdout from mypy.
+    :returns: Dict with ``errors`` and ``status``.
+    """
     result: dict[str, Any] = {"errors": 0}
     m = re.search(r"Found (\d+) error", output)
     if m:
@@ -73,7 +85,11 @@ def parse_mypy_output(output: str, **kwargs: Any) -> dict[str, Any]:
 
 
 def parse_pydocstyle_output(output: str, **kwargs: Any) -> dict[str, Any]:
-    """Parse pydocstyle output for violation count."""
+    """Parse pydocstyle output for violation count.
+
+    :param output: Raw stdout from pydocstyle.
+    :returns: Dict with ``errors`` and ``status``.
+    """
     # Count lines that look like violations: "file:line: Dxxx: message"
     violations = len(re.findall(r"\bD\d{3}\b", output))
     result: dict[str, Any] = {"errors": violations}
@@ -82,7 +98,11 @@ def parse_pydocstyle_output(output: str, **kwargs: Any) -> dict[str, Any]:
 
 
 def parse_vulture_output(output: str, **kwargs: Any) -> dict[str, Any]:
-    """Parse vulture output for unused item count."""
+    """Parse vulture output for unused item count.
+
+    :param output: Raw stdout from vulture.
+    :returns: Dict with ``items`` and ``status``.
+    """
     items = len([line for line in output.strip().split("\n") if line.strip() and ":" in line])
     result: dict[str, Any] = {"items": items}
     result["status"] = "FAIL" if items > 0 else "PASS"
@@ -90,7 +110,12 @@ def parse_vulture_output(output: str, **kwargs: Any) -> dict[str, Any]:
 
 
 def parse_coverage_output(output: str, threshold: float = 100.0, **kwargs: Any) -> dict[str, Any]:
-    """Parse pytest --cov / coverage output for coverage percentage."""
+    """Parse pytest --cov / coverage output for coverage percentage.
+
+    :param output: Raw stdout from coverage tool.
+    :param threshold: Coverage percentage threshold for pass/fail.
+    :returns: Dict with ``coverage``, ``threshold``, and ``status``.
+    """
     result: dict[str, Any] = {"coverage": 0.0, "threshold": threshold}
     m = re.search(r"TOTAL\s+\d+\s+\d+\s+(\d+)%", output)
     if m:
@@ -104,7 +129,11 @@ def parse_coverage_output(output: str, threshold: float = 100.0, **kwargs: Any) 
 
 
 def parse_bandit_output(output: str, **kwargs: Any) -> dict[str, Any]:
-    """Parse bandit output for issue count."""
+    """Parse bandit output for issue count.
+
+    :param output: Raw stdout from bandit.
+    :returns: Dict with ``issues`` and ``status``.
+    """
     result: dict[str, Any] = {"issues": 0}
     m = re.search(r"Total issues:\s*(\d+)", output)
     if m:
@@ -114,7 +143,11 @@ def parse_bandit_output(output: str, **kwargs: Any) -> dict[str, Any]:
 
 
 def parse_pip_audit_output(output: str, **kwargs: Any) -> dict[str, Any]:
-    """Parse pip-audit output for vulnerability count."""
+    """Parse pip-audit output for vulnerability count.
+
+    :param output: Raw stdout from pip-audit.
+    :returns: Dict with ``vulnerabilities`` and ``status``.
+    """
     result: dict[str, Any] = {"vulnerabilities": 0}
     m = re.search(r"Found (\d+) vulnerabilit", output)
     if m:
@@ -127,7 +160,12 @@ def parse_pip_audit_output(output: str, **kwargs: Any) -> dict[str, Any]:
 
 
 def parse_radon_output(output: str, threshold: str = "C", **kwargs: Any) -> dict[str, Any]:
-    """Parse radon complexity output."""
+    """Parse radon complexity output.
+
+    :param output: Raw stdout from radon.
+    :param threshold: Grade threshold for pass/fail (A-F).
+    :returns: Dict with ``average_complexity``, ``worst_grade``, ``threshold``, and ``status``.
+    """
     grades_order = ["A", "B", "C", "D", "E", "F"]
     threshold_idx = grades_order.index(threshold) if threshold in grades_order else 2
 
@@ -162,7 +200,11 @@ def parse_radon_output(output: str, threshold: str = "C", **kwargs: Any) -> dict
 
 
 def _resolve_parser(parser_path: str) -> Optional[Callable[..., dict[str, Any]]]:
-    """Resolve a dotted path to a callable."""
+    """Resolve a dotted path to a callable.
+
+    :param parser_path: Dotted import path to the parser function.
+    :returns: The resolved callable, or None if not found.
+    """
     if not parser_path:
         return None
     module_path, _, func_name = parser_path.rpartition(".")
@@ -188,6 +230,10 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
         - parser: Dotted path to a parser callable (optional)
         - report_name: Filename template (default: "report_{timestamp}.md")
         - parser_kwargs: Extra kwargs to pass to the parser (optional)
+
+    :param action: Action spec with command, report_dir, and optional parser.
+    :param context: Tick context with target and directories.
+    :returns: Result with report path, exit code, status, and parsed data.
     """
     if context.dry_run:
         return ActionResult(success=True, dry_run=True)

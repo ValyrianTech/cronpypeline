@@ -11,10 +11,13 @@ from types import TracebackType
 class FileLock:
     """Non-blocking file lock using fcntl.flock.
 
-    - Acquires LOCK_EX | LOCK_NB (fails immediately if already locked).
+    - Acquires ``LOCK_EX | LOCK_NB`` (fails immediately if already locked).
     - Writes PID + timestamp to the lock file for debugging stale locks.
     - Dry-run mode bypasses locking entirely.
     - Supports context manager protocol.
+
+    :param lock_file: Path to the lock file.
+    :param dry_run: If True, bypasses actual locking.
     """
 
     def __init__(self, lock_file: Optional[Path | str] = None, dry_run: bool = False) -> None:
@@ -26,7 +29,10 @@ class FileLock:
         self._acquired = False
 
     def acquire(self) -> bool:
-        """Attempt to acquire the lock. Returns True on success, False if already locked."""
+        """Attempt to acquire the lock.
+
+        :returns: True on success, False if already locked by another process.
+        """
         if self._acquired:
             return True
 
@@ -86,4 +92,5 @@ class FileLock:
 
     @property
     def is_acquired(self) -> bool:
+        """Whether the lock is currently held."""
         return self._acquired

@@ -17,12 +17,21 @@ def generate_timestamp() -> str:
 
 @dataclass
 class ReportConfig:
-    """Configuration for report writing."""
+    """Configuration for report writing.
+
+    :ivar template: Report template string with ``{timestamp}`` and ``{content}`` placeholders.
+    :ivar extension: Default file extension for reports.
+    """
     template: str = "# Report — {timestamp}\n\n{content}\n"
     extension: str = ".md"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ReportConfig":
+        """Create a ReportConfig from a JSON config dict.
+
+        :param data: Dictionary with optional ``template`` and ``extension``.
+        :returns: A :class:`ReportConfig` instance.
+        """
         return cls(
             template=data.get("template", "# Report — {timestamp}\n\n{content}\n"),
             extension=data.get("extension", ".md"),
@@ -30,7 +39,12 @@ class ReportConfig:
 
 
 def format_report(config: ReportConfig, **variables: Any) -> str:
-    """Format a report using the config template and provided variables."""
+    """Format a report using the config template and provided variables.
+
+    :param config: Report configuration with template.
+    :param variables: Additional template variables (e.g. ``content``, ``title``).
+    :returns: Formatted report string.
+    """
     defaults = {
         "timestamp": generate_timestamp(),
         "content": "",
@@ -50,13 +64,10 @@ def write_report(
 ) -> Path:
     """Write a report file to the given directory.
 
-    Args:
-        directory: Directory to write to (created if needed).
-        filename: Filename, supports {timestamp} substitution.
-        content: Report content.
-
-    Returns:
-        Path to the written report.
+    :param directory: Directory to write to (created if needed).
+    :param filename: Filename, supports ``{timestamp}`` substitution.
+    :param content: Report content.
+    :returns: Path to the written report.
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -76,13 +87,10 @@ def update_latest_symlink(
 ) -> Path:
     """Create or update a 'latest' symlink pointing to the target file.
 
-    Args:
-        directory: Directory containing the symlink and target.
-        symlink_name: Name of the symlink (e.g. "latest.md").
-        target_name: Name of the target file (relative to directory).
-
-    Returns:
-        Path to the symlink.
+    :param directory: Directory containing the symlink and target.
+    :param symlink_name: Name of the symlink (e.g. ``"latest.md"``).
+    :param target_name: Name of the target file (relative to directory).
+    :returns: Path to the symlink.
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)

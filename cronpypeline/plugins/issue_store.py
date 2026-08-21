@@ -16,7 +16,11 @@ from typing import Any, Optional
 
 
 def _parse_value(raw: str) -> Any:
-    """Parse a single YAML-like scalar value."""
+    """Parse a single YAML-like scalar value.
+
+    :param raw: Raw string value to parse.
+    :returns: Parsed value (int, float, list, or string).
+    """
     raw = raw.strip()
     if raw.startswith("[") and raw.endswith("]"):
         inner = raw[1:-1].strip()
@@ -37,7 +41,8 @@ def _parse_value(raw: str) -> Any:
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Parse YAML frontmatter from a markdown string.
 
-    Returns (frontmatter_dict, body_text).
+    :param text: Markdown text potentially starting with ``---`` frontmatter.
+    :returns: Tuple of (frontmatter_dict, body_text).
     """
     if not text.startswith("---"):
         return {}, text
@@ -67,7 +72,11 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 
 def _serialize_value(value: Any) -> str:
-    """Serialize a value to YAML-like scalar format."""
+    """Serialize a value to YAML-like scalar format.
+
+    :param value: Value to serialize (list, bool, float, str, etc.).
+    :returns: YAML-like string representation.
+    """
     if isinstance(value, list):
         return "[" + ", ".join(_serialize_value(v) for v in value) + "]"
     if isinstance(value, bool):
@@ -78,7 +87,11 @@ def _serialize_value(value: Any) -> str:
 
 
 def serialize_frontmatter(fm: dict[str, Any]) -> str:
-    """Serialize a dict to YAML-like frontmatter text (without --- delimiters)."""
+    """Serialize a dict to YAML-like frontmatter text (without --- delimiters).
+
+    :param fm: Frontmatter dict to serialize.
+    :returns: YAML-like text string.
+    """
     lines = []
     for key, value in fm.items():
         lines.append(f"{key}: {_serialize_value(value)}")
@@ -90,7 +103,22 @@ def serialize_frontmatter(fm: dict[str, Any]) -> str:
 
 @dataclass
 class Issue:
-    """A single issue from the SWE issue store."""
+    """A single issue from the SWE issue store.
+
+    :ivar id: Issue identifier.
+    :ivar status: Issue status (e.g. ``"open"``, ``"fixed"``, ``"rejected"``).
+    :ivar source: Source of the issue (e.g. ``"github"``, ``"manual"``).
+    :ivar type: Issue type (e.g. ``"bug"``, ``"feature"``).
+    :ivar attempts: Number of processing attempts.
+    :ivar hivemind_score: Optional hivemind score.
+    :ivar rank: Optional ranking.
+    :ivar repo: Optional repository path.
+    :ivar labels: List of labels.
+    :ivar github_number: Optional GitHub issue number.
+    :ivar github_url: Optional GitHub issue URL.
+    :ivar created_at: Optional creation timestamp.
+    :ivar body: Markdown body text of the issue.
+    """
     id: Any
     status: str = "open"
     source: Optional[str] = None
@@ -106,6 +134,7 @@ class Issue:
     body: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the issue to a dict (excluding None optional fields)."""
         d: dict[str, Any] = {
             "id": self.id,
             "status": self.status,
@@ -133,6 +162,11 @@ class Issue:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Issue":
+        """Create an Issue from a dict.
+
+        :param d: Dictionary with issue fields.
+        :returns: An :class:`Issue` instance.
+        """
         return cls(
             id=d.get("id"),
             status=d.get("status", "open"),
@@ -154,12 +188,14 @@ class Issue:
 
 
 def _issues_dir(target_dir: Optional[Path | str] = None) -> Path:
+    """Return the path to the issues directory for a target."""
     if target_dir is None:
         raise ValueError("target_dir is required")
     return Path(target_dir) / ".SWE" / "issues"
 
 
 def _read_issue_file(path: Path) -> Issue:
+    """Read a single issue file and parse frontmatter."""
     text = path.read_text()
     fm, body = parse_frontmatter(text)
     fm["body"] = body
@@ -167,6 +203,7 @@ def _read_issue_file(path: Path) -> Issue:
 
 
 def _write_issue_file(path: Path, issue: Issue) -> None:
+    """Write an issue to a file with frontmatter."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fm = issue.to_dict()
     body = fm.pop("body", "")
@@ -175,7 +212,11 @@ def _write_issue_file(path: Path, issue: Issue) -> None:
 
 
 def load_issues(target_dir: Optional[Path | str] = None) -> list[Issue]:
-    """Load all issues from .SWE/issues/*.md."""
+    """Load all issues from ``.SWE/issues/*.md``.
+
+    :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
+    :returns: List of :class:`Issue` objects.
+    """
     issues_path = _issues_dir(target_dir)
     if not issues_path.exists():
         return []
@@ -189,7 +230,12 @@ def load_issues(target_dir: Optional[Path | str] = None) -> list[Issue]:
 
 
 def get_issue(target_dir: Optional[Path | str] = None, issue_id: Any = None) -> Optional[Issue]:
-    """Get a single issue by id. Returns None if not found."""
+    """Get a single issue by id.
+
+    :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
+    :param issue_id: Issue identifier to look up.
+    :returns: The matching :class:`Issue`, or None if not found.
+    """
     issues = load_issues(target_dir)
     for issue in issues:
         if issue.id == issue_id:
@@ -198,7 +244,13 @@ def get_issue(target_dir: Optional[Path | str] = None, issue_id: Any = None) -> 
 
 
 def set_issue_status(target_dir: Optional[Path | str] = None, issue_id: Any = None, status: str = "open") -> bool:
-    """Update an issue's status field. Returns True if updated, False if not found."""
+    """Update an issue's status field.
+
+    :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
+    :param issue_id: Issue identifier to update.
+    :param status: New status value.
+    :returns: True if updated, False if issue not found.
+    """
     issues_path = _issues_dir(target_dir)
     if not issues_path.exists():
         return False
@@ -212,7 +264,13 @@ def set_issue_status(target_dir: Optional[Path | str] = None, issue_id: Any = No
 
 
 def create_issue(target_dir: Optional[Path | str] = None, issue_data: Optional[dict[str, Any]] = None, body: str = "") -> Issue:
-    """Create a new issue .md file with frontmatter."""
+    """Create a new issue .md file with frontmatter.
+
+    :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
+    :param issue_data: Dict with issue fields (id, status, source, etc.).
+    :param body: Markdown body text for the issue.
+    :returns: The created :class:`Issue` instance.
+    """
     if issue_data is None:
         issue_data = {}
     issue = Issue.from_dict(issue_data)
@@ -224,7 +282,13 @@ def create_issue(target_dir: Optional[Path | str] = None, issue_data: Optional[d
 
 
 def finalize_issue_outcome(target_dir: Optional[Path | str] = None, issue_id: Any = None, outcome: str = "") -> bool:
-    """Set final status and increment attempts counter."""
+    """Set final status and increment attempts counter.
+
+    :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
+    :param issue_id: Issue identifier to finalize.
+    :param outcome: Final status value (e.g. ``"fixed"``, ``"rejected"``).
+    :returns: True if finalized, False if issue not found.
+    """
     issues_path = _issues_dir(target_dir)
     if not issues_path.exists():
         return False

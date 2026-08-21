@@ -15,7 +15,13 @@ from cronpypeline.config import TriggerCondition, TriggerType
 
 
 def resolve_custom_callable(callable_path: str) -> Callable[..., Any]:
-    """Resolve a dotted path like 'mymodule.myfunc' to a callable."""
+    """Resolve a dotted path like 'mymodule.myfunc' to a callable.
+
+    :param callable_path: Dotted import path to the callable.
+    :returns: The resolved callable object.
+    :raises ValueError: If the path does not contain a dot separator.
+    :raises AttributeError: If the module has no such attribute.
+    """
     parts = callable_path.rsplit(".", 1)
     if len(parts) != 2:
         raise ValueError(f"Invalid callable path: {callable_path}")
@@ -27,16 +33,19 @@ def resolve_custom_callable(callable_path: str) -> Callable[..., Any]:
 
 
 def _eval_file_missing(trigger: TriggerCondition, base_dir: Path) -> bool:
+    """Evaluate whether a file is missing."""
     path = base_dir / (trigger.path or "")
     return not path.exists()
 
 
 def _eval_file_exists(trigger: TriggerCondition, base_dir: Path) -> bool:
+    """Evaluate whether a file exists."""
     path = base_dir / (trigger.path or "")
     return path.exists()
 
 
 def _eval_file_older_than(trigger: TriggerCondition, base_dir: Path) -> bool:
+    """Evaluate whether a file is older than the configured threshold."""
     path = base_dir / (trigger.path or "")
     if not path.exists():
         return False
@@ -45,6 +54,10 @@ def _eval_file_older_than(trigger: TriggerCondition, base_dir: Path) -> bool:
 
 
 def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
+    """Evaluate a JSON marker field against an expected value.
+
+    :raises ValueError: If the operator is not one of eq, ne, lt, lte, gt, gte.
+    """
     path = base_dir / (trigger.path or "")
     if not path.exists():
         return False
@@ -74,6 +87,7 @@ def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
 
 
 def _eval_queue_empty(trigger: TriggerCondition, base_dir: Path) -> bool:
+    """Evaluate whether a queue directory is empty."""
     queue_dir = Path(trigger.queue_dir or "")
     if not queue_dir.exists():
         return True
@@ -81,14 +95,17 @@ def _eval_queue_empty(trigger: TriggerCondition, base_dir: Path) -> bool:
 
 
 def _eval_and(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
+    """Evaluate whether all sub-conditions are true."""
     return all(evaluate_trigger(c, base_dir, context) for c in trigger.conditions)
 
 
 def _eval_or(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
+    """Evaluate whether any sub-condition is true."""
     return any(evaluate_trigger(c, base_dir, context) for c in trigger.conditions)
 
 
 def _eval_custom(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
+    """Evaluate a user-provided custom callable."""
     func = resolve_custom_callable(trigger.callable or "")
     ctx = context or {}
     return bool(func(ctx))
@@ -110,13 +127,11 @@ def evaluate_trigger(
 ) -> bool:
     """Evaluate a trigger condition against the filesystem state.
 
-    Args:
-        trigger: The trigger condition to evaluate.
-        base_dir: The workspace/target directory to check against.
-        context: Optional context dict passed to custom callables.
-
-    Returns:
-        True if the stage should fire, False otherwise.
+    :param trigger: The trigger condition to evaluate.
+    :param base_dir: The workspace/target directory to check against.
+    :param context: Optional context dict passed to custom callables.
+    :returns: True if the stage should fire, False otherwise.
+    :raises ValueError: If no evaluator is registered for the trigger type.
     """
     if trigger.type in (TriggerType.AND, TriggerType.OR):
         if trigger.type == TriggerType.AND:

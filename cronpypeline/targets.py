@@ -14,13 +14,22 @@ from cronpypeline.config import TargetSpec, TargetType
 
 @dataclass
 class Target:
-    """A single target with its name and per-target config dict."""
+    """A single target with its name and per-target config dict.
+
+    :ivar name: Target name.
+    :ivar config: Per-target configuration dict.
+    """
     name: str
     config: dict[str, Any] = dc_field(default_factory=dict)
 
 
 def _matches_filter(item: dict[str, Any], filter_dict: dict[str, Any]) -> bool:
-    """Check if a registry item matches all filter criteria."""
+    """Check if a registry item matches all filter criteria.
+
+    :param item: Registry item dict.
+    :param filter_dict: Filter criteria as key-value pairs.
+    :returns: True if the item matches all criteria.
+    """
     for key, value in filter_dict.items():
         if item.get(key) != value:
             return False
@@ -30,11 +39,10 @@ def _matches_filter(item: dict[str, Any], filter_dict: dict[str, Any]) -> bool:
 def load_targets(spec: Optional[TargetSpec]) -> list[str]:
     """Load the list of target names from a TargetSpec.
 
-    Args:
-        spec: TargetSpec configuration, or None for default single target.
-
-    Returns:
-        List of target name strings.
+    :param spec: TargetSpec configuration, or None for default single target.
+    :returns: List of target name strings.
+    :raises FileNotFoundError: If registry file is not found.
+    :raises ValueError: If the target type is unknown.
     """
     if spec is None:
         return ["."]
@@ -64,14 +72,13 @@ def load_targets(spec: Optional[TargetSpec]) -> list[str]:
 def load_targets_with_config(spec: Optional[TargetSpec]) -> list[Target]:
     """Load targets with their full config dicts from a TargetSpec.
 
-    Like load_targets() but returns Target objects that include per-target
-    configuration from the registry (e.g. test_cmd, coverage_threshold, etc.).
+    Like :func:`load_targets` but returns :class:`Target` objects that include
+    per-target configuration from the registry (e.g. test_cmd, coverage_threshold, etc.).
 
-    Args:
-        spec: TargetSpec configuration, or None for default single target.
-
-    Returns:
-        List of Target objects with name and config.
+    :param spec: TargetSpec configuration, or None for default single target.
+    :returns: List of :class:`Target` objects with name and config.
+    :raises FileNotFoundError: If registry file is not found.
+    :raises ValueError: If the target type is unknown.
     """
     if spec is None:
         return [Target(name=".", config={})]

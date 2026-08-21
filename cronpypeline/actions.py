@@ -24,7 +24,19 @@ from cronpypeline.triggers import resolve_custom_callable
 
 @dataclass
 class TickContext:
-    """Context passed to action handlers during a tick."""
+    """Context passed to action handlers during a tick.
+
+    :ivar target: Target name.
+    :ivar workspace_dir: Root workspace directory.
+    :ivar dry_run: Whether this is a dry run.
+    :ivar verbose: Whether verbose output is enabled.
+    :ivar env: Environment variables for the action.
+    :ivar state: Pipeline state object (optional).
+    :ivar pipeline: Pipeline instance (optional).
+    :ivar target_config: Per-target configuration dict.
+    :ivar retry_count: Number of retries so far (0 for first attempt).
+    :ivar retry_data: Data from the previous processing marker (for continuation).
+    """
     target: str
     workspace_dir: Path
     dry_run: bool = False
@@ -44,7 +56,16 @@ class TickContext:
 
 @dataclass
 class ActionResult:
-    """Result of executing an action."""
+    """Result of executing an action.
+
+    :ivar success: Whether the action succeeded.
+    :ivar stdout: Captured stdout output.
+    :ivar stderr: Captured stderr output.
+    :ivar exit_code: Process exit code.
+    :ivar timed_out: Whether the action timed out.
+    :ivar dry_run: Whether this was a dry run.
+    :ivar data: Additional result data (e.g. queue_file, entry_id).
+    """
     success: bool
     stdout: str = ""
     stderr: str = ""
@@ -55,7 +76,12 @@ class ActionResult:
 
 
 def format_template(template: str, variables: dict[str, Any]) -> str:
-    """Format a template string with variable substitution."""
+    """Format a template string with variable substitution.
+
+    :param template: Template string with ``{key}`` placeholders.
+    :param variables: Mapping of keys to substitution values.
+    :returns: Formatted string, or the original template if substitution fails.
+    """
     try:
         return template.format(**variables)
     except (KeyError, IndexError, ValueError):
@@ -66,10 +92,23 @@ class ActionHandler:
     """Base class / interface for action handlers."""
 
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
+        """Execute the action.
+
+        :param action: Action specification with parameters.
+        :param context: Tick context with target, workspace, and config.
+        :returns: Result of the action execution.
+        :raises NotImplementedError: Always — subclasses must implement.
+        """
         raise NotImplementedError
 
     def check_complete(self, action: ActionSpec, context: TickContext) -> bool:
-        """Check if a previously dispatched action has completed."""
+        """Check if a previously dispatched action has completed.
+
+        :param action: Action specification.
+        :param context: Tick context.
+        :returns: True if the action is complete.
+        :raises NotImplementedError: Always — subclasses must implement.
+        """
         raise NotImplementedError
 
 
@@ -77,6 +116,12 @@ class CommandActionHandler(ActionHandler):
     """Runs a shell command."""
 
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
+        """Execute a shell command.
+
+        :param action: Action spec with ``command`` and optional ``cwd`` params.
+        :param context: Tick context for template substitution and working directory.
+        :returns: Result with stdout, stderr, and exit code.
+        """
         if context.dry_run:
             return ActionResult(success=True, dry_run=True)
 
@@ -125,6 +170,12 @@ class SubprocessActionHandler(ActionHandler):
     """Runs a Python script as a subprocess."""
 
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
+        """Execute a Python script as a subprocess.
+
+        :param action: Action spec with ``script``, ``args``, and optional ``cwd`` params.
+        :param context: Tick context for working directory and environment.
+        :returns: Result with stdout, stderr, and exit code.
+        """
         if context.dry_run:
             return ActionResult(success=True, dry_run=True)
 
@@ -168,6 +219,12 @@ class CustomActionHandler(ActionHandler):
     """Calls a user-provided Python callable."""
 
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
+        """Execute a custom Python callable.
+
+        :param action: Action spec with ``callable`` dotted path and params.
+        :param context: Tick context passed to the callable.
+        :returns: Result adapted from the callable's return value.
+        """
         if context.dry_run:
             return ActionResult(success=True, dry_run=True)
 
@@ -195,6 +252,12 @@ class HttpRequestActionHandler(ActionHandler):
     """Makes HTTP requests using urllib from the stdlib."""
 
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
+        """Execute an HTTP request.
+
+        :param action: Action spec with ``url``, ``method``, ``headers``, ``body``, and auth params.
+        :param context: Tick context for auth token resolution from env.
+        :returns: Result with response body, status code, and request metadata.
+        """
         if context.dry_run:
             return ActionResult(success=True, dry_run=True)
 
@@ -269,12 +332,22 @@ _HANDLERS: dict[ActionType, ActionHandler] = {
 
 
 def register_handler(action_type: ActionType, handler: ActionHandler) -> None:
-    """Register a custom action handler."""
+    """Register a custom action handler.
+
+    :param action_type: The action type to register the handler for.
+    :param handler: The handler instance to register.
+    """
     _HANDLERS[action_type] = handler
 
 
 def execute_action(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Execute an action using the appropriate handler."""
+    """Execute an action using the appropriate handler.
+
+    :param action: Action specification to execute.
+    :param context: Tick context for the action.
+    :returns: Result of the action execution.
+    :raises ValueError: If no handler is registered for the action type.
+    """
     handler = _HANDLERS.get(action.type)
     if handler is None:
         raise ValueError(f"No handler registered for action type: {action.type}")

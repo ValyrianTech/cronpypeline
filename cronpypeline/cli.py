@@ -73,11 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI entry point.
 
-    Args:
-        argv: Command-line arguments. If None, uses sys.argv.
-
-    Returns:
-        Exit code (0 on success, non-zero on error).
+    :param argv: Command-line arguments. If None, uses ``sys.argv``.
+    :returns: Exit code (0 on success, non-zero on error).
     """
     parser = build_parser()
     args = parser.parse_args(argv)

@@ -17,7 +17,10 @@ from cronpypeline.plugins.issue_store import load_issues, set_issue_status, get_
 def detect_open_issue(context: dict[str, Any]) -> bool:
     """Trigger: detect if there's an open issue to work on.
 
-    Scans .SWE/issues/*.md files with YAML frontmatter for status: open.
+    Scans ``.SWE/issues/*.md`` files with YAML frontmatter for ``status: open``.
+
+    :param context: Trigger context dict with ``target_dir``.
+    :returns: True if at least one open issue exists.
     """
     target_dir = Path(context.get("target_dir", "."))
     issues = load_issues(target_dir)
@@ -28,6 +31,9 @@ def detect_agent_forgot_marker(context: dict[str, Any]) -> bool:
     """Trigger: detect if agent forgot to write completion marker.
 
     Fires when: queue is empty + git commits exist on branch but no completion marker.
+
+    :param context: Trigger context dict with ``target_dir`` and optional ``queue_dir``.
+    :returns: True if the agent likely forgot to write the completion marker.
     """
     target_dir = Path(context.get("target_dir", "."))
 
@@ -67,7 +73,11 @@ def detect_agent_forgot_marker(context: dict[str, Any]) -> bool:
 def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
     """Action: clean up git branch after failure.
 
-    Runs 'git checkout integration && git branch -D {task_branch}'.
+    Runs ``git checkout integration && git branch -D {task_branch}``.
+
+    :param action: Action spec with optional ``task_branch`` param.
+    :param context: Tick context with target directory.
+    :returns: Tuple of (success, message).
     """
     target_dir = context.target_dir
     task_branch = action.params.get("task_branch", "task-branch")
@@ -90,6 +100,10 @@ def reset_issue_status(action: ActionSpec, context: TickContext) -> tuple[bool, 
     """Action: reset issue status to 'open' after failure.
 
     Updates the issue's frontmatter status field back to 'open'.
+
+    :param action: Action spec with ``issue_id`` param.
+    :param context: Tick context with target directory.
+    :returns: Tuple of (success, message).
     """
     target_dir = context.target_dir
     issue_id = action.params.get("issue_id")
@@ -103,13 +117,15 @@ def reset_issue_status(action: ActionSpec, context: TickContext) -> tuple[bool, 
 def sync_session_mode(context: dict[str, Any], mode_file: Optional[str] = None) -> bool:
     """Pre-tick hook: sync .SWE/github_session.json to the pipeline mode_file.
 
-    Reads the GitHub session file from the target's .SWE directory. If the session
-    is active, writes {"mode": "github"} to the mode_file. Otherwise writes
-    {"mode": "default"}.
+    Reads the GitHub session file from the target's ``.SWE`` directory. If the session
+    is active, writes ``{"mode": "github"}`` to the mode_file. Otherwise writes
+    ``{"mode": "default"}``.
 
     The mode_file path can be passed explicitly or resolved from target_config.
 
-    Returns True to allow the tick to proceed.
+    :param context: Hook context dict with ``target_dir`` and ``target_config``.
+    :param mode_file: Optional explicit path to the mode file.
+    :returns: True to allow the tick to proceed.
     """
     target_dir = Path(context.get("target_dir", "."))
     session_file = target_dir / ".SWE" / "github_session.json"
