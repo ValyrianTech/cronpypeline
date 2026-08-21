@@ -3,11 +3,15 @@
 import json
 import os
 import time
-from pathlib import Path
 
-import pytest
-
-from cronpypeline.config import Stage, TriggerCondition, TriggerType, ActionSpec, ActionType, MarkerSpec
+from cronpypeline.config import (
+    ActionSpec,
+    ActionType,
+    MarkerSpec,
+    Stage,
+    TriggerCondition,
+    TriggerType,
+)
 from cronpypeline.markers import MarkerType, create_marker
 from cronpypeline.state import PipelineState, StageState, TargetState
 

@@ -5,9 +5,10 @@ static list, or single target.
 """
 
 import json
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from cronpypeline.config import TargetSpec, TargetType
 
@@ -36,7 +37,7 @@ def _matches_filter(item: dict[str, Any], filter_dict: dict[str, Any]) -> bool:
     return True
 
 
-def load_targets(spec: Optional[TargetSpec]) -> list[str]:
+def load_targets(spec: TargetSpec | None) -> list[str]:
     """Load the list of target names from a TargetSpec.
 
     :param spec: TargetSpec configuration, or None for default single target.
@@ -69,7 +70,7 @@ def load_targets(spec: Optional[TargetSpec]) -> list[str]:
     raise ValueError(f"Unknown target type: {spec.type}")
 
 
-def load_targets_with_config(spec: Optional[TargetSpec]) -> list[Target]:
+def load_targets_with_config(spec: TargetSpec | None) -> list[Target]:
     """Load targets with their full config dicts from a TargetSpec.
 
     Like :func:`load_targets` but returns :class:`Target` objects that include

@@ -1,23 +1,18 @@
 """Tests for cronpypeline.plugins — conversation_queue and swe_plugin."""
 
 import json
-import os
-import time
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-import pytest
-
-from cronpypeline.actions import TickContext, ActionResult, register_handler
+from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
+from cronpypeline.plugins.issue_store import get_issue
 from cronpypeline.plugins.swe_plugin import (
-    detect_open_issue,
-    detect_agent_forgot_marker,
     cleanup_git_branch,
+    detect_agent_forgot_marker,
+    detect_open_issue,
     reset_issue_status,
 )
-from cronpypeline.plugins.issue_store import get_issue
 
 
 class TestConversationQueueHandler:

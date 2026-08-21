@@ -1,12 +1,11 @@
 """Tests for cronpypeline.targets — target registry loading."""
 
 import json
-from pathlib import Path
 
 import pytest
 
 from cronpypeline.config import TargetSpec, TargetType
-from cronpypeline.targets import load_targets, load_targets_with_config, Target
+from cronpypeline.targets import Target, load_targets, load_targets_with_config
 
 
 class TestRegistryTarget:

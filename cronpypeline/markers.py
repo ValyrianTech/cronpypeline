@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 def _format_template(template: str, context: dict[str, Any]) -> str:
@@ -51,7 +51,7 @@ class MarkerSpec:
     type: MarkerType
     directory: str = "."
     content: dict[str, Any] = field(default_factory=dict)
-    target: Optional[str] = None
+    target: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MarkerSpec":
@@ -68,7 +68,7 @@ class MarkerSpec:
             target=data.get("target"),
         )
 
-    def resolve_path(self, base_dir: Path, context: Optional[dict[str, Any]] = None) -> Path:
+    def resolve_path(self, base_dir: Path, context: dict[str, Any] | None = None) -> Path:
         """Resolve the full path of this marker relative to base_dir.
 
         If context is provided, template-substitutes ``{key}`` placeholders
@@ -83,7 +83,7 @@ class MarkerSpec:
         directory = _format_template(self.directory, ctx)
         return base_dir / directory / name
 
-    def resolve_target(self, context: Optional[dict[str, Any]] = None) -> Optional[str]:
+    def resolve_target(self, context: dict[str, Any] | None = None) -> str | None:
         """Resolve symlink target with optional context substitution.
 
         :param context: Optional context dict for template substitution.
@@ -94,7 +94,7 @@ class MarkerSpec:
         return _format_template(self.target, context or {})
 
 
-def create_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, Any]] = None) -> None:
+def create_marker(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | None = None) -> None:
     """Create a marker on the filesystem.
 
     :param spec: Marker specification describing what to create.
@@ -125,7 +125,7 @@ def create_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, 
         raise ValueError(f"Unknown marker type: {spec.type}")
 
 
-def read_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+def read_marker(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Read marker content.
 
     :param spec: Marker specification to read.
@@ -154,7 +154,7 @@ def read_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, An
     return None
 
 
-def marker_exists(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
+def marker_exists(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | None = None) -> bool:
     """Check if a marker exists on the filesystem.
 
     :param spec: Marker specification to check.
@@ -166,7 +166,7 @@ def marker_exists(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, 
     return path.exists() or path.is_symlink()
 
 
-def delete_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, Any]] = None) -> None:
+def delete_marker(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | None = None) -> None:
     """Delete a marker from the filesystem. No-op if it doesn't exist.
 
     :param spec: Marker specification to delete.
@@ -178,7 +178,7 @@ def delete_marker(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, 
         path.unlink()
 
 
-def marker_age_seconds(spec: MarkerSpec, base_dir: Path, context: Optional[dict[str, Any]] = None) -> Optional[float]:
+def marker_age_seconds(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | None = None) -> float | None:
     """Get the age of a marker in seconds.
 
     :param spec: Marker specification to check.

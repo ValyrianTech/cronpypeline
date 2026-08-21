@@ -8,11 +8,15 @@ import json
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from cronpypeline.actions import ActionHandler, ActionResult, TickContext, format_template
-from cronpypeline.config import ActionSpec, ActionType
-from cronpypeline.actions import register_handler
+from cronpypeline.actions import (
+    ActionHandler,
+    ActionResult,
+    TickContext,
+    format_template,
+)
+from cronpypeline.config import ActionSpec
 
 
 class ConversationQueueHandler(ActionHandler):
@@ -33,9 +37,9 @@ class ConversationQueueHandler(ActionHandler):
     def __init__(
         self,
         queue_dir: str,
-        agent_settings_dir: Optional[str] = None,
+        agent_settings_dir: str | None = None,
         prompt_field: str = "prompt",
-        default_fields: Optional[dict[str, Any]] = None,
+        default_fields: dict[str, Any] | None = None,
         flatten_agent_settings: bool = False,
     ) -> None:
         self.queue_dir = Path(queue_dir)
@@ -174,4 +178,3 @@ def register():
 
     :returns: None.
     """
-    pass

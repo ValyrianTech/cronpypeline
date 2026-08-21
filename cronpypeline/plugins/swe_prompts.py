@@ -11,13 +11,12 @@ Provides:
 
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.config import ActionSpec
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
 from cronpypeline.plugins.issue_store import Issue, get_issue
-
 
 # ─── Prompt builders ────────────────────────────────────────────────────────
 
@@ -108,7 +107,7 @@ def build_review_prompt(
     cycle_number: int = 0,
     diff_stats: str = "",
     integration_sha: str = "",
-    pr_number: Optional[int] = None,
+    pr_number: int | None = None,
     pr_url: str = "",
     extra_instructions: str = "",
 ) -> str:

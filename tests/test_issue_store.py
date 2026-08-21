@@ -1,19 +1,16 @@
 """Tests for cronpypeline.plugins.issue_store — SWE issue store with YAML frontmatter."""
 
-import json
 from pathlib import Path
-
-import pytest
 
 from cronpypeline.plugins.issue_store import (
     Issue,
-    load_issues,
-    get_issue,
-    set_issue_status,
     create_issue,
     finalize_issue_outcome,
+    get_issue,
+    load_issues,
     parse_frontmatter,
     serialize_frontmatter,
+    set_issue_status,
 )
 
 

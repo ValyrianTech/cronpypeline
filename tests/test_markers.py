@@ -3,11 +3,15 @@
 import json
 import os
 import time
-from pathlib import Path
 
-import pytest
-
-from cronpypeline.markers import MarkerSpec, MarkerType, create_marker, read_marker, marker_exists, delete_marker
+from cronpypeline.markers import (
+    MarkerSpec,
+    MarkerType,
+    create_marker,
+    delete_marker,
+    marker_exists,
+    read_marker,
+)
 
 
 class TestMarkerSpec:

@@ -3,7 +3,6 @@
 Provides utilities for writing markdown reports and managing "latest" symlinks.
 """
 
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path

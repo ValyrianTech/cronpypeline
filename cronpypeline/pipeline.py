@@ -10,19 +10,27 @@ Each tick:
 """
 
 import json
-import time
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from cronpypeline.config import PipelineConfig, Stage, ActionType
+from cronpypeline.actions import (
+    ActionHandler,
+    TickContext,
+    execute_action,
+    register_handler,
+)
+from cronpypeline.config import ActionType, PipelineConfig, Stage
 from cronpypeline.lock import FileLock
-from cronpypeline.markers import create_marker, delete_marker, marker_exists, read_marker
+from cronpypeline.markers import (
+    create_marker,
+    delete_marker,
+)
 from cronpypeline.state import PipelineState, StageState
 from cronpypeline.targets import load_targets, load_targets_with_config
 from cronpypeline.triggers import evaluate_trigger, resolve_custom_callable
-from cronpypeline.actions import TickContext, ActionResult, execute_action, register_handler, ActionHandler
 
 
 class TickResultStatus(str, Enum):
@@ -49,7 +57,7 @@ class TickResult:
     :ivar chained_stages: List of stage IDs chained through in this tick.
     """
     target: str
-    stage_id: Optional[str]
+    stage_id: str | None
     status: TickResultStatus
     message: str = ""
     stdout: str = ""
@@ -123,7 +131,7 @@ class Pipeline:
             register_handler(ActionType.QUEUE_AGENT, handler)
 
     @classmethod
-    def from_config(cls, path: Optional[Path | str] = None) -> "Pipeline":
+    def from_config(cls, path: Path | str | None = None) -> "Pipeline":
         """Create a Pipeline from a JSON config file.
 
         :param path: Path to the JSON config file.
@@ -134,7 +142,7 @@ class Pipeline:
 
     def tick(
         self,
-        target: Optional[str] = None,
+        target: str | None = None,
         dry_run: bool = False,
         verbose: bool = False,
     ) -> TickResult:
@@ -321,7 +329,7 @@ class Pipeline:
 
         return result
 
-    def _get_current_mode(self) -> Optional[str]:
+    def _get_current_mode(self) -> str | None:
         """Read the current mode from mode_file.
 
         :returns: Current mode string, or None if no mode_file or unreadable.
@@ -411,11 +419,11 @@ class Pipeline:
             "workspace_dir": str(self.workspace_dir),
             "target_config": target_config,
         }
-        stage_state: Optional[StageState] = None
+        stage_state: StageState | None = None
         # If target_lock is enabled, no stage is actionable while any stage is processing
         if not (self.config.target_lock and target_state.has_processing):
             for stage in active_stages:
-                candidate: Optional[StageState] = target_state.stage_states.get(stage.id)
+                candidate: StageState | None = target_state.stage_states.get(stage.id)
                 if candidate is not None and candidate.is_actionable:
                     if evaluate_trigger(stage.trigger, target_dir, context=trigger_context):
                         stage_state = candidate
@@ -514,7 +522,7 @@ class Pipeline:
                     target=target,
                     stage_id=final_stage_id,
                     status=TickResultStatus.ACTION_EXECUTED,
-                    message=f"Chained through stages",
+                    message="Chained through stages",
                     chained_stages=chained,
                 )
 
@@ -534,7 +542,7 @@ class Pipeline:
         dry_run: bool,
         verbose: bool,
         completed_stage: Stage,
-    ) -> Optional[tuple[str, list[str]]]:
+    ) -> tuple[str, list[str]] | None:
         """Attempt to chain to the next stage in the same tick.
 
         :param target: Target name.
@@ -688,7 +696,7 @@ class Pipeline:
             stdout=result.stdout,
         )
 
-    def status(self, targets: Optional[list[str]] = None) -> dict[str, Any]:
+    def status(self, targets: list[str] | None = None) -> dict[str, Any]:
         """Get pipeline state snapshot without executing actions.
 
         :param targets: Optional list of target names to check. If None, checks all.

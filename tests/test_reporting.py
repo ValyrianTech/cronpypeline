@@ -2,16 +2,13 @@
 
 import os
 from datetime import datetime
-from pathlib import Path
-
-import pytest
 
 from cronpypeline.reporting import (
-    write_report,
-    update_latest_symlink,
-    generate_timestamp,
-    format_report,
     ReportConfig,
+    format_report,
+    generate_timestamp,
+    update_latest_symlink,
+    write_report,
 )
 
 

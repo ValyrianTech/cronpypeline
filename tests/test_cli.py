@@ -1,13 +1,10 @@
 """Tests for cronpypeline.cli — argparse CLI entry point."""
 
 import json
-import sys
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
 
-from cronpypeline.cli import main, build_parser
+from cronpypeline.cli import build_parser, main
 
 
 class TestBuildParser:

@@ -6,10 +6,10 @@ and returns True if the stage should fire, False otherwise.
 
 import importlib
 import json
-import os
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from cronpypeline.config import TriggerCondition, TriggerType
 
@@ -114,7 +114,7 @@ def _eval_queue_empty(trigger: TriggerCondition, base_dir: Path) -> bool:
     return not any(queue_dir.iterdir())
 
 
-def _eval_and(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
+def _eval_and(trigger: TriggerCondition, base_dir: Path, context: dict[str, Any] | None = None) -> bool:
     """Evaluate whether all sub-conditions are true.
 
     :param trigger: Trigger condition with ``conditions`` list.
@@ -125,7 +125,7 @@ def _eval_and(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[
     return all(evaluate_trigger(c, base_dir, context) for c in trigger.conditions)
 
 
-def _eval_or(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
+def _eval_or(trigger: TriggerCondition, base_dir: Path, context: dict[str, Any] | None = None) -> bool:
     """Evaluate whether any sub-condition is true.
 
     :param trigger: Trigger condition with ``conditions`` list.
@@ -136,7 +136,7 @@ def _eval_or(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[s
     return any(evaluate_trigger(c, base_dir, context) for c in trigger.conditions)
 
 
-def _eval_custom(trigger: TriggerCondition, base_dir: Path, context: Optional[dict[str, Any]] = None) -> bool:
+def _eval_custom(trigger: TriggerCondition, base_dir: Path, context: dict[str, Any] | None = None) -> bool:
     """Evaluate a user-provided custom callable.
 
     :param trigger: Trigger condition with ``callable`` dotted path.
@@ -161,7 +161,7 @@ _EVALUATORS = {
 def evaluate_trigger(
     trigger: TriggerCondition,
     base_dir: Path,
-    context: Optional[dict[str, Any]] = None,
+    context: dict[str, Any] | None = None,
 ) -> bool:
     """Evaluate a trigger condition against the filesystem state.
 

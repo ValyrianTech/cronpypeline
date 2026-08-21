@@ -1,28 +1,21 @@
 """Tests for SWE diagnostic report action handler and parsers."""
 
-import json
-import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
-import pytest
-
-from cronpypeline.actions import TickContext, ActionResult
+from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.swe_diagnostics import (
-    run_diagnostic,
-    parse_pytest_output,
-    parse_ruff_output,
-    parse_mypy_output,
-    parse_pydocstyle_output,
-    parse_vulture_output,
-    parse_coverage_output,
     parse_bandit_output,
+    parse_coverage_output,
+    parse_mypy_output,
     parse_pip_audit_output,
+    parse_pydocstyle_output,
+    parse_pytest_output,
     parse_radon_output,
+    parse_ruff_output,
+    parse_vulture_output,
+    run_diagnostic,
 )
-from cronpypeline.reporting import write_report, update_latest_symlink
-
 
 # ─── Parser tests ───────────────────────────────────────────────────────────
 

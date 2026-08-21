@@ -5,18 +5,16 @@ command, subprocess, and custom actions. The conversation_queue handler
 lives in the plugins package.
 """
 
-import importlib
-import json
 import os
+import socket
 import subprocess
 import sys
-import time
-import urllib.request
 import urllib.error
-import socket
-from dataclasses import dataclass, field as dc_field
+import urllib.request
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.triggers import resolve_custom_callable
@@ -46,7 +44,7 @@ class TickContext:
     pipeline: Any = None
     target_config: dict[str, Any] = dc_field(default_factory=dict)
     retry_count: int = 0
-    retry_data: Optional[dict[str, Any]] = None
+    retry_data: dict[str, Any] | None = None
 
     @property
     def target_dir(self) -> Path:
@@ -69,7 +67,7 @@ class ActionResult:
     success: bool
     stdout: str = ""
     stderr: str = ""
-    exit_code: Optional[int] = None
+    exit_code: int | None = None
     timed_out: bool = False
     dry_run: bool = False
     data: dict[str, Any] = dc_field(default_factory=dict)

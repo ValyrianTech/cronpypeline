@@ -1,28 +1,18 @@
 """Tests for cronpypeline.actions — built-in action handlers and TickContext."""
 
-import json
-import os
-import subprocess
-import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Optional
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.actions import (
-    TickContext,
     ActionResult,
-    ActionHandler,
     CommandActionHandler,
-    SubprocessActionHandler,
     CustomActionHandler,
     HttpRequestActionHandler,
+    SubprocessActionHandler,
+    TickContext,
     execute_action,
     format_template,
 )
+from cronpypeline.config import ActionSpec, ActionType
 
 
 class TestTickContext:
@@ -507,8 +497,7 @@ class TestHttpRequestActionHandler:
         handler = HttpRequestActionHandler()
 
         from urllib.error import URLError
-        import socket
-        with patch("urllib.request.urlopen", side_effect=URLError(socket.timeout("timed out"))):
+        with patch("urllib.request.urlopen", side_effect=URLError(TimeoutError("timed out"))):
             result = handler.execute(action, ctx)
 
         assert result.success is False

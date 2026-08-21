@@ -7,10 +7,10 @@ markdown body with the issue description.
 This module uses a simple built-in frontmatter parser (no external YAML dependency).
 """
 
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any
 
 # ─── Frontmatter parsing/serialization ──────────────────────────────────────
 
@@ -121,16 +121,16 @@ class Issue:
     """
     id: Any
     status: str = "open"
-    source: Optional[str] = None
-    type: Optional[str] = None
+    source: str | None = None
+    type: str | None = None
     attempts: int = 0
-    hivemind_score: Optional[float] = None
-    rank: Optional[int] = None
-    repo: Optional[str] = None
+    hivemind_score: float | None = None
+    rank: int | None = None
+    repo: str | None = None
     labels: list[str] = dc_field(default_factory=list)
-    github_number: Optional[int] = None
-    github_url: Optional[str] = None
-    created_at: Optional[str] = None
+    github_number: int | None = None
+    github_url: str | None = None
+    created_at: str | None = None
     body: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -190,7 +190,7 @@ class Issue:
 # ─── Issue store operations ─────────────────────────────────────────────────
 
 
-def _issues_dir(target_dir: Optional[Path | str] = None) -> Path:
+def _issues_dir(target_dir: Path | str | None = None) -> Path:
     """Return the path to the issues directory for a target.
 
     :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
@@ -227,7 +227,7 @@ def _write_issue_file(path: Path, issue: Issue) -> None:
     path.write_text(f"---\n{fm_text}---\n{body}")
 
 
-def load_issues(target_dir: Optional[Path | str] = None) -> list[Issue]:
+def load_issues(target_dir: Path | str | None = None) -> list[Issue]:
     """Load all issues from ``.SWE/issues/*.md``.
 
     :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
@@ -245,7 +245,7 @@ def load_issues(target_dir: Optional[Path | str] = None) -> list[Issue]:
     return issues
 
 
-def get_issue(target_dir: Optional[Path | str] = None, issue_id: Any = None) -> Optional[Issue]:
+def get_issue(target_dir: Path | str | None = None, issue_id: Any = None) -> Issue | None:
     """Get a single issue by id.
 
     :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
@@ -259,7 +259,7 @@ def get_issue(target_dir: Optional[Path | str] = None, issue_id: Any = None) -> 
     return None
 
 
-def set_issue_status(target_dir: Optional[Path | str] = None, issue_id: Any = None, status: str = "open") -> bool:
+def set_issue_status(target_dir: Path | str | None = None, issue_id: Any = None, status: str = "open") -> bool:
     """Update an issue's status field.
 
     :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
@@ -279,7 +279,7 @@ def set_issue_status(target_dir: Optional[Path | str] = None, issue_id: Any = No
     return False
 
 
-def create_issue(target_dir: Optional[Path | str] = None, issue_data: Optional[dict[str, Any]] = None, body: str = "") -> Issue:
+def create_issue(target_dir: Path | str | None = None, issue_data: dict[str, Any] | None = None, body: str = "") -> Issue:
     """Create a new issue .md file with frontmatter.
 
     :param target_dir: Target directory containing the ``.SWE/issues/`` folder.
@@ -297,7 +297,7 @@ def create_issue(target_dir: Optional[Path | str] = None, issue_data: Optional[d
     return issue
 
 
-def finalize_issue_outcome(target_dir: Optional[Path | str] = None, issue_id: Any = None, outcome: str = "") -> bool:
+def finalize_issue_outcome(target_dir: Path | str | None = None, issue_id: Any = None, outcome: str = "") -> bool:
     """Set final status and increment attempts counter.
 
     :param target_dir: Target directory containing the ``.SWE/issues/`` folder.

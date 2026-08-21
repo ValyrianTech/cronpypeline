@@ -4,14 +4,13 @@ State is derived fresh on each tick from the filesystem. No in-memory state
 persists between ticks. This makes the pipeline fully crash-safe.
 """
 
-import json
-import time
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from cronpypeline.config import Stage
-from cronpypeline.markers import marker_exists, read_marker, marker_age_seconds
+from cronpypeline.markers import marker_age_seconds, marker_exists, read_marker
 
 
 @dataclass
@@ -34,11 +33,11 @@ class StageState:
     is_given_up: bool = False
     is_stale: bool = False
     retry_count: int = 0
-    processing_data: Optional[dict[str, Any]] = None
+    processing_data: dict[str, Any] | None = None
     rejection_count: int = 0
     is_rejected: bool = False
 
-    def derive(self, base_dir: Path, context: Optional[dict[str, Any]] = None) -> None:
+    def derive(self, base_dir: Path, context: dict[str, Any] | None = None) -> None:
         """Derive state from the filesystem.
 
         :param base_dir: Target directory to check markers in.
@@ -106,7 +105,7 @@ class TargetState:
     stage_states: dict[str, StageState] = dc_field(default_factory=dict)
     target_lock: bool = False
 
-    def derive(self, base_dir: Path, context: Optional[dict[str, Any]] = None) -> None:
+    def derive(self, base_dir: Path, context: dict[str, Any] | None = None) -> None:
         """Derive state for all stages.
 
         :param base_dir: Target directory to check markers in.
@@ -126,7 +125,7 @@ class TargetState:
         return any(ss.is_processing for ss in self.stage_states.values())
 
     @property
-    def first_actionable_stage(self) -> Optional[StageState]:
+    def first_actionable_stage(self) -> StageState | None:
         """Return the first stage that can be acted upon, or None.
 
         If target_lock is enabled, no stage is actionable while any stage is processing.
@@ -156,7 +155,7 @@ class PipelineState:
     target_states: dict[str, TargetState] = dc_field(default_factory=dict)
     target_lock: bool = False
 
-    def derive(self, targets: list[str], target_configs: Optional[dict[str, dict[str, Any]]] = None) -> None:
+    def derive(self, targets: list[str], target_configs: dict[str, dict[str, Any]] | None = None) -> None:
         """Derive state for all targets.
 
         :param targets: List of target names.
@@ -181,7 +180,7 @@ class PipelineState:
             target_state.derive(target_dir, context=ctx)
             self.target_states[target] = target_state
 
-    def get_target_with_work(self, targets: list[str]) -> Optional[str]:
+    def get_target_with_work(self, targets: list[str]) -> str | None:
         """Return the first target that has actionable work, or None.
 
         :param targets: List of target names to check.

@@ -1,9 +1,6 @@
 """Tests for the VNN pipeline JSON config."""
 
-import json
 from pathlib import Path
-
-import pytest
 
 from cronpypeline.config import PipelineConfig
 

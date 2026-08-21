@@ -5,13 +5,12 @@ referenced from pipeline JSON configs via "callable": "cronpypeline.plugins.swe_
 """
 
 import json
-import os
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from cronpypeline.actions import ActionSpec, TickContext
-from cronpypeline.plugins.issue_store import load_issues, set_issue_status, get_issue
+from cronpypeline.plugins.issue_store import load_issues, set_issue_status
 
 
 def detect_open_issue(context: dict[str, Any]) -> bool:
@@ -114,7 +113,7 @@ def reset_issue_status(action: ActionSpec, context: TickContext) -> tuple[bool, 
     return False, f"Issue {issue_id} not found"
 
 
-def sync_session_mode(context: dict[str, Any], mode_file: Optional[str] = None) -> bool:
+def sync_session_mode(context: dict[str, Any], mode_file: str | None = None) -> bool:
     """Pre-tick hook: sync .SWE/github_session.json to the pipeline mode_file.
 
     Reads the GitHub session file from the target's ``.SWE`` directory. If the session

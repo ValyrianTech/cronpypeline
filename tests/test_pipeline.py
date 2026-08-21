@@ -3,16 +3,19 @@
 import json
 import os
 import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cronpypeline.config import (
-    PipelineConfig, Stage, TriggerCondition, TriggerType,
-    ActionSpec, ActionType, MarkerSpec, TargetSpec, TargetType,
+    ActionSpec,
+    ActionType,
+    MarkerSpec,
+    PipelineConfig,
+    Stage,
+    TriggerCondition,
+    TriggerType,
 )
-from cronpypeline.markers import MarkerType, create_marker, marker_exists
+from cronpypeline.markers import MarkerType
 from cronpypeline.pipeline import Pipeline, TickResult, TickResultStatus
 
 
@@ -223,7 +226,7 @@ class TestTickBasic:
         })
         pipeline = Pipeline(config)
         # Register a mock action handler for queue_agent
-        from cronpypeline.actions import register_handler, ActionHandler, ActionResult
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
         from cronpypeline.config import ActionType
 
         class MockQueueHandler(ActionHandler):
@@ -489,7 +492,7 @@ class TestTickStaleHandling:
         })
         pipeline = Pipeline(config)
         # Register mock handler
-        from cronpypeline.actions import register_handler, ActionHandler, ActionResult
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
         from cronpypeline.config import ActionType
 
         class MockQueueHandler(ActionHandler):
@@ -664,9 +667,8 @@ class TestRejectionCounter:
 
     def test_rejection_count_read_from_marker(self, tmp_path):
         """StageState should read rejection_count from a rejection marker."""
+        from cronpypeline.config import Stage
         from cronpypeline.state import StageState
-        from cronpypeline.config import Stage, TriggerCondition, ActionSpec, MarkerSpec
-        from cronpypeline.markers import MarkerType
 
         workspace = tmp_path / "ws"
         target_dir = workspace / "repo1"
@@ -694,9 +696,8 @@ class TestRejectionCounter:
 
     def test_rejection_marker_makes_stage_not_actionable(self, tmp_path):
         """If a rejection marker exists, stage should not be actionable (it needs re-processing)."""
+        from cronpypeline.config import Stage
         from cronpypeline.state import StageState
-        from cronpypeline.config import Stage, TriggerCondition, ActionSpec, MarkerSpec
-        from cronpypeline.markers import MarkerType
 
         workspace = tmp_path / "ws"
         target_dir = workspace / "repo1"

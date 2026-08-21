@@ -1,19 +1,18 @@
 """Tests for cronpypeline.config — PipelineConfig, Stage, TriggerCondition, ActionSpec."""
 
 import json
+
 import pytest
-from pathlib import Path
 
 from cronpypeline.config import (
-    PipelineConfig,
-    Stage,
-    TriggerCondition,
-    TriggerType,
     ActionSpec,
     ActionType,
+    PipelineConfig,
+    Stage,
     TargetSpec,
     TargetType,
-    ActionHandlerConfig,
+    TriggerCondition,
+    TriggerType,
 )
 
 

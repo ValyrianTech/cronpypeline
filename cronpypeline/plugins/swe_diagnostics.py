@@ -8,13 +8,17 @@ Provides:
 
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from cronpypeline.actions import ActionResult, TickContext, format_template
 from cronpypeline.config import ActionSpec
-from cronpypeline.reporting import generate_timestamp, write_report, update_latest_symlink
-
+from cronpypeline.reporting import (
+    generate_timestamp,
+    update_latest_symlink,
+    write_report,
+)
 
 # ─── Output parsers ─────────────────────────────────────────────────────────
 
@@ -199,7 +203,7 @@ def parse_radon_output(output: str, threshold: str = "C", **kwargs: Any) -> dict
 # ─── Parser resolution ──────────────────────────────────────────────────────
 
 
-def _resolve_parser(parser_path: str) -> Optional[Callable[..., dict[str, Any]]]:
+def _resolve_parser(parser_path: str) -> Callable[..., dict[str, Any]] | None:
     """Resolve a dotted path to a callable.
 
     :param parser_path: Dotted import path to the parser function.
@@ -292,28 +296,28 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
     status = parsed.get("status", "UNKNOWN")
     report_lines = [
         f"# Diagnostic Report — {timestamp}",
-        f"",
+        "",
         f"**Status**: {status}",
         f"**Command**: `{command}`",
         f"**Exit code**: {exit_code}",
-        f"",
-        f"## Parsed Results",
-        f"",
+        "",
+        "## Parsed Results",
+        "",
     ]
     for key, value in parsed.items():
         if key != "status":
             report_lines.append(f"- **{key}**: {value}")
     report_lines.extend([
-        f"",
-        f"## stdout",
-        f"```",
+        "",
+        "## stdout",
+        "```",
         stdout,
-        f"```",
-        f"",
-        f"## stderr",
-        f"```",
+        "```",
+        "",
+        "## stderr",
+        "```",
         stderr,
-        f"```",
+        "```",
     ])
     content = "\n".join(report_lines)
 

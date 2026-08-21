@@ -1,23 +1,20 @@
 """Tests for SWE prompt builder custom action callables."""
 
 import json
-import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-import pytest
-
-from cronpypeline.actions import TickContext, ActionResult
+from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
-from cronpypeline.plugins.swe_prompts import (
-    queue_fix_agent,
-    queue_coder_agent,
-    queue_review_agent,
-    build_fix_prompt,
-    build_coder_prompt,
-    build_review_prompt,
-)
 from cronpypeline.plugins.issue_store import create_issue, get_issue
+from cronpypeline.plugins.swe_prompts import (
+    build_coder_prompt,
+    build_fix_prompt,
+    build_review_prompt,
+    queue_coder_agent,
+    queue_fix_agent,
+    queue_review_agent,
+)
 
 
 class TestBuildFixPrompt:

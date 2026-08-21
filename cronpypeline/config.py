@@ -5,13 +5,13 @@ loaded from JSON configuration files.
 """
 
 import json
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from cronpypeline.markers import MarkerSpec
-
 
 # ─── Enums ──────────────────────────────────────────────────────────────────
 
@@ -62,13 +62,13 @@ class TriggerCondition:
     :ivar conditions: Sub-conditions for and/or composite triggers.
     """
     type: TriggerType
-    path: Optional[str] = None
-    minutes: Optional[int] = None
-    field: Optional[str] = None
-    op: Optional[str] = None
+    path: str | None = None
+    minutes: int | None = None
+    field: str | None = None
+    op: str | None = None
     value: Any = None
-    queue_dir: Optional[str] = None
-    callable: Optional[str] = None
+    queue_dir: str | None = None
+    callable: str | None = None
     conditions: list["TriggerCondition"] = dc_field(default_factory=list)
 
     @classmethod
@@ -115,7 +115,7 @@ class ActionSpec:
     """
     type: ActionType
     params: dict[str, Any] = dc_field(default_factory=dict)
-    timeout_seconds: Optional[int] = None
+    timeout_seconds: int | None = None
     produces: list[MarkerSpec] = dc_field(default_factory=list)
 
     @classmethod
@@ -169,7 +169,7 @@ class Stage:
     max_retries: int = 3
     enabled: bool = True
     markers: dict[str, MarkerSpec] = dc_field(default_factory=dict)
-    on_fail: Optional[ActionSpec] = None
+    on_fail: ActionSpec | None = None
     invalidates: list[MarkerSpec] = dc_field(default_factory=list)
     modes: list[str] = dc_field(default_factory=list)
     max_rejections: int = 0
@@ -225,11 +225,11 @@ class TargetSpec:
     :ivar name: Single target name (single type).
     """
     type: TargetType
-    file: Optional[str] = None
-    key: Optional[str] = None
-    filter: Optional[dict[str, Any]] = None
-    items: Optional[list[str]] = None
-    name: Optional[str] = None
+    file: str | None = None
+    key: str | None = None
+    filter: dict[str, Any] | None = None
+    items: list[str] | None = None
+    name: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TargetSpec":
@@ -320,13 +320,13 @@ class PipelineConfig:
     workspace_dir: str
     stages: list[Stage]
     lock_file: str = "pipeline.lock"
-    config_file: Optional[str] = None
-    targets: Optional[TargetSpec] = None
-    action_handler: Optional[ActionHandlerConfig] = None
-    log_file: Optional[str] = None
-    pre_tick: Optional[HookConfig] = None
-    post_tick: Optional[HookConfig] = None
-    mode_file: Optional[str] = None
+    config_file: str | None = None
+    targets: TargetSpec | None = None
+    action_handler: ActionHandlerConfig | None = None
+    log_file: str | None = None
+    pre_tick: HookConfig | None = None
+    post_tick: HookConfig | None = None
+    mode_file: str | None = None
     target_lock: bool = False
 
     @classmethod
@@ -383,7 +383,7 @@ class PipelineConfig:
         )
 
     @classmethod
-    def from_file(cls, path: Optional[Path | str] = None) -> "PipelineConfig":
+    def from_file(cls, path: Path | str | None = None) -> "PipelineConfig":
         """Load a PipelineConfig from a JSON file.
 
         :param path: Path to the JSON config file.

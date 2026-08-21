@@ -1,9 +1,6 @@
 """Tests for SWE GitHub session adapter (sync_session_mode pre_tick hook)."""
 
 import json
-from pathlib import Path
-
-import pytest
 
 from cronpypeline.plugins.swe_plugin import sync_session_mode
 

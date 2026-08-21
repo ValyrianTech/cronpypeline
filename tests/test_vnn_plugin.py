@@ -1,13 +1,9 @@
 """Tests for VNN plugin: conversation ID continuation and rejection audit trail."""
 
 import json
-import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
-import pytest
-
-from cronpypeline.actions import TickContext, ActionResult
+from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
 
