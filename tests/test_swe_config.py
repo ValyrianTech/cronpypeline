@@ -90,3 +90,14 @@ class TestSWEPipelineConfig:
         config = PipelineConfig.from_file(self.CONFIG_PATH)
         stale_stage = next(s for s in config.stages if s.id == "C-stale")
         assert "detect_agent_forgot_marker" in stale_stage.trigger.callable
+
+    def test_async_agent_stages_have_processing_markers(self):
+        config = PipelineConfig.from_file(self.CONFIG_PATH)
+        async_stage_ids = ["A2-fix-agent", "A6-fix-agent", "C-code", "C-pr-review"]
+        for stage_id in async_stage_ids:
+            stage = next(s for s in config.stages if s.id == stage_id)
+            assert "processing" in stage.markers, \
+                f"Stage {stage_id} missing processing marker"
+            processing = stage.markers["processing"]
+            assert processing.type.value == "json"
+            assert processing.name.startswith(".processing_")

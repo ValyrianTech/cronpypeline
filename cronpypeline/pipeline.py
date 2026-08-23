@@ -531,6 +531,21 @@ class Pipeline:
         ):
             create_marker(stage.markers["completion"], target_dir, context=marker_ctx)
 
+        # Create processing marker for async custom actions (non-chained)
+        if (
+            stage.action.type == ActionType.CUSTOM
+            and "processing" in stage.markers
+            and result.success
+            and result.data.get("async", False)
+        ):
+            processing_spec = stage.markers["processing"]
+            processing_spec.content = {
+                **processing_spec.content,
+                "retry_count": 0,
+                **result.data,
+            }
+            create_marker(processing_spec, target_dir, context=marker_ctx)
+
         # Invalidate markers from other stages
         for inv_spec in stage.invalidates:
             delete_marker(inv_spec, target_dir, context=marker_ctx)
