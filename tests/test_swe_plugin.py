@@ -2355,7 +2355,7 @@ class TestRunCPrReview:
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
         with patch("cronpypeline.plugins.swe_plugin._build_pr_review_prompt", return_value="review prompt"):
-            result = run_c_pr_review(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+            result = run_c_pr_review(ActionSpec(type=ActionType.CUSTOM, params={"queue_dir": str(tmp_path / "queue")}), ctx)
         assert result.success is True
         marker = target / ".SWE" / "pr_review_queued.json"
         assert marker.exists()
@@ -2503,7 +2503,7 @@ class TestRunCDocSync:
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
         ctx = _make_tick_context(target, default_branch="main")
-        result = run_c_doc_sync(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        result = run_c_doc_sync(ActionSpec(type=ActionType.CUSTOM, params={"queue_dir": str(tmp_path / "queue")}), ctx)
         assert result.success is True
         # Check that a conversation queue file was created
         queue_dir = target / ".SWE" / "queue"
