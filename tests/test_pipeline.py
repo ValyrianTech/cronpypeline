@@ -3682,7 +3682,7 @@ def my_action(action, context):
 from cronpypeline.actions import ActionResult
 
 def my_action(action, context):
-    return ActionResult(success=True, data={"async": True})
+    return ActionResult(success=True, data={"async": True, "queue_file": "/tmp/queue/abc123.json", "entry_id": "entry-123"})
 """)
         try:
             config = PipelineConfig.from_dict({
@@ -3716,6 +3716,11 @@ def my_action(action, context):
             assert "A1" in result.chained_stages
             assert not (target_dir / "b.md").exists()
             assert (target_dir / ".processing").exists()
+            with open(target_dir / ".processing") as f:
+                processing = json.load(f)
+            assert processing.get("queue_file") == "/tmp/queue/abc123.json"
+            assert processing.get("entry_id") == "entry-123"
+            assert processing.get("retry_count") == 0
         finally:
             self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_proc_mod")
 
