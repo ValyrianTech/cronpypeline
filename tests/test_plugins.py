@@ -719,6 +719,19 @@ class TestDetectAgentForgotMarkerEdgeCases:
 
         assert result is False
 
+    def test_git_not_found_returns_false(self, tmp_path):
+        """When git is not on PATH, should return False."""
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+        (target_dir / "task.json").write_text("{}")
+
+        context = {"target_dir": str(target_dir), "queue_dir": ""}
+
+        with patch("shutil.which", return_value=None):
+            result = detect_agent_forgot_marker(context)
+
+        assert result is False
+
     def test_git_timeout_returns_false(self, tmp_path):
         """When git log times out, should return False."""
         import subprocess as sp

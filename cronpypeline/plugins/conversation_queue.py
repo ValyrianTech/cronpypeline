@@ -183,7 +183,7 @@ class ConversationQueueHandler(ActionHandler):
         return not any(self.queue_dir.iterdir())
 
 
-def register():
+def register() -> None:
     """Register the conversation queue handler.
 
     Note: This is a no-op placeholder. The actual handler must be instantiated

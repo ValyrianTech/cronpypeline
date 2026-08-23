@@ -386,6 +386,12 @@ class TestGetIntegrationShaFailure:
             result = _get_integration_sha(tmp_path)
         assert result == ""
 
+    def test_git_not_found_returns_empty(self, tmp_path):
+        from cronpypeline.plugins.swe_prompts import _get_integration_sha
+        with patch("shutil.which", return_value=None):
+            result = _get_integration_sha(tmp_path)
+        assert result == ""
+
 
 class TestGetDiffStatsFailure:
     """Tests for _get_diff_stats error handling."""
@@ -399,6 +405,12 @@ class TestGetDiffStatsFailure:
     def test_filenotfound_returns_empty(self, tmp_path):
         from cronpypeline.plugins.swe_prompts import _get_diff_stats
         with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
+            result = _get_diff_stats(tmp_path)
+        assert result == ""
+
+    def test_git_not_found_returns_empty(self, tmp_path):
+        from cronpypeline.plugins.swe_prompts import _get_diff_stats
+        with patch("shutil.which", return_value=None):
             result = _get_diff_stats(tmp_path)
         assert result == ""
 

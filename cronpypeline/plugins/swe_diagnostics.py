@@ -7,7 +7,7 @@ Provides:
 """
 
 import re
-import subprocess
+import subprocess  # nosec B404 - subprocess is used by design to run diagnostic commands
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -263,7 +263,7 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
     try:
         proc = subprocess.run(
             command,
-            shell=True,
+            shell=True,  # nosec B602 - diagnostic commands come from trusted pipeline config
             cwd=str(context.target_dir),
             capture_output=True,
             text=True,
