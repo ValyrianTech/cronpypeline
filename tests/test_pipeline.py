@@ -3724,6 +3724,63 @@ def my_action(action, context):
         finally:
             self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_proc_mod")
 
+    def test_chain_async_custom_action_does_not_mutate_marker_spec_content(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "chain_async_no_mutate_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True, "queue_file": "/tmp/queue/abc123.json", "entry_id": "entry-123"})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Step 1",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "command", "params": {"command": "echo a"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "A1",
+                        "name": "Async Chained Step",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "custom", "params": {"callable": "chain_async_no_mutate_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "b.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {"initial": "value"}},
+                        },
+                    },
+                ],
+            })
+            original_spec = config.stages[1].markers["processing"]
+            assert original_spec.content == {"initial": "value"}
+
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert result.stage_id == "A1"
+            assert "A1" in result.chained_stages
+            assert not (target_dir / "b.md").exists()
+            assert (target_dir / ".processing").exists()
+            with open(target_dir / ".processing") as f:
+                processing = json.load(f)
+            assert processing.get("queue_file") == "/tmp/queue/abc123.json"
+            assert processing.get("entry_id") == "entry-123"
+            assert processing.get("retry_count") == 0
+
+            assert config.stages[1].markers["processing"].content == {"initial": "value"}
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_no_mutate_mod")
+
     def test_chain_async_custom_action_without_processing_marker(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()

@@ -10,7 +10,7 @@ Each tick:
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from dataclasses import field as dc_field
 from enum import Enum
 from pathlib import Path
@@ -664,12 +664,11 @@ class Pipeline:
 
             # Create processing marker for async chained stages
             if result.data.get("async", False) and "processing" in next_stage.markers:
-                processing_spec = next_stage.markers["processing"]
-                processing_spec.content = {
-                    **processing_spec.content,
+                processing_spec = replace(next_stage.markers["processing"], content={
+                    **next_stage.markers["processing"].content,
                     "retry_count": 0,
                     **result.data,
-                }
+                })
                 create_marker(processing_spec, target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
 
             # Invalidate markers from other stages
