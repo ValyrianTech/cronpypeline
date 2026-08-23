@@ -2674,6 +2674,46 @@ class TestTickChainEdgeCases:
         assert "A1" in result.failed_chained_stages
         assert (target_dir / "on_fail_marker.txt").exists()
 
+    def test_chain_surfaces_on_fail_failure_for_failing_chained_stage(self, tmp_path):
+        """When a chained stage's action fails AND its on_fail action also fails,
+        the on_fail failure should be surfaced in the TickResult message."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Failing Step",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "false"}},
+                    "on_fail": {"type": "command", "params": {"command": "echo on_fail_failed >&2 && false"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        # A0 succeeds, A1 fails, and A1's on_fail also fails
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.stage_id == "A1"
+        assert "A1" in result.failed_chained_stages
+        # The on_fail failure should be surfaced in the message
+        assert "[on_fail]" in result.message
+        assert "on_fail_failed" in result.message
+
     def test_chain_failure_reports_failed_stage(self, tmp_path):
         """When a chained stage fails, the TickResult reports the failing stage."""
         workspace = tmp_path / "workspace"

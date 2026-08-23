@@ -627,7 +627,11 @@ class Pipeline:
                         verbose=verbose,
                         target_config={},
                     )
-                    execute_action(next_stage.on_fail, fail_ctx)
+                    fail_result = execute_action(next_stage.on_fail, fail_ctx)
+                    if not fail_result.success:
+                        # Surface the on_fail failure to the caller
+                        on_fail_err = fail_result.stderr or fail_result.stdout
+                        result.stderr = (result.stderr + "\n[on_fail] " + on_fail_err).strip() if on_fail_err else result.stderr
                 return (current_stage.id, chained, next_stage.id, result)
 
             # Create produced markers
