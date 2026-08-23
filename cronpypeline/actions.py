@@ -7,9 +7,10 @@ lives in the plugins package.
 
 import os
 import socket
-import subprocess
+import subprocess  # nosec B404 - subprocess is used by design to run pipeline commands/scripts
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from dataclasses import field as dc_field
@@ -142,7 +143,7 @@ class CommandActionHandler(ActionHandler):
         try:
             proc = subprocess.run(
                 cmd,
-                shell=True,
+                shell=True,  # nosec B602 - shell command execution is the intended behavior of CommandActionHandler; commands come from trusted pipeline config
                 cwd=cwd,
                 capture_output=True,
                 text=True,
@@ -191,7 +192,7 @@ class SubprocessActionHandler(ActionHandler):
         Path(cwd).mkdir(parents=True, exist_ok=True)
 
         try:
-            proc = subprocess.run(
+            proc = subprocess.run(  # nosec B603 - runs an explicit executable/script without a shell; args are passed as a list
                 cmd,
                 cwd=cwd,
                 capture_output=True,
@@ -281,8 +282,17 @@ class HttpRequestActionHandler(ActionHandler):
         data = body.encode("utf-8") if body else None
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
 
+        # Restrict URL schemes to http/https only to prevent file:// or custom scheme access
+        parsed_url = urllib.parse.urlparse(url)
+        if parsed_url.scheme not in ("http", "https"):
+            return ActionResult(
+                success=False,
+                exit_code=-1,
+                stderr=f"Unsupported URL scheme: {parsed_url.scheme!r}",
+            )
+
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 - URL scheme is validated to http/https only just above
                 status = resp.status
                 body_bytes = resp.read()
                 body_str = body_bytes.decode("utf-8", errors="replace")

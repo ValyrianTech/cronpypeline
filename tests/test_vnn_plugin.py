@@ -466,6 +466,7 @@ class TestLogRejectionEdgeCases:
     def test_log_rejection_os_error_on_read_treated_as_empty(self, tmp_path):
         """OSError reading existing log should be treated as empty list."""
         from unittest.mock import patch
+
         from cronpypeline.plugins.vnn_plugin import log_rejection
 
         target_dir = tmp_path / "story-1"
@@ -683,6 +684,7 @@ class TestCleanupStaleCompilationMarkers:
         """Stale compilation marker older than timeout should be removed."""
         import os
         import time as _time
+
         from cronpypeline.plugins.vnn_plugin import cleanup_stale_compilation_markers
 
         target_dir = tmp_path / "story-1"
@@ -722,6 +724,7 @@ class TestCleanupStaleCompilationMarkers:
     def test_os_error_on_stat_returns_true(self, tmp_path):
         """OSError on stat should be caught and return True."""
         from unittest.mock import patch
+
         from cronpypeline.plugins.vnn_plugin import cleanup_stale_compilation_markers
 
         target_dir = tmp_path / "story-1"

@@ -9,8 +9,8 @@ import json
 import time
 from pathlib import Path
 
-from cronpypeline.actions import ActionHandler, ActionResult, register_handler
-from cronpypeline.config import ActionType, PipelineConfig
+from cronpypeline.actions import ActionHandler, ActionResult, TickContext, register_handler
+from cronpypeline.config import ActionSpec, ActionType, PipelineConfig
 from cronpypeline.pipeline import Pipeline, TickResultStatus
 
 # ---------------------------------------------------------------------------
@@ -66,6 +66,21 @@ def _make_mock_handler(queue_dir: Path):
     handler = MockAgentHandler(queue_dir)
     register_handler(ActionType.QUEUE_AGENT, handler)
     return handler
+
+
+class TestMockAgentHandlerUnit:
+    """Directly exercise MockAgentHandler.execute/check_complete branches."""
+
+    def test_execute_dry_run_and_check_complete(self, tmp_path):
+        handler = MockAgentHandler(tmp_path / "queue")
+        action = ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "TestAgent"})
+        context = TickContext(target="story-1", workspace_dir=tmp_path, dry_run=True)
+
+        result = handler.execute(action, context)
+        assert result.success is True
+        assert result.dry_run is True
+
+        assert handler.check_complete(action, context) is False
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,8 @@ Provides:
 - `queue_review_agent`: Custom action that builds a review prompt and queues it.
 """
 
-import subprocess
+import shutil
+import subprocess  # nosec B404 - subprocess is used by design to run git commands for prompt building
 from pathlib import Path
 from typing import Any
 
@@ -162,9 +163,12 @@ def _get_integration_sha(target_dir: Path) -> str:
     :param target_dir: Target directory to run git in.
     :returns: Short SHA string, or empty string on failure.
     """
+    git_bin = shutil.which("git")
+    if git_bin is None:
+        return ""
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+        result = subprocess.run(  # nosec B603 - git_bin is resolved to an absolute path via shutil.which; args are a static list
+            [git_bin, "rev-parse", "--short", "HEAD"],
             cwd=str(target_dir),
             capture_output=True,
             text=True,
@@ -184,9 +188,12 @@ def _get_diff_stats(target_dir: Path) -> str:
     :param target_dir: Target directory to run git in.
     :returns: Diff stats string, or empty string on failure.
     """
+    git_bin = shutil.which("git")
+    if git_bin is None:
+        return ""
     try:
-        result = subprocess.run(
-            ["git", "diff", "--stat", "integration"],
+        result = subprocess.run(  # nosec B603 - git_bin is resolved to an absolute path via shutil.which; args are a static list
+            [git_bin, "diff", "--stat", "integration"],
             cwd=str(target_dir),
             capture_output=True,
             text=True,

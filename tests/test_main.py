@@ -37,6 +37,7 @@ class TestMainEntryPoint:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
         assert result.returncode == 0
         assert (workspace / "my-repo" / "a.md").exists()
@@ -48,6 +49,7 @@ class TestMainEntryPoint:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
         assert result.returncode != 0
 
@@ -60,6 +62,6 @@ class TestMainEntryPoint:
 
         with patch("sys.exit") as mock_exit, \
              patch("cronpypeline.cli.main", return_value=0) as mock_main:
-            exec(compile(source, str(main_path), "exec"), {"__name__": "__main__"})
+            exec(compile(source, str(main_path), "exec"), {"__name__": "__main__"})  # noqa: S102
             mock_main.assert_called_once()
             mock_exit.assert_called_once_with(0)

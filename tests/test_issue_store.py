@@ -316,7 +316,7 @@ class TestParseFrontmatterEdgeCases:
 
     def test_line_without_colon_skipped(self):
         """Lines without a colon in frontmatter should be skipped."""
-        fm, body = parse_frontmatter("---\nid: 42\nthis line has no colon\nstatus: open\n---\nBody")
+        fm, _body = parse_frontmatter("---\nid: 42\nthis line has no colon\nstatus: open\n---\nBody")
         assert fm["id"] == 42
         assert fm["status"] == "open"
         assert "this line has no colon" not in fm
@@ -355,8 +355,9 @@ class TestIssuesDirRaises:
 
     def test_none_target_dir_raises_value_error(self):
         """_issues_dir with None should raise ValueError."""
-        from cronpypeline.plugins.issue_store import _issues_dir
         import pytest
+
+        from cronpypeline.plugins.issue_store import _issues_dir
         with pytest.raises(ValueError, match="target_dir is required"):
             _issues_dir(None)
 

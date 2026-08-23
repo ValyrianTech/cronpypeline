@@ -42,6 +42,20 @@ class ConversationQueueHandler(ActionHandler):
         default_fields: dict[str, Any] | None = None,
         flatten_agent_settings: bool = False,
     ) -> None:
+        """Initialize the conversation queue handler.
+
+        :param queue_dir: Directory to write queue entry JSON files.
+        :type queue_dir: str
+        :param agent_settings_dir: Optional directory with per-agent JSON settings.
+        :type agent_settings_dir: str | None
+        :param prompt_field: Name of the field for the prompt text (default ``"prompt"``).
+        :type prompt_field: str
+        :param default_fields: Static fields injected into every queue entry.
+        :type default_fields: dict[str, Any] | None
+        :param flatten_agent_settings: When True, merge agent settings flat into the entry
+            instead of nesting under ``"agent_config"``.
+        :type flatten_agent_settings: bool
+        """
         self.queue_dir = Path(queue_dir)
         self.agent_settings_dir = Path(agent_settings_dir) if agent_settings_dir else None
         self.prompt_field = prompt_field
@@ -169,7 +183,7 @@ class ConversationQueueHandler(ActionHandler):
         return not any(self.queue_dir.iterdir())
 
 
-def register():
+def register() -> None:
     """Register the conversation queue handler.
 
     Note: This is a no-op placeholder. The actual handler must be instantiated

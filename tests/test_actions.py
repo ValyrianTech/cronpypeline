@@ -1,7 +1,8 @@
 """Tests for cronpypeline.actions — built-in action handlers and TickContext."""
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from cronpypeline.actions import (
     ActionResult,
@@ -571,7 +572,6 @@ class TestActionHandlerBase:
     """Tests for ActionHandler base class."""
 
     def test_base_execute_raises_not_implemented(self, tmp_path):
-        handler = ActionResult.__class__  # dummy
         from cronpypeline.actions import ActionHandler
         base = ActionHandler()
         ctx = TickContext(target="test", workspace_dir=tmp_path)
@@ -698,11 +698,27 @@ def my_action(action, context):
 class TestHttpRequestActionHandlerErrors:
     """Tests for HTTP request handler error handling."""
 
+    def test_unsupported_url_scheme_is_rejected(self, tmp_path):
+        """Non-http(s) URL schemes should be rejected before any request."""
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "file:///etc/passwd", "method": "GET"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == -1
+        assert "Unsupported URL scheme" in result.stderr
+        mock_urlopen.assert_not_called()
+
     def test_http_error_is_failure(self, tmp_path):
         """HTTPError (e.g. 500) should be caught and return failure."""
         from unittest.mock import patch
         from urllib.error import HTTPError
-        from urllib.request import Request
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
@@ -743,7 +759,6 @@ class TestHttpRequestActionHandlerErrors:
 
     def test_url_error_socket_timeout(self, tmp_path):
         """URLError with socket.timeout reason should set timed_out."""
-        import socket
         from unittest.mock import patch
         from urllib.error import URLError
 
@@ -755,7 +770,7 @@ class TestHttpRequestActionHandlerErrors:
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", side_effect=URLError(socket.timeout("timed out"))):
+        with patch("urllib.request.urlopen", side_effect=URLError(TimeoutError("timed out"))):
             result = handler.execute(action, ctx)
 
         assert result.success is False

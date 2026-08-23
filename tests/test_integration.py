@@ -153,7 +153,8 @@ class TestStaleRecoveryFlow:
                 call_count["check_complete"] += 1
                 return False
 
-        register_handler(ActionType.QUEUE_AGENT, SimulatedAgentHandler())
+        handler = SimulatedAgentHandler()
+        register_handler(ActionType.QUEUE_AGENT, handler)
 
         config = PipelineConfig.from_dict({
             "name": "stale-test",
@@ -198,6 +199,9 @@ class TestStaleRecoveryFlow:
         # Tick 3: no work (stage complete)
         r3 = pipeline.tick(target="my-repo")
         assert r3.status == TickResultStatus.NO_WORK
+
+        # Exercise the mock handler's check_complete branch directly
+        assert handler.check_complete(None, None) is False
 
 
 class TestMultiTargetFlow:
@@ -357,7 +361,8 @@ class TestCrashSafety:
                 return ActionResult(success=True, stdout="queued")
             def check_complete(self, action, context):
                 return False
-        register_handler(ActionType.QUEUE_AGENT, MockHandler())
+        handler = MockHandler()
+        register_handler(ActionType.QUEUE_AGENT, handler)
 
         # Tick should detect stale A1 and re-queue
         r = pipeline.tick(target="my-repo")
@@ -365,6 +370,9 @@ class TestCrashSafety:
         assert r.stage_id == "A1"
         new_data = json.loads((target_dir / ".processing").read_text())
         assert new_data["retry_count"] == 1
+
+        # Exercise the mock handler's check_complete branch directly
+        assert handler.check_complete(None, None) is False
 
 
 class TestEndToEndWithConfig:
