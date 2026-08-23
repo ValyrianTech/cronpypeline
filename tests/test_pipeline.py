@@ -3519,3 +3519,96 @@ def my_action(action, context):
             assert not (target_dir / "b.md").exists()
         finally:
             self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_mod")
+
+    def test_chain_async_custom_action_creates_processing_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "chain_async_proc_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Step 1",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "command", "params": {"command": "echo a"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "A1",
+                        "name": "Async Chained Step",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "custom", "params": {"callable": "chain_async_proc_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "b.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                        },
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert result.stage_id == "A1"
+            assert "A1" in result.chained_stages
+            assert not (target_dir / "b.md").exists()
+            assert (target_dir / ".processing").exists()
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_proc_mod")
+
+    def test_chain_async_custom_action_without_processing_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "chain_async_noproc_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Step 1",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "command", "params": {"command": "echo a"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "A1",
+                        "name": "Async Chained Step",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "custom", "params": {"callable": "chain_async_noproc_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "b.md"},
+                        },
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert result.stage_id == "A1"
+            assert "A1" in result.chained_stages
+            assert not (target_dir / "b.md").exists()
+            assert not (target_dir / ".processing").exists()
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_noproc_mod")
