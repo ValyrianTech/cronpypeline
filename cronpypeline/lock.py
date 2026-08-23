@@ -90,8 +90,10 @@ class FileLock:
 
         :returns: The :class:`FileLock` instance.
         :rtype: FileLock
+        :raises RuntimeError: If the lock cannot be acquired.
         """
-        self.acquire()
+        if not self.acquire():
+            raise RuntimeError(f"Could not acquire lock: {self.lock_file}")
         return self
 
     def __exit__(

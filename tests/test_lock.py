@@ -133,6 +133,17 @@ class TestFileLockContextManager:
             pass
         assert not lock_file.exists()
 
+    def test_context_manager_raises_when_lock_not_acquired(self, tmp_path):
+        """Entering context manager should raise RuntimeError if lock is held."""
+        import pytest
+        lock_file = tmp_path / "pipeline.lock"
+        lock1 = FileLock(lock_file)
+        lock1.acquire()
+        lock2 = FileLock(lock_file)
+        with pytest.raises(RuntimeError, match="Could not acquire lock"):
+            lock2.__enter__()
+        lock1.release()
+
 
 class TestFileLockReleaseWithoutAcquire:
     """Tests for edge cases."""
