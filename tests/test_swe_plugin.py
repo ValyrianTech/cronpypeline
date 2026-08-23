@@ -431,8 +431,8 @@ class TestFinalizeSession:
         issue_path = target / ".SWE" / "issues" / "github-1.md"
         issue_path.write_text("---\nid: github-1\nstatus: discarded\ngithub_number: 42\n---\n# Issue\n")
         ctx = _make_tick_context(target, github_token="fake", slug="owner/repo")
-        with patch("cronpypeline.plugins.swe_plugin._gh_api_post") as mock_post, \
-             patch("cronpypeline.plugins.swe_plugin._gh_api_patch") as mock_patch:
+        with patch("cronpypeline.plugins.swe_plugin._gh_api_post"), \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_patch"):
             result = finalize_session(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["gh_number"] == 42
@@ -2568,7 +2568,7 @@ class TestCleanupGitBranch:
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         ctx = _make_tick_context(target)
         action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "nonexistent"})
-        success, msg = cleanup_git_branch(action, ctx)
+        success, _msg = cleanup_git_branch(action, ctx)
         assert success is True
 
 
@@ -2589,7 +2589,7 @@ class TestResetIssueStatus:
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target)
         action = ActionSpec(type=ActionType.CUSTOM, params={"issue_id": "nonexistent"})
-        success, msg = reset_issue_status(action, ctx)
+        success, _msg = reset_issue_status(action, ctx)
         assert success is False
 
 
@@ -2805,7 +2805,7 @@ class TestEnsurePhaseABranchExistingBranch:
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/phase-a-hygiene"], capture_output=True, check=True)
         assert ensure_phase_a_branch(target) is True
-        cur = subprocess.run(["git", "-C", str(target), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
+        cur = subprocess.run(["git", "-C", str(target), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, check=False)
         assert cur.stdout.strip() == "swe-pipeline/phase-a-hygiene"
 
 
@@ -3862,7 +3862,7 @@ class TestCleanupGitBranchTimeout:
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         ctx = _make_tick_context(target)
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)):
-            success, msg = cleanup_git_branch(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+            success, _msg = cleanup_git_branch(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert success is True
 
 
@@ -4062,15 +4062,6 @@ class TestFinalizeSessionIssueDirectory:
         ctx = _make_tick_context(target)
         result = finalize_session(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
-
-
-class TestGitHelper:
-    """Cover line 430: _git function body."""
-
-    def test_git_returns_completed_process(self, tmp_path):
-        subprocess.run(["git", "init", "-b", "main", str(tmp_path)], capture_output=True, check=True)
-        result = _git(tmp_path, "status", check=False)
-        assert result.returncode == 0
 
 
 class TestDetectLintAutofixDirectoryReport:

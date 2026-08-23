@@ -100,7 +100,7 @@ def detect_lint_fail(context: dict[str, Any]) -> bool:
         return False
     try:
         text = report_path.read_text(encoding="utf-8")
-    except Exception:
+    except OSError:
         return False
     m_errors = re.search(r'\*\*errors\*\*:\s*(\d+)', text)
     if not m_errors:
@@ -113,9 +113,7 @@ def detect_lint_fail(context: dict[str, Any]) -> bool:
     if errors <= 0 or fixable > 0:
         return False
     marker = target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
-    if marker.exists():
-        return False
-    return True
+    return not marker.exists()
 
 
 def _detect_report_fail(target_dir: Path, report_subdir: str) -> bool:
@@ -130,14 +128,12 @@ def _detect_report_fail(target_dir: Path, report_subdir: str) -> bool:
         return False
     try:
         first_line = report_path.read_text(encoding="utf-8").splitlines()[0]
-    except Exception:
+    except (OSError, IndexError):
         return False
     if "— FAIL" not in first_line:
         return False
     marker = target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
-    if marker.exists():
-        return False
-    return True
+    return not marker.exists()
 
 
 def detect_docstring_fail(context: dict[str, Any]) -> bool:
@@ -197,14 +193,12 @@ def detect_vulture_fail(context: dict[str, Any]) -> bool:
         return False
     try:
         first_line = report_path.read_text(encoding="utf-8").splitlines()[0]
-    except Exception:
+    except (OSError, IndexError):
         return False
     if "— FAIL" not in first_line:
         return False
     marker = target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
-    if marker.exists():
-        return False
-    return True
+    return not marker.exists()
 
 
 def detect_session_complete(context: dict[str, Any]) -> bool:
@@ -224,7 +218,7 @@ def detect_session_complete(context: dict[str, Any]) -> bool:
         return False
     try:
         session = json.loads(session_file.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return False
     if not session.get("active"):
         return False
@@ -239,7 +233,7 @@ def detect_session_complete(context: dict[str, Any]) -> bool:
         return False
     try:
         fm, _ = parse_frontmatter(issue_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return False
     return fm.get("status") == "discarded"
 
@@ -294,7 +288,7 @@ def finalize_session(action: ActionSpec, context: TickContext) -> ActionResult:
         return ActionResult(success=False, stderr="No session file found")
     try:
         session = json.loads(session_file.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return ActionResult(success=False, stderr="Failed to read session file")
 
     issue_id = session.get("issue_id", "")
@@ -304,7 +298,7 @@ def finalize_session(action: ActionSpec, context: TickContext) -> ActionResult:
         try:
             fm, _ = parse_frontmatter(issue_path.read_text(encoding="utf-8"))
             gh_number = int(fm.get("github_number", 0))
-        except Exception:
+        except (OSError, ValueError):
             pass
 
     token = _load_github_token(target_config)
@@ -534,7 +528,7 @@ def detect_lint_autofix(context: dict[str, Any]) -> bool:
         return False
     try:
         text = report_path.read_text(encoding="utf-8")
-    except Exception:
+    except OSError:
         return False
     m_fixable = re.search(r"\*\*fixable\*\*:\s*(\d+)", text)
     if not m_fixable:
@@ -544,9 +538,7 @@ def detect_lint_autofix(context: dict[str, Any]) -> bool:
         return False
     autofix_dir = target_dir / ".SWE" / "reports" / "lint-autofix"
     marker = autofix_dir / f"applied_for_{report_path.stem}.marker"
-    if marker.exists():
-        return False
-    return True
+    return not marker.exists()
 
 
 def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -762,7 +754,7 @@ def _read_github_session(target_dir: Path) -> dict[str, Any] | None:
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return None
 
 
@@ -796,7 +788,7 @@ def _git_issue_already_ingested(target_dir: Path, gh_number: int) -> bool:
     for path in sorted(issues_dir.glob("*.md")):
         try:
             head = path.read_text(encoding="utf-8")[:800]
-        except Exception:
+        except OSError:
             continue
         if not head.startswith("---"):
             continue
@@ -849,10 +841,7 @@ def detect_b1_issue_gathering(context: dict[str, Any]) -> bool:
         return False
 
     slug = (target_config.get("slug") or "").strip()
-    if "/" not in slug:
-        return False
-
-    return True
+    return "/" in slug
 
 
 def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -975,13 +964,13 @@ def _find_active_task(repo_name: str) -> Path | None:
                 continue
             try:
                 task = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 continue
             if task.get("repo_name") == repo_name:
                 candidates.append(task_dir)
     if not candidates:
         return None
-    return sorted(candidates)[-1]
+    return max(candidates)
 
 
 def _count_unranked_review_issues(target_dir: Path) -> int:
@@ -997,7 +986,7 @@ def _count_unranked_review_issues(target_dir: Path) -> int:
     for path in sorted(issues_dir.glob("*.md")):
         try:
             head = path.read_text(encoding="utf-8")[:800]
-        except Exception:
+        except OSError:
             continue
         if not head.startswith("---"):
             continue
@@ -1043,10 +1032,7 @@ def detect_c_review_ranking(context: dict[str, Any]) -> bool:
 
     markers_dir = target_dir / SWE_SUBDIR / "reports" / "review-ranking"
     marker_file = markers_dir / f"ranked_{unranked}.marker"
-    if marker_file.exists():
-        return False
-
-    return True
+    return not marker_file.exists()
 
 
 def run_c_review_ranking(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -1194,7 +1180,7 @@ def _open_issue_count(target_dir: Path) -> int:
     for path in sorted(issues_dir.glob("*.md")):
         try:
             head = path.read_text(encoding="utf-8")[:800]
-        except Exception:
+        except OSError:
             continue
         if not head.startswith("---"):
             continue
@@ -1221,7 +1207,7 @@ def _a1_is_pass(target_dir: Path) -> bool:
         return False
     try:
         return "— PASS" in target.read_text(encoding="utf-8").splitlines()[0]
-    except Exception:
+    except (OSError, IndexError):
         return False
 
 
@@ -1236,7 +1222,7 @@ def _a7_coverage_pct(target_dir: Path) -> float | None:
         return None
     try:
         text = report.read_text(encoding="utf-8")
-    except Exception:
+    except OSError:
         return None
     m = re.search(r"\*\*Coverage:\*\*\s*([\d.]+)%", text)
     return float(m.group(1)) if m else None
@@ -1282,7 +1268,7 @@ def _write_pipeline_issue(
     if extra:
         for key, value in extra:
             issue_data[key] = value
-    issue = create_issue(target_dir, issue_data=issue_data, body=f"# {title}\n\n{body}")
+    create_issue(target_dir, issue_data=issue_data, body=f"# {title}\n\n{body}")
     return target_dir / SWE_SUBDIR / "issues" / f"{issue_id}.md"
 
 
@@ -1337,7 +1323,7 @@ def _build_pr_body(target_dir: Path, repo_name: str, default_branch: str) -> str
         for path in sorted(issues_dir.glob("*.md")):
             try:
                 head = path.read_text(encoding="utf-8")[:800]
-            except Exception:
+            except OSError:
                 continue
             if not head.startswith("---"):
                 continue
@@ -1360,27 +1346,26 @@ def _build_pr_body(target_dir: Path, repo_name: str, default_branch: str) -> str
     return "\n".join([
         "## SWE Pipeline — Automated Code Improvements",
         "",
-        "This pull request was automatically generated by the "
-        "[SWE Pipeline](https://github.com/ValyrianTech/spellbook).",
+        ("This pull request was automatically generated by the "
+         "[SWE Pipeline](https://github.com/ValyrianTech/spellbook)."),
         "",
         "### Summary",
         "",
-        f"- **{done_count} issues fixed**: {bug_count} bugs, {refactor_count} "
-        f"refactors, {enhance_count} enhancements",
+        (f"- **{done_count} issues fixed**: {bug_count} bugs, {refactor_count} "
+         f"refactors, {enhance_count} enhancements"),
         f"- **Coverage**: {pct:.0f}%",
         "- **Tests**: all passing",
         "",
         "### What changed",
         "",
-        f"See the commit history on the `{INTEGRATION_BRANCH}` branch for "
-        "the full list of changes.",
+        (f"See the commit history on the `{INTEGRATION_BRANCH}` branch for "
+         "the full list of changes."),
         "",
         "### Review",
         "",
-        "The pipeline performed multiple code reviews and all issues found "
-        f"were addressed. The codebase is at {pct:.0f}% test coverage with "
-        "a green test suite.",
-        "",
+        ("The pipeline performed multiple code reviews and all issues found "
+         f"were addressed. The codebase is at {pct:.0f}% test coverage with "
+         "a green test suite."),
         "---",
         f"*Automatically generated at commit `{sha[:8]}`.*",
     ])
@@ -1608,7 +1593,7 @@ def detect_c_pr_status(context: dict[str, Any]) -> bool:
         return False
     try:
         pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return False
     if not pr_data.get("pr_number"):
         return False
@@ -1621,10 +1606,7 @@ def detect_c_pr_status(context: dict[str, Any]) -> bool:
         return False
 
     slug = (target_config.get("slug") or "").strip()
-    if "/" not in slug:
-        return False
-
-    return True
+    return "/" in slug
 
 
 def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -1800,7 +1782,7 @@ def detect_c_coverage_issue(context: dict[str, Any]) -> bool:
             sm = re.search(r"(?m)^status:\s*(\S+)", head)
             if sm and sm.group(1) != "discarded":
                 return False
-        except Exception:
+        except OSError:
             pass
 
     return True
@@ -1859,7 +1841,7 @@ def _count_done_review_issues(target_dir: Path) -> int:
     for path in sorted(issues_dir.glob("*.md")):
         try:
             head = path.read_text(encoding="utf-8")[:800]
-        except Exception:
+        except OSError:
             continue
         if not head.startswith("---"):
             continue
@@ -1886,7 +1868,7 @@ def _find_previous_review_sha(target_dir: Path) -> str | None:
     for path in sorted(issues_dir.glob("*.md")):
         try:
             head = path.read_text(encoding="utf-8")[:800]
-        except Exception:
+        except OSError:
             continue
         if not head.startswith("---"):
             continue
@@ -1934,16 +1916,13 @@ def detect_c_review_issue(context: dict[str, Any]) -> bool:
             sm = re.search(r"(?m)^status:\s*(\S+)", head)
             if sm and sm.group(1) != "discarded":
                 return False
-        except Exception:
+        except OSError:
             pass
 
     # Generation cap
     review_gen = _count_done_review_issues(target_dir) + 1
     max_gens = target_config.get("max_review_generations", MAX_REVIEW_GENERATIONS)
-    if max_gens > 0 and review_gen > max_gens:
-        return False
-
-    return True
+    return not (max_gens > 0 and review_gen > max_gens)
 
 
 def run_c_review_issue(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -2053,7 +2032,7 @@ def detect_c_doc_sync(context: dict[str, Any]) -> bool:
             data = json.loads(done_marker.read_text(encoding="utf-8"))
             if data.get("sha") == sha:
                 return False
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             pass
 
     # Re-queue guard
@@ -2067,7 +2046,7 @@ def detect_c_doc_sync(context: dict[str, Any]) -> bool:
                 queued_marker.unlink(missing_ok=True)
             else:
                 return False
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValueError):
             queued_marker.unlink(missing_ok=True)
 
     return True
@@ -2172,7 +2151,7 @@ def detect_c_pr_publish(context: dict[str, Any]) -> bool:
             pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
             if pr_data.get("pr_number"):
                 return False
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             pass
 
     if (target_config.get("delivery") or "").strip() != "open_pr":
@@ -2194,7 +2173,7 @@ def detect_c_pr_publish(context: dict[str, Any]) -> bool:
         ds_data = json.loads(doc_sync_marker.read_text(encoding="utf-8"))
         if ds_data.get("sha") != sha:
             return False
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return False
 
     return True
@@ -2276,7 +2255,7 @@ def detect_c_pr_review(context: dict[str, Any]) -> bool:
         return False
     try:
         pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return False
     pr_number = pr_data.get("pr_number")
     if not pr_number:
@@ -2289,7 +2268,7 @@ def detect_c_pr_review(context: dict[str, Any]) -> bool:
             reviewed_data = json.loads(reviewed_marker.read_text(encoding="utf-8"))
             if reviewed_data.get("pr_number") == pr_number:
                 return False
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             pass
 
     # Re-queue guard
@@ -2303,7 +2282,7 @@ def detect_c_pr_review(context: dict[str, Any]) -> bool:
                 queued_marker.unlink(missing_ok=True)
             else:
                 return False
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValueError):
             queued_marker.unlink(missing_ok=True)
 
     # Cycle limit
@@ -2316,10 +2295,7 @@ def detect_c_pr_review(context: dict[str, Any]) -> bool:
         return False
 
     token = _load_github_token(target_config)
-    if not token:
-        return False
-
-    return True
+    return bool(token)
 
 
 def run_c_pr_review(action: ActionSpec, context: TickContext) -> ActionResult:

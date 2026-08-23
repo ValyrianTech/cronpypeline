@@ -51,6 +51,7 @@ def run_command(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired:

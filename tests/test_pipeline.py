@@ -654,7 +654,7 @@ class TestTickStaleHandling:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
-        target_dir, pipeline = self._make_stale_stage(workspace)
+        _target_dir, pipeline = self._make_stale_stage(workspace)
 
         result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.ACTION_FAILED
