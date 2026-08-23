@@ -381,3 +381,32 @@ class TestMarkerAgeSecondsEdgeCases:
 
         with patch("pathlib.Path.stat", stat_side_effect):
             assert marker_age_seconds(m, tmp_path) is None
+
+
+class TestFormatTemplate:
+    """Tests for _format_template."""
+
+    def test_no_braces_returns_as_is(self):
+        from cronpypeline.markers import _format_template
+        assert _format_template("no placeholders", {"a": 1}) == "no placeholders"
+
+    def test_empty_context_returns_as_is(self):
+        from cronpypeline.markers import _format_template
+        assert _format_template("no braces", {}) == "no braces"
+
+    def test_valid_substitution(self):
+        from cronpypeline.markers import _format_template
+        assert _format_template("hello {name}", {"name": "world"}) == "hello world"
+
+    def test_key_error_returns_template(self):
+        from cronpypeline.markers import _format_template
+        assert _format_template("hello {missing}", {"name": "world"}) == "hello {missing}"
+
+    def test_index_error_returns_template(self):
+        from cronpypeline.markers import _format_template
+        assert _format_template("item {0}", {}) == "item {0}"
+
+    def test_value_error_returns_template(self):
+        from cronpypeline.markers import _format_template
+        # Invalid format spec causes ValueError
+        assert _format_template("{:bad}", {}) == "{:bad}"
