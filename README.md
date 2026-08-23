@@ -34,7 +34,7 @@
 
 ```bash
 # From source
-git clone https://github.com/yourusername/cronpypeline.git
+git clone https://github.com/ValyrianTech/cronpypeline.git
 cd cronpypeline
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
