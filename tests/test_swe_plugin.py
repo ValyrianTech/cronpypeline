@@ -3299,7 +3299,7 @@ class TestRunCReviewIssuePrevSha:
         subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
-        create_issue(target, issue_data={"id": "review-prev00001", "status": "done", "type": "review"}, body="# Review 1")
+        create_issue(target, issue_data={"id": "review-abc12345", "status": "done", "type": "review"}, body="# Review 1")
         ctx = _make_tick_context(target, default_branch="main")
         result = run_c_review_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
@@ -3320,3 +3320,671 @@ class TestRunCReviewIssueNoSha:
         ctx = _make_tick_context(target, default_branch="main")
         with pytest.raises(TypeError):
             run_c_review_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+
+
+# ─── More edge case tests ────────────────────────────────────────────────────
+
+
+class TestDetectCCoverageIssueNoSha:
+    def test_does_not_fire_when_no_sha(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 50.0%\n")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_coverage_issue(ctx) is False
+
+
+class TestDetectCReviewIssueNoSha:
+    def test_does_not_fire_when_no_sha(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_review_issue(ctx) is False
+
+
+class TestDetectCCoverageIssueCorruptExisting:
+    def test_fires_when_existing_issue_corrupt(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 50.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"coverage-{sha[:8]}"
+        # Create issue with broken symlink (corrupt)
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.write_text("---\nstatus: open\n---\n# Issue")
+        issue_path.unlink()
+        issue_path.symlink_to("/nonexistent/path")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_coverage_issue(ctx) is True
+
+
+class TestDetectCReviewIssueCorruptExisting:
+    def test_fires_when_existing_issue_corrupt(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"review-{sha[:8]}"
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.write_text("---\nstatus: open\n---\n# Issue")
+        issue_path.unlink()
+        issue_path.symlink_to("/nonexistent/path")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_review_issue(ctx) is True
+
+
+class TestDetectCDocSyncNoSha:
+    def test_does_not_fire_when_no_sha(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_doc_sync(ctx) is False
+
+
+class TestDetectCDocSyncNoCoverage:
+    def test_does_not_fire_when_no_coverage(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_doc_sync(ctx) is False
+
+
+class TestDetectCPrPublishNoCoverage:
+    def test_does_not_fire_when_no_coverage(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_publish(ctx) is False
+
+
+class TestDetectCPrPublishNoDocSync:
+    def test_does_not_fire_when_no_doc_sync(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_publish(ctx) is False
+
+
+class TestRunCDocSyncHandlerFailure:
+    def test_handler_failure_returns_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        ctx = _make_tick_context(target, default_branch="main")
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=False, stderr="queue failed")
+        with patch("cronpypeline.plugins.swe_plugin._build_doc_sync_prompt", return_value="prompt"), \
+             patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler):
+            result = run_c_doc_sync(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "queue failed" in result.stderr
+
+
+class TestRunCPrReviewQueuedMarkerRecent:
+    def test_does_not_fire_when_queued_recently(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        recent_time = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        (target / ".SWE" / "pr_review_queued.json").write_text(json.dumps({"queued_at": recent_time}))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "delivery": "open_pr"}}
+        assert detect_c_pr_review(ctx) is False
+
+
+class TestRunCPrReviewQueuedMarkerOld:
+    def test_fires_when_queued_old(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        old_time = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
+        (target / ".SWE" / "pr_review_queued.json").write_text(json.dumps({"queued_at": old_time}))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "delivery": "open_pr"}}
+        assert detect_c_pr_review(ctx) is True
+
+
+class TestRunCPrReviewQueuedMarkerCorrupt:
+    def test_fires_when_queued_corrupt(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        (target / ".SWE" / "pr_review_queued.json").write_text("bad json")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "delivery": "open_pr"}}
+        assert detect_c_pr_review(ctx) is True
+
+
+class TestRunCPrReviewCycleLimit:
+    def test_does_not_fire_when_cycle_limit_reached(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_review_cycles": 10}))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "delivery": "open_pr", "max_pr_review_cycles": 3}}
+        assert detect_c_pr_review(ctx) is False
+
+
+class TestDetectCPrPublishNoSha:
+    def test_does_not_fire_when_no_sha(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        # No integration branch → no sha
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_publish(ctx) is False
+
+
+class TestDetectCPrPublishCorruptPrMarker:
+    def test_fires_when_pr_marker_corrupt(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        (target / ".SWE" / "pr_published.json").write_text("bad json")
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_publish(ctx) is True
+
+
+class TestDetectCPrPublishPrMarkerNoNumber:
+    def test_fires_when_pr_marker_has_no_number(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_state": "open"}))
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_publish(ctx) is True
+
+
+class TestDetectCDocSyncNoSlug:
+    def test_does_not_fire_when_no_slug(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "no-slash", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_doc_sync(ctx) is False
+
+
+class TestDetectCDocSyncCorruptDoneMarker:
+    def test_fires_when_done_marker_corrupt(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        (target / ".SWE" / "doc_sync.json").write_text("bad json")
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_doc_sync(ctx) is True
+
+
+class TestRunCPrReviewHandlerFailure:
+    def test_handler_failure_returns_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=False, stderr="review queue failed")
+        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler):
+            result = run_c_pr_review(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "review queue failed" in result.stderr
+
+
+class TestRunCPrStatusChangesRequestedNonNumericIssue:
+    def test_non_numeric_issue_suffix_handled(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        # Create existing issue with non-numeric suffix to trigger ValueError
+        (target / ".SWE" / "issues" / "pr-revision-7-abc.md").write_text("---\nid: pr-revision-7-abc\nstatus: open\n---\n# Issue")
+        ctx = _make_tick_context(target, slug="owner/repo")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "state": "open",
+            "number": 7,
+            "merged": False,
+            "head": {"ref": "swe-pipeline/integration"},
+            "html_url": "https://github.com/owner/repo/pull/7",
+        }).encode()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_reviews = MagicMock()
+        mock_reviews.read.return_value = json.dumps([
+            {"state": "CHANGES_REQUESTED", "submitted_at": "2025-01-01T00:00:00Z", "body": "## Change Requests\n\n1. Fix the bug"},
+        ]).encode()
+        mock_reviews.__enter__ = MagicMock(return_value=mock_reviews)
+        mock_reviews.__exit__ = MagicMock(return_value=False)
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[mock_resp, mock_reviews]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+
+
+class TestDetectLintAutofixReadError:
+    def test_returns_false_on_read_error(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "lint"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Lint — FAIL\n\n- **errors**: 5\n- **fixable**: 3\n")
+        latest = report_dir / "latest.md"
+        latest.symlink_to("r.md")
+        latest.unlink()
+        latest.symlink_to("/nonexistent/path")
+        ctx = {"target_dir": str(target)}
+        assert detect_lint_autofix(ctx) is False
+
+
+class TestA7CoveragePctReadError:
+    def test_returns_none_on_read_error(self, tmp_path):
+        from cronpypeline.plugins.swe_plugin import _a7_coverage_pct
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "coverage"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        latest = report_dir / "latest.md"
+        latest.symlink_to("r.md")
+        latest.unlink()
+        latest.symlink_to("/nonexistent/path")
+        assert _a7_coverage_pct(target) is None
+
+
+class TestCountDoneReviewIssuesNonFrontmatter:
+    def test_skips_non_frontmatter_files(self, tmp_path):
+        from cronpypeline.plugins.swe_plugin import _count_done_review_issues
+        target = _make_target_dir(tmp_path)
+        # Create a non-frontmatter file that doesn't start with ---
+        (target / ".SWE" / "issues" / "review-abc12345.md").write_text("not frontmatter")
+        result = _count_done_review_issues(target)
+        assert result == 0
+
+
+class TestCountDoneReviewIssuesCorrupt:
+    def test_skips_corrupt_files(self, tmp_path):
+        from cronpypeline.plugins.swe_plugin import _count_done_review_issues
+        target = _make_target_dir(tmp_path)
+        # Create a broken symlink issue
+        issue_path = target / ".SWE" / "issues" / "review-abc12345.md"
+        issue_path.symlink_to("/nonexistent/path")
+        result = _count_done_review_issues(target)
+        assert result == 0
+
+
+class TestDetectLintFailReadError:
+    def test_returns_false_on_read_error(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "lint"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Lint — FAIL\n\n- **errors**: 5\n")
+        latest = report_dir / "latest.md"
+        latest.symlink_to("r.md")
+        latest.unlink()
+        latest.symlink_to("/nonexistent/path")
+        ctx = {"target_dir": str(target)}
+        assert detect_lint_fail(ctx) is False
+
+
+class TestDetectDeadcodeFailReadError:
+    def test_returns_false_on_read_error(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "vulture"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Deadcode — FAIL\n")
+        latest = report_dir / "latest.md"
+        latest.symlink_to("r.md")
+        latest.unlink()
+        latest.symlink_to("/nonexistent/path")
+        ctx = {"target_dir": str(target)}
+        assert detect_vulture_fail(ctx) is False
+
+
+class TestDetectTypecheckFailReadError:
+    def test_returns_false_on_read_error(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "typecheck"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Typecheck — FAIL\n")
+        latest = report_dir / "latest.md"
+        latest.symlink_to("r.md")
+        latest.unlink()
+        latest.symlink_to("/nonexistent/path")
+        ctx = {"target_dir": str(target)}
+        assert detect_typecheck_fail(ctx) is False
+
+
+class TestDetectSecurityFailReadError:
+    def test_returns_false_on_read_error(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "security"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Security — FAIL\n")
+        latest = report_dir / "latest.md"
+        latest.symlink_to("r.md")
+        latest.unlink()
+        latest.symlink_to("/nonexistent/path")
+        ctx = {"target_dir": str(target)}
+        assert detect_security_fail(ctx) is False
+
+
+class TestDetectDocstringFailReadError:
+    def test_returns_false_on_read_error(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "docstring"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Docstring — FAIL\n")
+        latest = report_dir / "latest.md"
+        latest.symlink_to("r.md")
+        latest.unlink()
+        latest.symlink_to("/nonexistent/path")
+        ctx = {"target_dir": str(target)}
+        assert detect_docstring_fail(ctx) is False
+
+
+class TestGitIssueAlreadyIngestedExceptionPath:
+    def test_corrupt_frontmatter_exception(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "github-1.md"
+        issue_path.symlink_to("/nonexistent/path")
+        assert _git_issue_already_ingested(target, 1) is False
+
+
+class TestOpenIssueCountCorrupt:
+    def test_corrupt_issue_skipped(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        # Create a broken symlink issue
+        issue_path = target / ".SWE" / "issues" / "github-1.md"
+        issue_path.symlink_to("/nonexistent/path")
+        # Should not crash, should return 0
+        assert _open_issue_count(target) == 0
+
+
+class TestDetectAgentForgotMarkerGitTimeout:
+    def test_returns_false_on_git_timeout(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / "task.json").write_text("{}")
+        ctx = {"target_dir": str(target)}
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=10)):
+            assert detect_agent_forgot_marker(ctx) is False
+
+
+class TestDetectAgentForgotMarkerFileNotFound:
+    def test_returns_false_on_filenotfound(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / "task.json").write_text("{}")
+        ctx = {"target_dir": str(target)}
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=FileNotFoundError()):
+            assert detect_agent_forgot_marker(ctx) is False
+
+
+class TestFindIssueByIdCorrupt:
+    def test_broken_symlink_returns_none(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "i1.md"
+        issue_path.symlink_to("/nonexistent/path")
+        # _find_issue_by_id uses .exists() which returns False for broken symlinks
+        result = _find_issue_by_id(target, "i1")
+        assert result is None
+
+
+class TestCleanupGitBranchTimeout:
+    def test_timeout_does_not_crash(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        subprocess.run(["git", "init", "-b", "integration", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        ctx = _make_tick_context(target)
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)):
+            success, msg = cleanup_git_branch(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert success is True
+
+
+class TestRunLintAutofixUnlinkOSError:
+    def test_unlink_oserror_does_not_crash(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "lint", "r.md", "# Lint — FAIL\n\n- **errors**: 5\n- **fixable**: 3\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        # Make latest.md a directory to trigger OSError on unlink
+        latest = target / ".SWE" / "reports" / "lint" / "latest.md"
+        if latest.exists() or latest.is_symlink():
+            latest.unlink()
+        latest.mkdir()
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"command": "true"})
+        mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="3 fixed", stderr="")
+        real_run = subprocess.run
+
+        def _mock_run(*args, **kwargs):
+            if kwargs.get("shell"):
+                return mock_proc
+            return real_run(*args, **kwargs)
+
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_mock_run):
+            result = run_lint_autofix(action, ctx)
+        assert result.success is True
+
+
+class TestFindPreviousReviewShaCorrupt:
+    def test_skips_non_frontmatter(self, tmp_path):
+        from cronpypeline.plugins.swe_plugin import _find_previous_review_sha
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "issues" / "review-abc12345.md").write_text("not frontmatter")
+        result = _find_previous_review_sha(target)
+        assert result is None
+
+
+class TestFindPreviousReviewShaNoType:
+    def test_skips_when_no_type_review(self, tmp_path):
+        from cronpypeline.plugins.swe_plugin import _find_previous_review_sha
+        target = _make_target_dir(tmp_path)
+        create_issue(target, issue_data={"id": "review-abc12345", "status": "done", "type": "bug"}, body="# Review")
+        result = _find_previous_review_sha(target)
+        assert result is None
+
+
+class TestDetectCCoverageIssueCorruptExistingException:
+    def test_fires_when_existing_issue_read_exception(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 50.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"coverage-{sha[:8]}"
+        # Create a broken symlink
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.symlink_to("/nonexistent/path")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_coverage_issue(ctx) is True
+
+
+class TestDetectCReviewIssueCorruptExistingException:
+    def test_fires_when_existing_issue_read_exception(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"review-{sha[:8]}"
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.symlink_to("/nonexistent/path")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_review_issue(ctx) is True
+
+
+class TestDetectCPrPublishNotAhead:
+    def test_does_not_fire_when_not_ahead(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        # No commits on integration branch → not ahead
+        sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_publish(ctx) is False
+
+
+class TestDetectCDocSyncNotAhead:
+    def test_does_not_fire_when_not_ahead(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_doc_sync(ctx) is False
