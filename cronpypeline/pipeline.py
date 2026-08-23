@@ -55,6 +55,7 @@ class TickResult:
     :ivar stdout: Captured stdout from the action.
     :ivar stderr: Captured stderr from the action.
     :ivar chained_stages: List of stage IDs chained through in this tick.
+    :ivar failed_chained_stages: List of chained stage IDs whose actions failed.
     """
     target: str
     stage_id: str | None
@@ -63,6 +64,7 @@ class TickResult:
     stdout: str = ""
     stderr: str = ""
     chained_stages: list[str] = dc_field(default_factory=list)
+    failed_chained_stages: list[str] = dc_field(default_factory=list)
 
     def __str__(self) -> str:
         """Return a human-readable string representation of the tick result.
@@ -534,8 +536,18 @@ class Pipeline:
         if stage.chain and stage.action.type != ActionType.QUEUE_AGENT:
             chained_result = self._try_chain(target, target_dir, dry_run, verbose, stage)
             if chained_result:
-                chained = chained_result[1]
-                final_stage_id = chained_result[0]
+                final_stage_id, chained, failed_stage_id, failed_result = chained_result
+                if failed_stage_id is not None:
+                    return TickResult(
+                        target=target,
+                        stage_id=failed_stage_id,
+                        status=TickResultStatus.ACTION_FAILED,
+                        message=f"Chained stage {failed_stage_id} failed: {failed_result.stderr or failed_result.stdout}" if failed_result else f"Chained stage {failed_stage_id} failed",
+                        stdout=failed_result.stdout if failed_result else "",
+                        stderr=failed_result.stderr if failed_result else "",
+                        chained_stages=chained,
+                        failed_chained_stages=[failed_stage_id],
+                    )
                 return TickResult(
                     target=target,
                     stage_id=final_stage_id,
@@ -560,7 +572,7 @@ class Pipeline:
         dry_run: bool,
         verbose: bool,
         completed_stage: Stage,
-    ) -> tuple[str, list[str]] | None:
+    ) -> tuple[str, list[str], str | None, Any | None] | None:
         """Attempt to chain to the next stage in the same tick.
 
         :param target: Target name.
@@ -568,7 +580,8 @@ class Pipeline:
         :param dry_run: Whether this is a dry run.
         :param verbose: Whether verbose output is enabled.
         :param completed_stage: The stage that just completed.
-        :returns: Tuple of (final_stage_id, list_of_chained_stage_ids), or None.
+        :returns: Tuple of (final_stage_id, list_of_chained_stage_ids,
+            failed_stage_id, failed_result), or None if nothing chained.
         """
         stages = self.config.stages
         completed_idx = next(
@@ -615,7 +628,7 @@ class Pipeline:
                         target_config={},
                     )
                     execute_action(next_stage.on_fail, fail_ctx)
-                break
+                return (current_stage.id, chained, next_stage.id, result)
 
             # Create produced markers
             for marker_spec in next_stage.action.produces:
@@ -637,7 +650,7 @@ class Pipeline:
                 break
 
         if chained:
-            return (current_stage.id, chained)
+            return (current_stage.id, chained, None, None)
         return None
 
     def _handle_stale(
