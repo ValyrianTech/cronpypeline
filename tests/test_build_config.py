@@ -28,8 +28,7 @@ def _setuptools_min_version(build_system_requires):
         for specifier in requirement.specifier:
             if specifier.operator in (">=", ">", "=="):
                 candidate = Version(specifier.version)
-                if candidate > minimum:
-                    minimum = candidate
+                minimum = max(minimum, candidate)
         return minimum
     return None
 

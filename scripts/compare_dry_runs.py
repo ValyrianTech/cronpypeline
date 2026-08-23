@@ -154,7 +154,7 @@ def main() -> int:
         cron_norm = normalize_output(cron_combined)
         match = old_norm == cron_norm
 
-        print(f"\n--- COMPARISON ---")
+        print("\n--- COMPARISON ---")
         if match:
             print("  ✅ Outputs match (after normalization)")
         else:

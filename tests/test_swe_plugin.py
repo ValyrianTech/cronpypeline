@@ -7,9 +7,8 @@ already tested in test_plugins.py.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -17,10 +16,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cronpypeline.actions import ActionResult, ActionSpec, ActionType, TickContext
-from cronpypeline.plugins.issue_store import create_issue, set_issue_status
+from cronpypeline.plugins.issue_store import create_issue
 from cronpypeline.plugins.swe_plugin import (
     INTEGRATION_BRANCH,
-    SWE_SUBDIR,
     _a1_is_pass,
     _a7_coverage_pct,
     _build_doc_sync_prompt,
@@ -33,12 +31,12 @@ from cronpypeline.plugins.swe_plugin import (
     _find_active_task,
     _find_issue_by_id,
     _find_previous_review_sha,
-    _git,
-    _git_issue_already_ingested,
-    _git_issue_type_from_labels,
     _gh_api_get_list,
     _gh_api_patch,
     _gh_api_post,
+    _git,
+    _git_issue_already_ingested,
+    _git_issue_type_from_labels,
     _load_github_token,
     _open_issue_count,
     _read_github_session,
@@ -48,7 +46,6 @@ from cronpypeline.plugins.swe_plugin import (
     commit_phase_a_change,
     detect_agent_forgot_marker,
     detect_b1_issue_gathering,
-    detect_coverage_fail,
     detect_c_coverage_issue,
     detect_c_doc_sync,
     detect_c_issue_fix,
@@ -57,6 +54,7 @@ from cronpypeline.plugins.swe_plugin import (
     detect_c_pr_status,
     detect_c_review_issue,
     detect_c_review_ranking,
+    detect_coverage_fail,
     detect_deadcode_trigger,
     detect_docstring_fail,
     detect_lint_autofix,
@@ -83,7 +81,6 @@ from cronpypeline.plugins.swe_plugin import (
     select_issue,
     sync_session_mode,
 )
-
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1732,7 +1729,7 @@ class TestDetectCCoverageIssue:
         sha = integration_head_sha(target, "main")
         issue_id = f"coverage-{sha[:8]}"
         issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
-        issue_path.write_text(f"---\nstatus: open\n---\n# Coverage\n")
+        issue_path.write_text("---\nstatus: open\n---\n# Coverage\n")
         ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
         assert detect_c_coverage_issue(ctx) is False
 
@@ -1743,7 +1740,7 @@ class TestDetectCCoverageIssue:
         sha = integration_head_sha(target, "main")
         issue_id = f"coverage-{sha[:8]}"
         issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
-        issue_path.write_text(f"---\nstatus: discarded\n---\n# Coverage\n")
+        issue_path.write_text("---\nstatus: discarded\n---\n# Coverage\n")
         ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
         assert detect_c_coverage_issue(ctx) is True
 
@@ -1852,7 +1849,7 @@ class TestDetectCReviewIssue:
         sha = integration_head_sha(target, "main")
         issue_id = f"review-{sha[:8]}"
         issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
-        issue_path.write_text(f"---\nstatus: open\n---\n# Review\n")
+        issue_path.write_text("---\nstatus: open\n---\n# Review\n")
         ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
         assert detect_c_review_issue(ctx) is False
 
@@ -1863,7 +1860,7 @@ class TestDetectCReviewIssue:
         sha = integration_head_sha(target, "main")
         issue_id = f"review-{sha[:8]}"
         issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
-        issue_path.write_text(f"---\nstatus: discarded\n---\n# Review\n")
+        issue_path.write_text("---\nstatus: discarded\n---\n# Review\n")
         ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
         assert detect_c_review_issue(ctx) is True
 
@@ -4182,7 +4179,7 @@ class TestDetectCCoverageIssueDirectoryExisting:
         sha = integration_head_sha(target, "main")
         issue_id = f"coverage-{sha[:8]}"
         issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
-        issue_path.write_text(f"---\nstatus: done\n---\n# Coverage issue\n")
+        issue_path.write_text("---\nstatus: done\n---\n# Coverage issue\n")
         ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
         assert detect_c_coverage_issue(ctx) is False
 
@@ -4236,7 +4233,7 @@ class TestDetectCReviewIssueDirectoryExisting:
         sha = integration_head_sha(target, "main")
         issue_id = f"review-{sha[:8]}"
         issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
-        issue_path.write_text(f"---\nstatus: done\n---\n# Review issue\n")
+        issue_path.write_text("---\nstatus: done\n---\n# Review issue\n")
         ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
         assert detect_c_review_issue(ctx) is False
 

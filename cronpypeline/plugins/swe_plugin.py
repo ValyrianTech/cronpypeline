@@ -18,7 +18,12 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from cronpypeline.actions import ActionResult, ActionSpec, TickContext
-from cronpypeline.plugins.issue_store import Issue, create_issue, load_issues, parse_frontmatter, set_issue_status
+from cronpypeline.plugins.issue_store import (
+    create_issue,
+    load_issues,
+    parse_frontmatter,
+    set_issue_status,
+)
 from cronpypeline.reporting import update_latest_symlink, write_report
 
 PHASE_A_BRANCH = "swe-pipeline/phase-a-hygiene"
@@ -1508,17 +1513,17 @@ def _build_pr_review_prompt(
         )
         if review_cycle >= 2:
             cycle_guidance += (
-                f"This code has already been reviewed and fixed multiple times. "
-                f"File only **critical issues** that affect correctness, "
-                f"security, or reliability — NOT style nits, refactors, or "
-                f"minor improvements. If the PR is acceptable, prefer COMMENT "
-                f"over REQUEST_CHANGES.\n\n"
+                "This code has already been reviewed and fixed multiple times. "
+                "File only **critical issues** that affect correctness, "
+                "security, or reliability — NOT style nits, refactors, or "
+                "minor improvements. If the PR is acceptable, prefer COMMENT "
+                "over REQUEST_CHANGES.\n\n"
             )
         if review_cycle >= 3:
             cycle_guidance += (
-                f"This is a late-stage review. Request changes ONLY for "
-                f"**showstopper bugs or regressions** that would break the "
-                f"application. If you are unsure, lean toward COMMENT.\n"
+                "This is a late-stage review. Request changes ONLY for "
+                "**showstopper bugs or regressions** that would break the "
+                "application. If you are unsure, lean toward COMMENT.\n"
             )
 
     return (
@@ -1730,8 +1735,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                 for path in issues_dir.glob(f"{prefix}*.md"):
                     try:
                         num = int(path.stem[len(prefix):])
-                        if num > existing_max:
-                            existing_max = num
+                        existing_max = max(existing_max, num)
                     except ValueError:
                         pass
             for i, req_text in enumerate(requests_list, start=existing_max + 1):
