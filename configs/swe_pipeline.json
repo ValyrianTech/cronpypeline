@@ -1,15 +1,17 @@
 {
   "name": "swe-pipeline",
-  "workspace_dir": "{workspace_dir}",
+  "workspace_dir": "/spellbook_data/Serendipity/swe/workspace/repos",
   "lock_file": ".SWE/pipeline.lock",
   "mode_file": ".SWE/mode.json",
+  "config_file": "/spellbook_data/Serendipity/swe/swe_pipeline_config.json",
   "pre_tick": {
     "callable": "cronpypeline.plugins.swe_plugin.sync_session_mode"
   },
   "targets": {
     "type": "registry",
-    "file": "repos.json",
-    "key": "repos"
+    "file": "/spellbook_data/Serendipity/swe/repos.json",
+    "key": "repos",
+    "filter": {"enabled": true}
   },
   "action_handler": {
     "type": "conversation_queue",
@@ -28,6 +30,42 @@
     }
   },
   "stages": [
+    {
+      "id": "A0",
+      "name": "Queue RepoResearchAgent for repo briefing",
+      "trigger": {
+        "type": "file_missing",
+        "path": ".SWE/repo_briefing.md"
+      },
+      "action": {
+        "type": "queue_agent",
+        "params": {
+          "agent": "RepoResearchAgent",
+          "prompt": "Produce a comprehensive repository briefing for the locally cloned repo at:\n  {target_dir}\n\nFollow your standard briefing format and save the result to '.SWE/repo_briefing.md' (i.e. inside a top-level '.SWE/' subdirectory of the repo). Create the '.SWE/' directory if it does not exist. Use RunCommand / ReadFile / WriteFile as needed.",
+          "stage": "A0"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "file",
+          "name": "repo_briefing.md",
+          "directory": ".SWE"
+        },
+        "processing": {
+          "type": "json",
+          "name": ".a0_processing",
+          "directory": ".SWE/markers",
+          "content": {}
+        },
+        "give_up": {
+          "type": "file",
+          "name": ".a0_gave_up",
+          "directory": ".SWE/markers"
+        }
+      },
+      "timeout_minutes": 30,
+      "max_retries": 3
+    },
     {
       "id": "A1-test-infra",
       "name": "Run pytest infrastructure tests",
@@ -86,23 +124,23 @@
       "name": "Run pydocstyle docstring checks",
       "trigger": {
         "type": "file_missing",
-        "path": ".SWE/reports/pydocstyle/latest.md"
+        "path": ".SWE/reports/docstrings/latest.md"
       },
       "action": {
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
           "command": "pydocstyle .",
-          "report_dir": ".SWE/reports/pydocstyle",
+          "report_dir": ".SWE/reports/docstrings",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_pydocstyle_output",
-          "report_name": "pydocstyle_{timestamp}.md"
+          "report_name": "docstrings_{timestamp}.md"
         }
       },
       "markers": {
         "completion": {
           "type": "symlink",
           "name": "latest.md",
-          "directory": ".SWE/reports/pydocstyle"
+          "directory": ".SWE/reports/docstrings"
         }
       },
       "chain": true
@@ -112,23 +150,23 @@
       "name": "Run mypy type checker",
       "trigger": {
         "type": "file_missing",
-        "path": ".SWE/reports/mypy/latest.md"
+        "path": ".SWE/reports/typecheck/latest.md"
       },
       "action": {
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
           "command": "mypy .",
-          "report_dir": ".SWE/reports/mypy",
+          "report_dir": ".SWE/reports/typecheck",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_mypy_output",
-          "report_name": "mypy_{timestamp}.md"
+          "report_name": "typecheck_{timestamp}.md"
         }
       },
       "markers": {
         "completion": {
           "type": "symlink",
           "name": "latest.md",
-          "directory": ".SWE/reports/mypy"
+          "directory": ".SWE/reports/typecheck"
         }
       },
       "chain": true
@@ -138,23 +176,23 @@
       "name": "Run bandit security scanner",
       "trigger": {
         "type": "file_missing",
-        "path": ".SWE/reports/bandit/latest.md"
+        "path": ".SWE/reports/security/latest.md"
       },
       "action": {
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
           "command": "bandit -r .",
-          "report_dir": ".SWE/reports/bandit",
+          "report_dir": ".SWE/reports/security",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_bandit_output",
-          "report_name": "bandit_{timestamp}.md"
+          "report_name": "security_{timestamp}.md"
         }
       },
       "markers": {
         "completion": {
           "type": "symlink",
           "name": "latest.md",
-          "directory": ".SWE/reports/bandit"
+          "directory": ".SWE/reports/security"
         }
       },
       "chain": true
@@ -163,24 +201,24 @@
       "id": "A6-vulture",
       "name": "Run vulture dead code detector",
       "trigger": {
-        "type": "file_missing",
-        "path": ".SWE/reports/vulture/latest.md"
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_deadcode_trigger"
       },
       "action": {
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
           "command": "vulture .",
-          "report_dir": ".SWE/reports/vulture",
+          "report_dir": ".SWE/reports/deadcode",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_vulture_output",
-          "report_name": "vulture_{timestamp}.md"
+          "report_name": "deadcode_{timestamp}.md"
         }
       },
       "markers": {
         "completion": {
           "type": "symlink",
           "name": "latest.md",
-          "directory": ".SWE/reports/vulture"
+          "directory": ".SWE/reports/deadcode"
         }
       },
       "chain": true
@@ -217,24 +255,24 @@
       "name": "Run radon complexity analysis",
       "trigger": {
         "type": "file_missing",
-        "path": ".SWE/reports/radon/latest.md"
+        "path": ".SWE/reports/complexity/latest.md"
       },
       "action": {
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
           "command": "radon cc . -s",
-          "report_dir": ".SWE/reports/radon",
+          "report_dir": ".SWE/reports/complexity",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_radon_output",
           "parser_kwargs": {"threshold": "C"},
-          "report_name": "radon_{timestamp}.md"
+          "report_name": "complexity_{timestamp}.md"
         }
       },
       "markers": {
         "completion": {
           "type": "symlink",
           "name": "latest.md",
-          "directory": ".SWE/reports/radon"
+          "directory": ".SWE/reports/complexity"
         }
       },
       "chain": true
@@ -244,23 +282,23 @@
       "name": "Run pip-audit dependency scanner",
       "trigger": {
         "type": "file_missing",
-        "path": ".SWE/reports/pip-audit/latest.md"
+        "path": ".SWE/reports/dep-audit/latest.md"
       },
       "action": {
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
           "command": "pip-audit",
-          "report_dir": ".SWE/reports/pip-audit",
+          "report_dir": ".SWE/reports/dep-audit",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_pip_audit_output",
-          "report_name": "pip-audit_{timestamp}.md"
+          "report_name": "dep-audit_{timestamp}.md"
         }
       },
       "markers": {
         "completion": {
           "type": "symlink",
           "name": "latest.md",
-          "directory": ".SWE/reports/pip-audit"
+          "directory": ".SWE/reports/dep-audit"
         }
       }
     },
@@ -308,14 +346,14 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_prompts.queue_fix_agent",
-          "report_path": ".SWE/reports/vulture/latest.md",
+          "report_path": ".SWE/reports/deadcode/latest.md",
           "agent": "FixAgent"
         }
       },
       "markers": {
         "completion": {
           "type": "file",
-          "name": "queued_for_vulture.marker",
+          "name": "queued_for_deadcode.marker",
           "directory": ".SWE/markers"
         },
         "processing": {
@@ -327,7 +365,7 @@
       "invalidates": [
         {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/test-infra"},
         {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/lint"},
-        {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/vulture"}
+        {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/deadcode"}
       ],
       "max_retries": 3,
       "timeout_minutes": 30
