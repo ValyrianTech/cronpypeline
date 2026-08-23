@@ -683,7 +683,8 @@ class Pipeline:
         :param target_config: Per-target configuration dict.
         :param dry_run: Whether this is a dry run.
         :param verbose: Whether verbose output is enabled.
-        :returns: TickResult — either GAVE_UP, DRY_RUN, or ACTION_EXECUTED.
+        :returns: TickResult — either GAVE_UP, DRY_RUN, ACTION_EXECUTED, or
+            ACTION_FAILED.
         """
         stage = stage_state.stage
         retry_count = stage_state.retry_count
@@ -733,6 +734,26 @@ class Pipeline:
             retry_data=stage_state.processing_data,
         )
         result = execute_action(stage.action, ctx)
+
+        if not result.success:
+            # Run on_fail if configured
+            if stage.on_fail:
+                fail_ctx = TickContext(
+                    target=target,
+                    workspace_dir=self.workspace_dir,
+                    dry_run=dry_run,
+                    verbose=verbose,
+                    target_config=target_config,
+                )
+                execute_action(stage.on_fail, fail_ctx)
+            return TickResult(
+                target=target,
+                stage_id=stage.id,
+                status=TickResultStatus.ACTION_FAILED,
+                message=f"Action failed: {result.stderr or result.stdout}",
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
 
         # Update processing marker with result data
         if result.success and result.data and "processing" in stage.markers:
