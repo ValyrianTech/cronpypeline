@@ -684,6 +684,14 @@ class Pipeline:
         stage = stage_state.stage
         retry_count = stage_state.retry_count
 
+        if dry_run:
+            return TickResult(
+                target=target,
+                stage_id=stage.id,
+                status=TickResultStatus.DRY_RUN,
+                message=f"Would re-queue stale stage {stage.id} (retry {retry_count + 1})",
+            )
+
         # Clean up stale marker
         marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
         if "processing" in stage.markers:
@@ -698,15 +706,6 @@ class Pipeline:
                 stage_id=stage.id,
                 status=TickResultStatus.GAVE_UP,
                 message=f"Stage {stage.id} gave up after {retry_count} retries",
-            )
-
-        # Re-queue with incremented retry count
-        if dry_run:
-            return TickResult(
-                target=target,
-                stage_id=stage.id,
-                status=TickResultStatus.DRY_RUN,
-                message=f"Would re-queue stale stage {stage.id} (retry {retry_count + 1})",
             )
 
         # Create new processing marker with incremented retry count

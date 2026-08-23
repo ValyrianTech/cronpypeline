@@ -2978,7 +2978,7 @@ class TestTickStaleDryRun:
     """Tests for stale processing marker handling in dry run."""
 
     def test_stale_dry_run_returns_dry_run(self, tmp_path):
-        """Stale processing marker in dry run should return DRY_RUN."""
+        """Stale processing marker in dry run should return DRY_RUN without deleting the marker."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         target_dir = workspace / "my-repo"
@@ -3009,6 +3009,48 @@ class TestTickStaleDryRun:
         pipeline = Pipeline(config)
         result = pipeline.tick(target="my-repo", dry_run=True)
         assert result.status == TickResultStatus.DRY_RUN
+        assert proc_path.exists(), "Processing marker must not be deleted during dry run"
+
+    def test_stale_dry_run_give_up_no_mutation(self, tmp_path):
+        """Dry run with retry_count >= max_retries should return DRY_RUN without mutation."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Create a stale processing marker that is already past max_retries
+        import json as _json
+        proc_path = target_dir / ".processing"
+        proc_path.write_text(_json.dumps({
+            "queue_file": "/nonexistent/queue/entry.json",
+            "retry_count": 3,
+        }))
+        give_up_path = target_dir / ".give_up"
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                        "give_up": {"type": "file", "name": ".give_up"},
+                    },
+                    "timeout_minutes": 0,
+                    "max_retries": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+        assert proc_path.exists(), "Processing marker must not be deleted during dry run"
+        assert not give_up_path.exists(), "Give up marker must not be created during dry run"
 
 
 class TestTickProcessingRetryCount:
