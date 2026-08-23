@@ -1,7 +1,8 @@
 """Tests for cronpypeline.actions — built-in action handlers and TickContext."""
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from cronpypeline.actions import (
     ActionResult,
@@ -702,7 +703,6 @@ class TestHttpRequestActionHandlerErrors:
         """HTTPError (e.g. 500) should be caught and return failure."""
         from unittest.mock import patch
         from urllib.error import HTTPError
-        from urllib.request import Request
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
@@ -743,7 +743,6 @@ class TestHttpRequestActionHandlerErrors:
 
     def test_url_error_socket_timeout(self, tmp_path):
         """URLError with socket.timeout reason should set timed_out."""
-        import socket
         from unittest.mock import patch
         from urllib.error import URLError
 
@@ -755,7 +754,7 @@ class TestHttpRequestActionHandlerErrors:
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", side_effect=URLError(socket.timeout("timed out"))):
+        with patch("urllib.request.urlopen", side_effect=URLError(TimeoutError("timed out"))):
             result = handler.execute(action, ctx)
 
         assert result.success is False

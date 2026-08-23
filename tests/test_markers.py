@@ -10,10 +10,10 @@ from cronpypeline.markers import (
     MarkerType,
     create_marker,
     delete_marker,
+    marker_age_seconds,
     marker_exists,
     read_marker,
 )
-from cronpypeline.markers import marker_age_seconds
 
 
 class TestMarkerSpec:

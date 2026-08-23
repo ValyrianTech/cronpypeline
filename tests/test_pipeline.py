@@ -2820,8 +2820,9 @@ class TestTickQueueAgentProcessingData:
     def test_processing_data_retry_count_preserved(self, tmp_path):
         """When stage_state has processing_data with retry_count, it should be preserved."""
         from unittest.mock import patch
-        from cronpypeline.state import PipelineState
+
         from cronpypeline.actions import ActionHandler, ActionResult, register_handler
+        from cronpypeline.state import PipelineState
 
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -2881,6 +2882,7 @@ class TestTickTargetStateNoneDefensive:
     def test_target_state_none_returns_no_work(self, tmp_path):
         """When target_state is None (shouldn't normally happen), return NO_WORK."""
         from unittest.mock import patch
+
         from cronpypeline.state import PipelineState
 
         workspace = tmp_path / "workspace"

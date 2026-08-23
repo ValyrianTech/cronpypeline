@@ -426,8 +426,8 @@ class TestRunDiagnosticEdgeCases:
         )
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
 
-        from unittest.mock import patch
         import subprocess as sp
+        from unittest.mock import patch
         with patch("subprocess.run", side_effect=sp.TimeoutExpired(cmd="sleep 300", timeout=300)):
             result = run_diagnostic(action, ctx)
 

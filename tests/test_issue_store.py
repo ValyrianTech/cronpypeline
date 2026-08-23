@@ -355,8 +355,9 @@ class TestIssuesDirRaises:
 
     def test_none_target_dir_raises_value_error(self):
         """_issues_dir with None should raise ValueError."""
-        from cronpypeline.plugins.issue_store import _issues_dir
         import pytest
+
+        from cronpypeline.plugins.issue_store import _issues_dir
         with pytest.raises(ValueError, match="target_dir is required"):
             _issues_dir(None)
 
