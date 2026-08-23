@@ -13,6 +13,7 @@
 - Custom action handler now passes through `ActionResult` return values instead of stringifying them.
 - `ActionResult.data` now defaults to `{}` when `None` is passed, fixing an AttributeError when accessing `result.data.get('async')`.
 - Async chained stages now create a processing marker (with `retry_count=0` and the result data merged in) to prevent duplicate agent queueing.
+- Non-chained async custom actions now create a processing marker (with `retry_count=0` and the result data merged in) so they are not re-triggered on every tick, preventing duplicate agent queueing.
 - `_handle_stale` now returns a DRY_RUN result before deleting processing markers or re-queueing when in dry-run mode, and correctly reports "Would give up" when the retry limit is reached.
 - `_handle_stale` now returns ACTION_FAILED (and runs `on_fail`) when the re-executed action fails, instead of reporting ACTION_EXECUTED.
 - `FileLock.__enter__` now raises `RuntimeError` when the lock cannot be acquired instead of silently continuing.
