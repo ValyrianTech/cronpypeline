@@ -73,6 +73,10 @@ class ActionResult:
     dry_run: bool = False
     data: dict[str, Any] = dc_field(default_factory=dict)
 
+    def __post_init__(self):
+        if self.data is None:
+            self.data = {}
+
 
 def format_template(template: str, variables: dict[str, Any]) -> str:
     """Format a template string with variable substitution.
