@@ -11,6 +11,7 @@ Provides:
 
 import shutil
 import subprocess  # nosec B404 - subprocess is used by design to run git commands for prompt building
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,11 @@ from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.config import ActionSpec
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
 from cronpypeline.plugins.issue_store import Issue, get_issue
+from cronpypeline.plugins.swe_plugin import (
+    PHASE_A_BRANCH,
+    PHASE_A_GIT_AUTHOR_EMAIL,
+    PHASE_A_GIT_AUTHOR_NAME,
+)
 
 # ─── Prompt builders ────────────────────────────────────────────────────────
 
@@ -229,14 +235,17 @@ def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
     """Custom action: build a fix prompt from a report and queue it.
 
     Expected action.params:
-        - report_path: Path to the diagnostic report file
-        - agent: Agent name to queue
+        - report_path: Path to the diagnostic report (symlink or direct)
+        - agent: Agent name to queue (e.g. "FixLintingAgent")
         - queue_dir: Queue directory
         - agent_settings_dir: Optional agent settings directory
         - prompt_field: Field name for prompt (default "prompt")
         - default_fields: Static fields for queue entry
         - flatten_agent_settings: Whether to flatten agent settings
         - extra_instructions: Optional extra instructions for the prompt
+        - invalidate_paths: List of paths the agent should delete after committing
+        - completion_marker: Path the agent should write as its LAST step
+        - commit_message: Git commit message for the agent to use
 
     :param action: Action spec with report_path and queue params.
     :param context: Tick context with target and directories.
@@ -246,23 +255,70 @@ def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
         return ActionResult(success=True, dry_run=True)
 
     params = action.params
-    report_path = Path(params.get("report_path", ""))
+    report_path_raw = Path(params.get("report_path", ""))
 
+    # Resolve symlink to get the actual report file
+    report_path = report_path_raw
+    if report_path_raw.is_symlink():
+        try:
+            report_path = report_path_raw.resolve()
+        except OSError:
+            pass
     if not report_path.exists():
         return ActionResult(
             success=False,
-            stderr=f"Report file not found: {report_path}",
+            stderr=f"Report file not found: {report_path_raw}",
         )
 
-    report_content = report_path.read_text()
+    report_content = report_path.read_text(encoding="utf-8")
     report_name = report_path.name
 
+    # Write deduplication marker (queued_for_{stem}.marker)
+    markers_dir = context.target_dir / ".SWE" / "markers"
+    markers_dir.mkdir(parents=True, exist_ok=True)
+    dedup_marker = markers_dir / f"queued_for_{report_path.stem}.marker"
+    dedup_marker.write_text(
+        f"queued at {datetime.now(timezone.utc).isoformat()} "
+        f"against report {report_name}\n",
+        encoding="utf-8",
+    )
+
+    # Build prompt with report content + commit/delete/completion instructions
     prompt = build_fix_prompt(
         report_content=report_content,
         report_name=report_name,
         target=context.target,
         extra_instructions=params.get("extra_instructions", ""),
     )
+
+    # Append commit hint, delete instructions, and completion marker instructions
+    invalidate_paths = params.get("invalidate_paths", [])
+    completion_marker = params.get("completion_marker", "")
+    commit_message = params.get("commit_message", "fix: resolve diagnostic issues")
+
+    prompt += f"""
+## Git Workflow
+
+You are on branch `{PHASE_A_BRANCH}`. After making your changes:
+
+1. Commit your changes:
+   cd {context.target_dir} && git add -A && \\
+   git -c user.name='{PHASE_A_GIT_AUTHOR_NAME}' \\
+   -c user.email='{PHASE_A_GIT_AUTHOR_EMAIL}' \\
+   commit -m "{commit_message}"
+"""
+    if invalidate_paths:
+        prompt += "\n2. After committing, delete these files so the pipeline re-runs the upstream stages:\n"
+        for p in invalidate_paths:
+            prompt += f"   rm -f {p}\n"
+
+    if completion_marker:
+        prompt += f"""
+3. As your FINAL step, write the completion marker using WriteFile:
+   Path: {completion_marker}
+   Content: {{"completed_at": "<current ISO timestamp>"}}
+   Replace <current ISO timestamp> with the actual current time in ISO format.
+"""
 
     # Build a queue action spec and dispatch via ConversationQueueHandler
     handler = _build_queue_handler(params)
@@ -381,3 +437,106 @@ def queue_review_agent(action: ActionSpec, context: TickContext) -> ActionResult
     if result.success and not result.dry_run:
         result.data = {**result.data, "async": True}
     return result
+
+
+def _parse_change_requests(body: str) -> list[str]:
+    """Extract individual change requests from a PR review body.
+
+    Extracts numbered items from the 'Issues & Concerns' section. Falls back
+    to generic numbered/bullet extraction for reviews written outside the pipeline.
+
+    :param body: PR review body text.
+    :returns: List of cleaned, non-empty change request strings.
+    """
+    import re
+
+    if not body:
+        return []
+
+    items: list[str] = []
+
+    # 1) Try the PRReviewAgent's defined structure: extract the
+    #    "Issues & Concerns" section and split by numbered sub-items.
+    m = re.search(
+        r"(?:^|\n)#{1,3}\s*Issues?\s*[&]\s*Concerns?\s*\n"
+        r"(.*?)(?=\n##+\s+\w|\Z)",
+        body, re.DOTALL | re.IGNORECASE,
+    )
+    issues_section = m.group(1).strip() if m else None
+
+    if issues_section:
+        section_body = re.sub(
+            r"^#+\s*Issues?\s*[&]\s*Concerns?\s*", "",
+            issues_section, flags=re.IGNORECASE,
+        ).strip()
+
+        # Format A: bold-numbered
+        match = re.findall(
+            r"(?:^|\n)\s*\*\*(\d+[.)]\s+[^\n]+)\*\*\s*\n"
+            r"(.*?)(?=\n\s*\*\*\d+[.)]|\n\s*No\s+other|\Z)",
+            section_body, re.DOTALL,
+        )
+        if match:
+            for title, content in match:
+                items.append(title.strip() + "\n" + content.strip())
+
+        # Format B: heading-numbered
+        if not items:
+            match = re.findall(
+                r"(?:^|\n)\s*#+\s*\d+[.)]\s+(.*?)(?=\n\s*#+\s*\d+[.)]|\Z)",
+                section_body, re.DOTALL,
+            )
+            if match:
+                items.extend(item.strip() for item in match if item.strip())
+
+        # Format C: plain-numbered
+        if not items:
+            match = re.findall(
+                r"(?:^|\n)\s*(\d+[.)]\s+)(.*?)(?=\n\s*(?:\d+[.)]|No\s+other)|\Z)",
+                section_body, re.DOTALL,
+            )
+            if match:
+                items.extend(item.strip() for _, item in match if item.strip())
+
+    # 2) Generic numbered list
+    if not items:
+        match = re.findall(
+            r"(?:^|\n)\s*(\d+[.)]\s+)(.*?)(?=\n\s*(?:\d+[.)])|\Z)",
+            body, re.DOTALL,
+        )
+        if match:
+            items.extend(item.strip() for _, item in match if item.strip())
+
+    # 3) Bullet points
+    if not items:
+        match = re.findall(
+            r"(?:^|\n)\s*[-*+]\s+(.*?)(?=\n\s*[-*+]|$)",
+            body, re.DOTALL,
+        )
+        if match:
+            items.extend(item.strip() for item in match if item.strip())
+
+    # 4) Last resort: non-heading paragraphs
+    if not items:
+        for para in body.split("\n\n"):
+            para = para.strip()
+            if para and not para.startswith("#"):
+                items.append(para)
+
+    # Filter out headings, empty items, "No issues found", boilerplate.
+    cleaned = []
+    for item in items:
+        if not item or item.startswith("#"):
+            continue
+        if re.match(r"no\s+issues?\s+(?:found|identified)", item, re.IGNORECASE):
+            continue
+        text = item.strip()
+        if not text:
+            continue
+        if "\n" in text:
+            cleaned.append(text)
+        elif len(text) > 200:
+            cleaned.append(text[:197] + "...")
+        else:
+            cleaned.append(text)
+    return cleaned

@@ -90,8 +90,7 @@
           "directory": ".SWE/reports/test-infra"
         }
       },
-      "timeout_minutes": 30,
-      "max_retries": 3
+      "chain": true
     },
     {
       "id": "A2-lint",
@@ -104,7 +103,7 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "ruff check .",
+          "command": "{lint_cmd}",
           "report_dir": ".SWE/reports/lint",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_ruff_output",
           "report_name": "lint_{timestamp}.md"
@@ -120,8 +119,27 @@
       "chain": true
     },
     {
-      "id": "A3-pydocstyle",
-      "name": "Run pydocstyle docstring checks",
+      "id": "A2-autofix",
+      "name": "Apply ruff safe auto-fixes",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_lint_autofix"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_lint_autofix",
+          "command": "ruff check --fix ."
+        }
+      },
+      "invalidates": [
+        {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/lint"}
+      ],
+      "chain": true
+    },
+    {
+      "id": "A3-docstrings",
+      "name": "Run interrogate docstring coverage check",
       "trigger": {
         "type": "file_missing",
         "path": ".SWE/reports/docstrings/latest.md"
@@ -130,9 +148,8 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "pydocstyle .",
+          "command": "{docstring_cmd}",
           "report_dir": ".SWE/reports/docstrings",
-          "parser": "cronpypeline.plugins.swe_diagnostics.parse_pydocstyle_output",
           "report_name": "docstrings_{timestamp}.md"
         }
       },
@@ -156,7 +173,7 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "mypy .",
+          "command": "{typecheck_cmd}",
           "report_dir": ".SWE/reports/typecheck",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_mypy_output",
           "report_name": "typecheck_{timestamp}.md"
@@ -208,7 +225,7 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "vulture .",
+          "command": "{deadcode_cmd}",
           "report_dir": ".SWE/reports/deadcode",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_vulture_output",
           "report_name": "deadcode_{timestamp}.md"
@@ -234,10 +251,10 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "pytest --cov=. --cov-report=term",
+          "command": "{coverage_cmd}",
           "report_dir": ".SWE/reports/coverage",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_coverage_output",
-          "parser_kwargs": {"threshold": 100.0},
+          "parser_kwargs": {"threshold": 80.0},
           "report_name": "coverage_{timestamp}.md"
         }
       },
@@ -261,7 +278,7 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "radon cc . -s",
+          "command": "radon cc . -s -a",
           "report_dir": ".SWE/reports/complexity",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_radon_output",
           "parser_kwargs": {"threshold": "C"},
@@ -300,7 +317,8 @@
           "name": "latest.md",
           "directory": ".SWE/reports/dep-audit"
         }
-      }
+      },
+      "chain": true
     },
     {
       "id": "A2-fix-agent",
@@ -314,13 +332,16 @@
         "params": {
           "callable": "cronpypeline.plugins.swe_prompts.queue_fix_agent",
           "report_path": ".SWE/reports/lint/latest.md",
-          "agent": "FixAgent"
+          "agent": "FixLintingAgent",
+          "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/lint/latest.md"],
+          "completion_marker": ".SWE/markers/a2_fix_complete.marker",
+          "commit_message": "chore(lint): fix remaining ruff errors"
         }
       },
       "markers": {
         "completion": {
           "type": "file",
-          "name": "queued_for_{report_stem}.marker",
+          "name": "a2_fix_complete.marker",
           "directory": ".SWE/markers"
         },
         "processing": {
@@ -329,44 +350,138 @@
           "directory": ".SWE/markers"
         }
       },
-      "invalidates": [
-        {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/lint"}
-      ],
       "max_retries": 3,
       "timeout_minutes": 30
     },
     {
-      "id": "A6-fix-agent",
-      "name": "Queue dead-code fix agent",
+      "id": "A3-fix-agent",
+      "name": "Queue docstring fix agent",
       "trigger": {
         "type": "custom",
-        "callable": "cronpypeline.plugins.swe_plugin.detect_vulture_fail"
+        "callable": "cronpypeline.plugins.swe_plugin.detect_docstring_fail"
       },
       "action": {
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_prompts.queue_fix_agent",
-          "report_path": ".SWE/reports/deadcode/latest.md",
-          "agent": "FixAgent"
+          "report_path": ".SWE/reports/docstrings/latest.md",
+          "agent": "DocStringAgent",
+          "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/lint/latest.md", ".SWE/reports/docstrings/latest.md"],
+          "completion_marker": ".SWE/markers/a3_fix_complete.marker",
+          "commit_message": "docs: add missing docstrings"
         }
       },
       "markers": {
         "completion": {
           "type": "file",
-          "name": "queued_for_deadcode.marker",
+          "name": "a3_fix_complete.marker",
           "directory": ".SWE/markers"
         },
         "processing": {
           "type": "json",
-          "name": ".processing_a6_fix",
+          "name": ".processing_a3_fix",
           "directory": ".SWE/markers"
         }
       },
-      "invalidates": [
-        {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/test-infra"},
-        {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/lint"},
-        {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/deadcode"}
-      ],
+      "max_retries": 3,
+      "timeout_minutes": 30
+    },
+    {
+      "id": "A4-fix-agent",
+      "name": "Queue type hint fix agent",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_typecheck_fail"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_prompts.queue_fix_agent",
+          "report_path": ".SWE/reports/typecheck/latest.md",
+          "agent": "TypeHintAgent",
+          "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/lint/latest.md", ".SWE/reports/docstrings/latest.md", ".SWE/reports/typecheck/latest.md"],
+          "completion_marker": ".SWE/markers/a4_fix_complete.marker",
+          "commit_message": "chore(types): add type annotations and fix mypy errors"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "file",
+          "name": "a4_fix_complete.marker",
+          "directory": ".SWE/markers"
+        },
+        "processing": {
+          "type": "json",
+          "name": ".processing_a4_fix",
+          "directory": ".SWE/markers"
+        }
+      },
+      "max_retries": 3,
+      "timeout_minutes": 30
+    },
+    {
+      "id": "A5-fix-agent",
+      "name": "Queue security fix agent",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_security_fail"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_prompts.queue_fix_agent",
+          "report_path": ".SWE/reports/security/latest.md",
+          "agent": "SecurityFixAgent",
+          "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/lint/latest.md", ".SWE/reports/security/latest.md"],
+          "completion_marker": ".SWE/markers/a5_fix_complete.marker",
+          "commit_message": "chore(security): address bandit findings"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "file",
+          "name": "a5_fix_complete.marker",
+          "directory": ".SWE/markers"
+        },
+        "processing": {
+          "type": "json",
+          "name": ".processing_a5_fix",
+          "directory": ".SWE/markers"
+        }
+      },
+      "max_retries": 3,
+      "timeout_minutes": 30
+    },
+    {
+      "id": "A7-fix-agent",
+      "name": "Queue test coverage fix agent",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_coverage_fail"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_prompts.queue_fix_agent",
+          "report_path": ".SWE/reports/coverage/latest.md",
+          "agent": "TestCoverageAgent",
+          "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/coverage/latest.md"],
+          "completion_marker": ".SWE/markers/a7_fix_complete.marker",
+          "commit_message": "test: add coverage for uncovered code"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "file",
+          "name": "a7_fix_complete.marker",
+          "directory": ".SWE/markers"
+        },
+        "processing": {
+          "type": "json",
+          "name": ".processing_a7_fix",
+          "directory": ".SWE/markers"
+        }
+      },
       "max_retries": 3,
       "timeout_minutes": 30
     },
@@ -374,242 +489,62 @@
       "id": "B1-fetch-issues",
       "name": "Fetch open issues from GitHub",
       "trigger": {
-        "type": "and",
-        "conditions": [
-          {
-            "type": "custom",
-            "callable": "cronpypeline.plugins.swe_plugin.detect_open_issue"
-          },
-          {
-            "type": "file_missing",
-            "path": ".SWE/markers/issues_fetched.marker"
-          }
-        ]
-      },
-      "action": {
-        "type": "http_request",
-        "params": {
-          "method": "GET",
-          "url": "https://api.github.com/repos/{repo}/issues?labels={issue_label}&state=open",
-          "auth_token_env": "GITHUB_TOKEN"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "file",
-          "name": "issues_fetched.marker",
-          "directory": ".SWE/markers"
-        }
-      },
-      "modes": ["github"]
-    },
-    {
-      "id": "C-select",
-      "name": "Select issue to work on",
-      "trigger": {
-        "type": "and",
-        "conditions": [
-          {
-            "type": "custom",
-            "callable": "cronpypeline.plugins.swe_plugin.detect_open_issue"
-          },
-          {
-            "type": "file_missing",
-            "path": ".SWE/markers/issue_selected.marker"
-          }
-        ]
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_b1_issue_gathering"
       },
       "action": {
         "type": "custom",
         "params": {
-          "callable": "cronpypeline.plugins.swe_plugin.select_issue"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "file",
-          "name": "issue_selected.marker",
-          "directory": ".SWE/markers"
+          "callable": "cronpypeline.plugins.swe_plugin.run_b1_issue_gathering"
         }
       }
     },
     {
-      "id": "C-gate",
-      "name": "Gate: re-run diagnostics before coding",
+      "id": "C-review-ranking",
+      "name": "Rank unranked review-filed issues via Targaryen Council",
       "trigger": {
-        "type": "file_exists",
-        "path": ".SWE/markers/issue_selected.marker"
-      },
-      "action": {
-        "type": "command",
-        "params": {
-          "command": "echo 'Gate passed'"
-        }
-      },
-      "invalidates": [
-        {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/test-infra"},
-        {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/coverage"}
-      ],
-      "markers": {
-        "completion": {
-          "type": "file",
-          "name": "gate_passed.marker",
-          "directory": ".SWE/markers"
-        }
-      }
-    },
-    {
-      "id": "C-code",
-      "name": "Queue coder agent for selected issue",
-      "trigger": {
-        "type": "and",
-        "conditions": [
-          {
-            "type": "file_exists",
-            "path": ".SWE/markers/gate_passed.marker"
-          },
-          {
-            "type": "file_missing",
-            "path": ".SWE/markers/coding_complete.marker"
-          }
-        ]
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_review_ranking"
       },
       "action": {
         "type": "custom",
         "params": {
-          "callable": "cronpypeline.plugins.swe_prompts.queue_coder_agent",
-          "issue_id": "{selected_issue_id}",
-          "agent": "CoderAgent"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "file",
-          "name": "coding_complete.marker",
-          "directory": "."
-        },
-        "processing": {
-          "type": "json",
-          "name": ".processing_c_code",
-          "directory": ".SWE/markers"
-        }
-      },
-      "max_retries": 3,
-      "timeout_minutes": 30,
-      "on_fail": {
-        "type": "custom",
-        "params": {
-          "callable": "cronpypeline.plugins.swe_plugin.cleanup_git_branch",
-          "task_branch": "task-{selected_issue_id}"
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_review_ranking"
         }
       }
-    },
-    {
-      "id": "C-publish",
-      "name": "Publish PR to GitHub",
-      "trigger": {
-        "type": "and",
-        "conditions": [
-          {
-            "type": "file_exists",
-            "path": ".SWE/markers/coding_complete.marker"
-          },
-          {
-            "type": "file_missing",
-            "path": ".SWE/markers/pr_published.marker"
-          }
-        ]
-      },
-      "action": {
-        "type": "http_request",
-        "params": {
-          "method": "POST",
-          "url": "https://api.github.com/repos/{repo}/pulls",
-          "auth_token_env": "GITHUB_TOKEN",
-          "body": {
-            "title": "Fix issue {selected_issue_id}",
-            "head": "task-{selected_issue_id}",
-            "base": "integration"
-          }
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "json",
-          "name": "pr_published.json",
-          "directory": ".SWE/markers",
-          "content": {"pr_number": "{pr_number}"}
-        }
-      },
-      "modes": ["github"]
     },
     {
       "id": "C-pr-status",
-      "name": "Check PR review status",
+      "name": "Poll GitHub PR for merge/reject/changes-requested",
       "trigger": {
-        "type": "and",
-        "conditions": [
-          {
-            "type": "file_exists",
-            "path": ".SWE/markers/pr_published.json"
-          },
-          {
-            "type": "file_missing",
-            "path": ".SWE/markers/pr_reviewed.json"
-          }
-        ]
-      },
-      "action": {
-        "type": "http_request",
-        "params": {
-          "method": "GET",
-          "url": "https://api.github.com/repos/{repo}/pulls/{pr_number}/reviews",
-          "auth_token_env": "GITHUB_TOKEN"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "json",
-          "name": "pr_reviewed.json",
-          "directory": ".SWE/markers"
-        }
-      },
-      "modes": ["github"]
-    },
-    {
-      "id": "C-pr-review",
-      "name": "Queue review agent for PR",
-      "trigger": {
-        "type": "file_exists",
-        "path": ".SWE/markers/pr_reviewed.json"
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_pr_status"
       },
       "action": {
         "type": "custom",
         "params": {
-          "callable": "cronpypeline.plugins.swe_prompts.queue_review_agent",
-          "agent": "ReviewAgent",
-          "pr_number": "{pr_number}",
-          "pr_url": "{pr_url}",
-          "cycle_number": "{cycle_number}"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "file",
-          "name": "review_queued.marker",
-          "directory": ".SWE/markers"
-        },
-        "processing": {
-          "type": "json",
-          "name": ".processing_c_review",
-          "directory": ".SWE/markers"
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_pr_status"
         }
       },
       "modes": ["github"]
     },
     {
+      "id": "C-issue-fix",
+      "name": "Drive SELECT/GATE state machine for issue fixes",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_issue_fix"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_issue_fix"
+        }
+      }
+    },
+    {
       "id": "C-session-terminal",
-      "name": "Close issues and post comments after session",
+      "name": "Close discarded GitHub session",
       "trigger": {
         "type": "and",
         "conditions": [
@@ -639,26 +574,103 @@
       "modes": ["github"]
     },
     {
-      "id": "C-stale",
-      "name": "Detect agent forgot to write completion marker",
+      "id": "C-coverage",
+      "name": "Create coverage issue when coverage < 100%",
       "trigger": {
         "type": "custom",
-        "callable": "cronpypeline.plugins.swe_plugin.detect_agent_forgot_marker"
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_coverage_issue"
       },
       "action": {
         "type": "custom",
         "params": {
-          "callable": "cronpypeline.plugins.swe_plugin.reset_issue_status",
-          "issue_id": "{selected_issue_id}"
-        }
-      },
-      "on_fail": {
-        "type": "custom",
-        "params": {
-          "callable": "cronpypeline.plugins.swe_plugin.cleanup_git_branch",
-          "task_branch": "task-{selected_issue_id}"
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_coverage_issue"
         }
       }
+    },
+    {
+      "id": "C-review",
+      "name": "Create review issue when coverage == 100%",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_review_issue"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_review_issue"
+        }
+      }
+    },
+    {
+      "id": "C-doc-sync",
+      "name": "Queue DocumentationSyncAgent",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_doc_sync"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_doc_sync"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "json",
+          "name": "doc_sync.json",
+          "directory": ".SWE"
+        },
+        "processing": {
+          "type": "json",
+          "name": ".processing_c_doc_sync",
+          "directory": ".SWE/markers"
+        }
+      },
+      "max_retries": 3,
+      "timeout_minutes": 30
+    },
+    {
+      "id": "C-publish",
+      "name": "Push integration branch and open PR",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_pr_publish"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_pr_publish"
+        }
+      }
+    },
+    {
+      "id": "C-pr-review",
+      "name": "Queue PRReviewAgent for published PR",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_pr_review"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_pr_review"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "json",
+          "name": "pr_reviewed.json",
+          "directory": ".SWE"
+        },
+        "processing": {
+          "type": "json",
+          "name": ".processing_c_pr_review",
+          "directory": ".SWE/markers"
+        }
+      },
+      "max_retries": 3,
+      "timeout_minutes": 30,
+      "modes": ["github"]
     }
   ]
 }

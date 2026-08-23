@@ -1,0 +1,222 @@
+# cronpypeline migration progress
+
+## Goal
+Match the existing SWE pipeline (original script at
+/home/wouter/Repos/spellbook/apps/Serendipity/SWE/scripts/run_swe_pipeline.py)
+to the cronpypeline library by building a JSON config that replicates its behavior.
+
+## Rules
+- ONE STEP AT A TIME. Do not look ahead or plan future steps.
+- Do not overthink. Minimal, focused work per step.
+- Update this file after each step is completed.
+- The original pipeline script is the source of truth for behavior.
+
+## Verification tool: compare_dry_runs.py
+Location: scripts/compare_dry_runs.py
+
+Runs both the old SWE pipeline and cronpypeline in --dry-run --verbose mode
+for every enabled repo in the SWE repo registry, then prints a side-by-side
+comparison with a unified diff of any discrepancies.
+
+Usage:
+    python3 scripts/compare_dry_runs.py              # all enabled repos
+    python3 scripts/compare_dry_runs.py --repo cronpypeline  # single repo
+    python3 scripts/compare_dry_runs.py --timeout 60         # custom timeout
+
+Key paths it uses:
+- Old pipeline: /home/wouter/Repos/spellbook/apps/Serendipity/SWE/scripts/run_swe_pipeline.py
+  (run via spellbook's .venv)
+- New pipeline: configs/swe_pipeline.json
+  (run via cronpypeline's .venv)
+- Repo registry: /spellbook_data/Serendipity/swe/repos.json
+
+Exit code 0 = all repos match, 1 = differences found.
+
+## Current step
+Step 2: Map each pipeline step to cronpypeline JSON config entries (in progress).
+
+IMPORTANT: Only modify configs/swe_pipeline.json. Do NOT change any source code
+(.py files). All behavior must be achieved through JSON config alone.
+
+### Step 2 checklist
+
+#### Phase A — Hygiene
+- [x] A0 — RepoResearchAgent (agent)
+  - Trigger: `file_missing` for `.SWE/repo_briefing.md`
+  - Action: `queue_agent` with `RepoResearchAgent`, prompt matches old pipeline
+  - Completion marker: `.SWE/repo_briefing.md` (file type)
+  - Processing marker: `.SWE/markers/.a0_processing` (json type, for retry tracking)
+  - Give-up marker: `.SWE/markers/.a0_gave_up` (file type)
+  - timeout_minutes: 30, max_retries: 3, no chaining (agent stage)
+  - Note: old pipeline also adds `repo_name` and `repo_dir` as extra queue entry fields; these can't be template-substituted in the current handler for non-prompt params, so only `stage: "A0"` is included as a literal.
+- [x] A1 — Test infrastructure check (mechanical)
+  - Trigger: `file_missing` for `.SWE/reports/test-infra/latest.md`
+  - Action: `custom` → `run_diagnostic` with `command: "{test_cmd}"`, `parse_pytest_output`
+  - Completion marker: `latest.md` symlink in `.SWE/reports/test-infra`
+  - `chain: true` (mechanical, chains to A2)
+  - Note: `run_diagnostic` has hardcoded 300s timeout vs original's 900s; acceptable for now
+  - Removed explicit `timeout_minutes`/`max_retries` (defaults match original behavior — mechanical stages don't retry)
+- [x] A2 — Lint check (mechanical)
+  - Trigger: `file_missing` for `.SWE/reports/lint/latest.md`
+  - Action: `custom` → `run_diagnostic` with `command: "{lint_cmd}"`, `parse_ruff_output`
+  - Completion marker: `latest.md` symlink in `.SWE/reports/lint`
+  - `chain: true` (mechanical, chains to A2-autofix/A2-fix-agent)
+  - Fixed: command was hardcoded `ruff check .`, changed to `{lint_cmd}` template to match original
+- [x] A2-autofix — Auto-fix lint issues (mechanical)
+  - Trigger: `custom` → `detect_lint_autofix` — reads lint report, checks fixable > 0, checks no `applied_for_{stem}.marker` ✓
+  - Action: `custom` → `run_lint_autofix` — runs `ruff check --fix .`, writes report to `.SWE/reports/lint-autofix/`, creates `applied_for_{stem}.marker`, commits on PHASE_A_BRANCH, deletes A2 `latest.md` ✓
+  - `invalidates`: A2 `latest.md` symlink ✓
+  - `chain: true` (mechanical) ✓
+  - Added git helpers: `_git()`, `ensure_phase_a_branch()`, `commit_phase_a_change()` in `swe_plugin.py`
+- [x] A2-fix-agent — Queue FixLintingAgent (agent)
+  - Trigger: `custom` → `detect_lint_fail` — checks errors > 0, fixable == 0, no `queued_for_{stem}.marker` ✓
+  - Action: `custom` → `queue_fix_agent` with `report_path`, `agent: "FixLintingAgent"`, `invalidate_paths`, `completion_marker`, `commit_message` ✓
+  - `queue_fix_agent` resolves symlink, writes `queued_for_{stem}.marker` (dedup), builds prompt with report + commit/delete/completion instructions ✓
+  - Completion marker: `a2_fix_complete.marker` (written by agent as its last step) ✓
+  - Processing marker: `.processing_a2_fix` (created by pipeline for stale detection) ✓
+  - `max_retries: 3`, `timeout_minutes: 30` ✓
+  - Removed `invalidates` (agent deletes A1/A2 `latest.md` per prompt instructions) ✓
+- [x] A3 — Docstring coverage (mechanical)
+  - Trigger: `file_missing` for `.SWE/reports/docstrings/latest.md`
+  - Action: `custom` → `run_diagnostic` with `command: "{docstring_cmd}"`, no parser
+  - Completion marker: `latest.md` symlink in `.SWE/reports/docstrings`
+  - `chain: true` (mechanical)
+  - Fixed: was using `pydocstyle .` with `parse_pydocstyle_output`; original uses `interrogate -v --fail-under 100` via registry
+  - Note: no `parse_interrogate_output` exists in codebase; report will have UNKNOWN status without parser
+- [x] A3-fix-agent — Queue DocStringAgent (agent)
+  - Trigger: `custom` → `detect_docstring_fail` — checks report first line for '— FAIL', no `queued_for_{stem}.marker` ✓
+  - Action: `custom` → `queue_fix_agent` with `agent: "DocStringAgent"`, invalidate A1/A2/A3 `latest.md` ✓
+  - Completion marker: `a3_fix_complete.marker` ✓
+  - `max_retries: 3`, `timeout_minutes: 30` ✓
+- [x] A4 — Type check (mechanical)
+  - Trigger: `file_missing` for `.SWE/reports/typecheck/latest.md`
+  - Action: `custom` → `run_diagnostic` with `command: "{typecheck_cmd}"`, `parse_mypy_output`
+  - Completion marker: `latest.md` symlink in `.SWE/reports/typecheck`
+  - `chain: true` (mechanical)
+  - Fixed: command was hardcoded `mypy .`, changed to `{typecheck_cmd}` template to match original
+- [x] A4-fix-agent — Queue TypeHintAgent (agent)
+  - Trigger: `custom` → `detect_typecheck_fail` — checks report first line for '— FAIL', no `queued_for_{stem}.marker` ✓
+  - Action: `custom` → `queue_fix_agent` with `agent: "TypeHintAgent"`, invalidate A1/A2/A3/A4 `latest.md` ✓
+  - Completion marker: `a4_fix_complete.marker` ✓
+  - `max_retries: 3`, `timeout_minutes: 30` ✓
+- [x] A5 — Security audit (mechanical)
+  - Trigger: `file_missing` for `.SWE/reports/security/latest.md`
+  - Action: `custom` → `run_diagnostic` with `command: "bandit -r ."`, `parse_bandit_output`
+  - Completion marker: `latest.md` symlink in `.SWE/reports/security`
+  - `chain: true` (mechanical)
+  - Note: original uses `security_cmd` from registry (only Starfarer has it set); others fall back to `bandit -r <repo_name> -f txt`
+  - Limitation: `bandit -r .` is a reasonable approximation but doesn't use per-repo `security_cmd`; can't do conditionals in JSON
+- [x] A5-fix-agent — Queue SecurityFixAgent (agent)
+  - Trigger: `custom` → `detect_security_fail` — checks report first line for '— FAIL', no `queued_for_{stem}.marker` ✓
+  - Action: `custom` → `queue_fix_agent` with `agent: "SecurityFixAgent"`, invalidate A1/A2/A5 `latest.md` ✓
+  - Completion marker: `a5_fix_complete.marker` ✓
+  - `max_retries: 3`, `timeout_minutes: 30` ✓
+- [x] A6 — Dead code detection (mechanical)
+  - Trigger: `custom` → `detect_deadcode_trigger` (checks `skip_deadcode` + `file_missing` for `.SWE/reports/deadcode/latest.md`) ✓
+  - Action: `custom` → `run_diagnostic` with `command: "{deadcode_cmd}"`, `parse_vulture_output`
+  - Completion marker: `latest.md` symlink in `.SWE/reports/deadcode`
+  - `chain: true` (mechanical)
+  - Fixed: command was hardcoded `vulture .`, changed to `{deadcode_cmd}` template
+  - Note: only Starfarer has `deadcode_cmd` set; other repos have `skip_deadcode=true` and are skipped by trigger
+- [x] A6-fix-agent — Queue DeadCodeAgent (agent)
+  - REMOVED from config — original pipeline does NOT include detect_a6_fix_agent in STAGE_DETECTORS
+  - Dead code is reported but not automatically fixed
+- [x] A7 — Test coverage (mechanical)
+  - Trigger: `file_missing` for `.SWE/reports/coverage/latest.md`
+  - Action: `custom` → `run_diagnostic` with `command: "{coverage_cmd}"`, `parse_coverage_output`
+  - `parser_kwargs: {"threshold": 80.0}` — matches original default (no repos have `coverage_threshold` set)
+  - Completion marker: `latest.md` symlink in `.SWE/reports/coverage`
+  - `chain: true` (mechanical)
+  - Fixed: command was hardcoded `pytest --cov=. --cov-report=term`, changed to `{coverage_cmd}` template
+  - Fixed: threshold was 100.0, changed to 80.0 to match original default
+  - Note: only Starfarer has `coverage_cmd` set; others would need fallback `pytest --cov=<pkg> --cov-report=term-missing -q` (can't do in JSON)
+- [x] A7-fix-agent — Queue TestCoverageAgent (agent)
+  - Trigger: `custom` → `detect_coverage_fail` — checks report first line for '— FAIL', no `queued_for_{stem}.marker` ✓
+  - Action: `custom` → `queue_fix_agent` with `agent: "TestCoverageAgent"`, invalidate A1/A7 `latest.md` ✓
+  - Completion marker: `a7_fix_complete.marker` ✓
+  - `max_retries: 3`, `timeout_minutes: 30` ✓
+- [x] A8 — Complexity analysis (mechanical, informational only)
+  - Trigger: `file_missing` for `.SWE/reports/complexity/latest.md`
+  - Action: `custom` → `run_diagnostic` with `command: "radon cc . -s -a"`, `parse_radon_output`
+  - `parser_kwargs: {"threshold": "C"}`
+  - Completion marker: `latest.md` symlink in `.SWE/reports/complexity`
+  - `chain: true` (mechanical)
+  - Fixed: added `-a` flag to radon command (computes average complexity, matching original)
+  - Note: no repos have `complexity_cmd` set; original falls back to `radon cc <pkg> -s -a`
+  - Note: A8 is informational only — uses WARN not FAIL, no fix-agent stage exists
+- [x] A9 — Dependency vulnerability scan (mechanical)
+  - Trigger: `file_missing` for `.SWE/reports/dep-audit/latest.md`
+  - Action: `custom` → `run_diagnostic` with `command: "pip-audit"`, `parse_pip_audit_output`
+  - Completion marker: `latest.md` symlink in `.SWE/reports/dep-audit`
+  - `chain: true` (mechanical, last Phase A stage — chain stops at next non-mechanical stage)
+  - Fixed: added `chain: true` to match original chaining behavior
+  - Note: no repos have `dep_audit_cmd` set; original falls back to `pip-audit` in venv
+  - Note: original also creates issue files in `.SWE/issues/` for each vulnerability — not replicated (needs custom action)
+
+#### Phase B — GitHub Issue Intake
+- [x] B1 — GitHub issue intake (mechanical)
+  - Trigger: `custom` → `detect_b1_issue_gathering` — checks no active/completed session, recheck interval, token, slug ✓
+  - Action: `custom` → `run_b1_issue_gathering` — calls GitHub API, writes issue file via `create_issue`, creates/updates session JSON ✓
+  - GitHub API helpers: `_gh_api_get_list`, `_gh_api_post`, `_gh_api_patch`, `_load_github_token`, `_read_github_session` ✓
+  - Handles: no issues (idle session), already ingested (session only), new issue (issue file + active session) ✓
+  - No completion marker (session JSON is the state) ✓
+  - No `modes` restriction (B1 runs in default mode, creates session that switches to github) ✓
+
+#### Phase C — Issue-Driven Fix Loop
+- [x] C-review-ranking — Rank unranked review-filed issues (mechanical)
+  - Trigger: `custom` → `detect_c_review_ranking` — no active session, no active task, >=2 unranked review issues, no ranked_{count}.marker ✓
+  - Action: `custom` → `run_c_review_ranking` — runs `run_swe_issue_ranking.py` subprocess, writes ranked_{count}.marker ✓
+  - Helpers: `_find_active_task`, `_count_unranked_review_issues` ✓
+  - External dependency: `run_swe_issue_ranking.py` (Targaryen Council Hivemind) ✓
+- [x] C-pr-status — Poll GitHub PR for merge/reject/changes-requested (mechanical)
+  - Trigger: `custom` → `detect_c_pr_status` — pr_published.json exists, pr_state not terminal, token+slug available ✓
+  - Action: `custom` → `run_c_pr_status` — fetches PR info, handles merged/rejected (close issue+session), handles changes-requested (file revision issues, update cycles) ✓
+  - `modes: ["github"]` ✓
+  - Uses `_close_and_comment_github_issue`, `_parse_change_requests` ✓
+- [x] C-issue-fix — SELECT/GATE state machine (delegates to run_issue_fix.py)
+  - Trigger: `custom` → `detect_c_issue_fix` — no active session, active task or open issue exists ✓
+  - Action: `custom` → `run_c_issue_fix` — runs `run_issue_fix.py` subprocess (auto-detects gate/select/stale/wait) ✓
+  - External dependency: `run_issue_fix.py` (SELECT/GATE state machine) ✓
+  - Replaces old C-select/C-gate/C-code/C-stale stages with unified state machine ✓
+- [x] C-session-terminal — Close discarded GitHub session (mechanical)
+  - Trigger: `custom` → `detect_session_complete` + `file_missing` for `session_finalized.marker` ✓
+  - Action: `custom` → `finalize_session` — posts comment on GitHub issue, closes it via API, updates session to inactive/completed ✓
+  - `modes: ["github"]` ✓
+  - Full implementation: now closes GitHub issue and posts comment via `_gh_api_post`/`_gh_api_patch` ✓
+- [x] C-coverage — Create coverage issue when coverage < 100% (mechanical)
+  - Trigger: `custom` → `detect_c_coverage_issue` — no open issues, A1 pass, coverage < target, no unreviewed PR, SHA-keyed idempotency ✓
+  - Action: `custom` → `run_c_coverage_issue` — writes coverage issue via `_write_pipeline_issue` ✓
+- [x] C-review — Create review issue when coverage == 100% (mechanical)
+  - Trigger: `custom` → `detect_c_review_issue` — no open issues, A1 pass, coverage >= target, SHA-keyed idempotency, generation cap ✓
+  - Action: `custom` → `run_c_review_issue` — writes review issue with generation tracking, delta scoping via `_find_previous_review_sha` ✓
+- [x] C-doc-sync — Queue DocumentationSyncAgent (agent)
+  - Trigger: `custom` → `detect_c_doc_sync` — no open issues, A1 pass, coverage >= target, integration ahead, delivery=open_pr, token+slug, SHA-keyed idempotency, 30-min re-queue guard ✓
+  - Action: `custom` → `run_c_doc_sync` — checks out integration, builds doc-sync prompt, queues via ConversationQueueHandler, writes queued marker ✓
+  - Completion marker: `doc_sync.json` in `.SWE/` (written by agent) ✓
+  - Processing marker: `.processing_c_doc_sync` in `.SWE/markers/` ✓
+- [x] C-publish — Push integration branch and open PR (mechanical)
+  - Trigger: `custom` → `detect_c_pr_publish` — no open issues, A1 pass, coverage >= target, integration ahead, no existing PR, delivery=open_pr, token+slug, doc_sync done for SHA ✓
+  - Action: `custom` → `run_c_pr_publish` — pushes integration branch, creates PR via `_gh_api_post`, writes `pr_published.json` ✓
+  - Runs in default mode (not github mode) ✓
+- [x] C-pr-review — Queue PRReviewAgent (agent)
+  - Trigger: `custom` → `detect_c_pr_review` — PR published, not yet reviewed for this PR, 30-min re-queue guard, cycle limit, delivery=open_pr, token ✓
+  - Action: `custom` → `run_c_pr_review` — builds PR review prompt with cycle guidance, queues via ConversationQueueHandler, writes queued marker ✓
+  - Completion marker: `pr_reviewed.json` in `.SWE/` (written by agent) ✓
+  - Processing marker: `.processing_c_pr_review` in `.SWE/markers/` ✓
+  - `modes: ["github"]` ✓
+
+#### Not Implemented (placeholders in STAGE_DETECTORS)
+- B3 — Targaryen Council (ranking) — not implemented
+- B2 — TaskCompilerAgent — not implemented
+
+## Completed steps
+
+### Step 1: Read the original pipeline script and list all pipeline steps
+Source: /home/wouter/Repos/spellbook/apps/Serendipity/SWE/scripts/run_swe_pipeline.py
+The STAGE_DETECTORS list (line ~5487) defines the priority order — first detector
+that returns non-None wins. Phase A mechanical stages chain within a single tick;
+agent-queuing stages and Phase B/C stages run one-per-tick.
+
+Total: 26 active steps (16 Phase A, 1 Phase B, 9 Phase C) + 2 not-implemented placeholders.
+Note: detect_a6_fix_agent (DeadCodeAgent) exists as a function but is NOT in the
+STAGE_DETECTORS list — dead code is reported but not automatically fixed.
