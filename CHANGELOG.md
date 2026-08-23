@@ -17,7 +17,11 @@
 - `_handle_stale` now returns a DRY_RUN result before deleting processing markers or re-queueing when in dry-run mode, and correctly reports "Would give up" when the retry limit is reached.
 - `_handle_stale` now returns ACTION_FAILED (and runs `on_fail`) when the re-executed action fails, instead of reporting ACTION_EXECUTED.
 - `FileLock.__enter__` now raises `RuntimeError` when the lock cannot be acquired instead of silently continuing.
+- MarkerSpec objects are no longer mutated in-place when the pipeline creates processing markers (e.g. for async actions, chained stages, or stale re-queueing); the pipeline now uses `dataclasses.replace()` to build new marker specs, preventing shared config objects from being modified during tick execution.
 - Bumped setuptools build requirement to >=83.0.0 to address PYSEC-2026-3447.
+
+### Changed
+- `configs/swe_pipeline.json` now defines `processing` markers for the A2-fix-agent, A6-fix-agent, C-code, and C-review stages, aligning the example config with the async processing-marker behavior.
 
 ### Security
 - Addressed bandit findings: added nosec annotations for intentional subprocess/shell usage, resolved git binary via shutil.which, and validated HTTP URL schemes.
