@@ -3769,3 +3769,91 @@ def my_action(action, context):
             assert not (target_dir / ".processing").exists()
         finally:
             self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_noproc_mod")
+
+    def test_non_chained_async_custom_action_creates_processing_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "nonchain_async_proc_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True, "queue_file": "/tmp/queue/abc123.json", "entry_id": "entry-123"})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Async Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "nonchain_async_proc_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "a.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                        },
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert not (target_dir / "a.md").exists()
+            assert (target_dir / ".processing").exists()
+            with open(target_dir / ".processing") as f:
+                processing = json.load(f)
+            assert processing.get("queue_file") == "/tmp/queue/abc123.json"
+            assert processing.get("entry_id") == "entry-123"
+            assert processing.get("retry_count") == 0
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "nonchain_async_proc_mod")
+
+    def test_non_chained_async_custom_action_not_reexecuted(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "nonchain_async_reexec_mod", """
+from cronpypeline.actions import ActionResult
+
+counter = {"runs": 0}
+
+def my_action(action, context):
+    counter["runs"] += 1
+    return ActionResult(success=True, data={"async": True})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Async Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "nonchain_async_reexec_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "a.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                        },
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            first = pipeline.tick(target="my-repo")
+            assert first.status == TickResultStatus.ACTION_EXECUTED
+            second = pipeline.tick(target="my-repo")
+            assert second.status == TickResultStatus.NO_WORK
+            assert not (target_dir / "a.md").exists()
+            assert (target_dir / ".processing").exists()
+
+            import importlib
+            mod = importlib.import_module("nonchain_async_reexec_mod")
+            assert mod.counter["runs"] == 1
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "nonchain_async_reexec_mod")
