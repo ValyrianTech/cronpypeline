@@ -65,6 +65,11 @@ class TickResult:
     chained_stages: list[str] = dc_field(default_factory=list)
 
     def __str__(self) -> str:
+        """Return a human-readable string representation of the tick result.
+
+        :returns: A string in the format ``"<target> | <stage> -> <status> | <message>"``.
+        :rtype: str
+        """
         stage = self.stage_id or "-"
         return f"{self.target} | {stage} -> {self.status.value} | {self.message}"
 
@@ -115,6 +120,11 @@ class Pipeline:
     """
 
     def __init__(self, config: PipelineConfig) -> None:
+        """Initialize a pipeline from a configuration.
+
+        :param config: Pipeline configuration loaded from JSON.
+        :type config: PipelineConfig
+        """
         self.config = config
         self.workspace_dir = Path(config.workspace_dir)
         self.lock = FileLock(

@@ -20,6 +20,14 @@ class FileLock:
     """
 
     def __init__(self, lock_file: Path | str | None = None, dry_run: bool = False) -> None:
+        """Initialize a file lock.
+
+        :param lock_file: Path to the lock file.
+        :type lock_file: Path | str | None
+        :param dry_run: If True, bypasses actual locking.
+        :type dry_run: bool
+        :raises ValueError: If ``lock_file`` is None.
+        """
         if lock_file is None:
             raise ValueError("lock_file is required")
         self.lock_file = Path(lock_file)
@@ -78,6 +86,11 @@ class FileLock:
         self._acquired = False
 
     def __enter__(self) -> "FileLock":  # noqa: PYI034
+        """Acquire the lock and return self for use as a context manager.
+
+        :returns: The :class:`FileLock` instance.
+        :rtype: FileLock
+        """
         self.acquire()
         return self
 
@@ -87,6 +100,15 @@ class FileLock:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        """Release the lock when exiting the context manager.
+
+        :param exc_type: Exception type, if an exception occurred.
+        :type exc_type: type[BaseException] | None
+        :param exc_val: Exception value, if an exception occurred.
+        :type exc_val: BaseException | None
+        :param exc_tb: Traceback, if an exception occurred.
+        :type exc_tb: TracebackType | None
+        """
         self.release()
 
     @property
