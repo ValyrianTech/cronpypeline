@@ -470,12 +470,14 @@ class Pipeline:
         stage = stage_state.stage
         marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
         if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers:
-            processing_spec = stage.markers["processing"]
             # Preserve retry count if re-queueing
             retry_count = 0
             if stage_state.processing_data and "retry_count" in stage_state.processing_data:
                 retry_count = stage_state.processing_data["retry_count"]
-            processing_spec.content = {**processing_spec.content, "retry_count": retry_count}
+            processing_spec = replace(stage.markers["processing"], content={
+                **stage.markers["processing"].content,
+                "retry_count": retry_count,
+            })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
         # Execute action
@@ -490,13 +492,12 @@ class Pipeline:
 
         # Update processing marker with result data (for stale detection and tracking)
         if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers and result.success and result.data:
-            processing_spec = stage.markers["processing"]
-            retry_count = processing_spec.content.get("retry_count", 0)
-            processing_spec.content = {
-                **processing_spec.content,
+            retry_count = stage.markers["processing"].content.get("retry_count", 0)
+            processing_spec = replace(stage.markers["processing"], content={
+                **stage.markers["processing"].content,
                 "retry_count": retry_count,
                 **result.data,
-            }
+            })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
         if not result.success:
@@ -538,12 +539,11 @@ class Pipeline:
             and result.success
             and result.data.get("async", False)
         ):
-            processing_spec = stage.markers["processing"]
-            processing_spec.content = {
-                **processing_spec.content,
+            processing_spec = replace(stage.markers["processing"], content={
+                **stage.markers["processing"].content,
                 "retry_count": 0,
                 **result.data,
-            }
+            })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
         # Invalidate markers from other stages
@@ -739,8 +739,10 @@ class Pipeline:
 
         # Create new processing marker with incremented retry count
         if "processing" in stage.markers:
-            processing_spec = stage.markers["processing"]
-            processing_spec.content = {**processing_spec.content, "retry_count": retry_count + 1}
+            processing_spec = replace(stage.markers["processing"], content={
+                **stage.markers["processing"].content,
+                "retry_count": retry_count + 1,
+            })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
         # Re-execute the action
@@ -777,12 +779,11 @@ class Pipeline:
 
         # Update processing marker with result data
         if result.success and result.data and "processing" in stage.markers:
-            processing_spec = stage.markers["processing"]
-            processing_spec.content = {
-                **processing_spec.content,
+            processing_spec = replace(stage.markers["processing"], content={
+                **stage.markers["processing"].content,
                 "retry_count": retry_count + 1,
                 **result.data,
-            }
+            })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
         return TickResult(
