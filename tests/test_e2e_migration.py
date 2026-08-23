@@ -9,7 +9,12 @@ import json
 import time
 from pathlib import Path
 
-from cronpypeline.actions import ActionHandler, ActionResult, TickContext, register_handler
+from cronpypeline.actions import (
+    ActionHandler,
+    ActionResult,
+    TickContext,
+    register_handler,
+)
 from cronpypeline.config import ActionSpec, ActionType, PipelineConfig
 from cronpypeline.pipeline import Pipeline, TickResultStatus
 

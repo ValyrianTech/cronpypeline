@@ -559,6 +559,131 @@ class TestTickStaleHandling:
         assert (target_dir / ".gave_up").exists()
         assert not (target_dir / ".processing").exists()
 
+    def test_stale_requeue_does_not_mutate_marker_spec_content(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Create a stale processing marker
+        processing_data = {"retry_count": 1, "timestamp": time.time() - 3600}
+        (target_dir / ".processing").write_text(json.dumps(processing_data))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "TestAgent"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "a.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {"initial": "value"}},
+                    },
+                    "timeout_minutes": 30,
+                    "max_retries": 3,
+                },
+            ],
+        })
+        original_spec = config.stages[0].markers["processing"]
+        assert original_spec.content == {"initial": "value"}
+
+        pipeline = Pipeline(config)
+        # Register mock handler
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
+        from cronpypeline.config import ActionType
+
+        class MockQueueHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(
+                    success=True,
+                    stdout="queued",
+                    data={"queue_file": "/tmp/queue/abc123.json", "entry_id": "entry-123"},
+                )
+            def check_complete(self, action, context):
+                return False
+
+        handler = MockQueueHandler()
+        register_handler(ActionType.QUEUE_AGENT, handler)
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        new_data = json.loads((target_dir / ".processing").read_text())
+        assert new_data["retry_count"] == 2
+        assert handler.check_complete(None, None) is False
+
+        assert config.stages[0].markers["processing"].content == {"initial": "value"}
+
+    def _make_stale_stage(self, workspace, target_name="my-repo", on_fail=None):
+        target_dir = workspace / target_name
+        target_dir.mkdir()
+
+        # Create a stale processing marker
+        processing_data = {"retry_count": 1, "timestamp": time.time() - 3600}
+        (target_dir / ".processing").write_text(json.dumps(processing_data))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        stage = {
+            "id": "A0",
+            "name": "Failing Step",
+            "trigger": {"type": "file_missing", "path": "a.md"},
+            "action": {"type": "command", "params": {"command": "sh -c 'echo fail >&2; exit 1'"}},
+            "markers": {
+                "completion": {"type": "file", "name": "a.md"},
+                "processing": {"type": "json", "name": ".processing", "content": {}},
+            },
+            "timeout_minutes": 30,
+            "max_retries": 3,
+        }
+        if on_fail is not None:
+            stage["on_fail"] = on_fail
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [stage],
+        })
+        return target_dir, Pipeline(config)
+
+    def test_stale_requeue_failing_action_returns_action_failed(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_stage(workspace)
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.stderr
+        assert "fail" in result.stderr
+
+    def test_stale_requeue_failing_action_runs_on_fail(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_stage(
+            workspace,
+            on_fail={"type": "command", "params": {"command": "touch on_fail_marker.txt"}},
+        )
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert (target_dir / "on_fail_marker.txt").exists()
+
+    def test_stale_requeue_failing_action_no_on_fail(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_stage(workspace)
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert not (target_dir / "on_fail_marker.txt").exists()
+
 
 class TestActionHandlerWiring:
     """Tests for wiring action handlers from PipelineConfig.action_handler."""
@@ -2978,7 +3103,7 @@ class TestTickStaleDryRun:
     """Tests for stale processing marker handling in dry run."""
 
     def test_stale_dry_run_returns_dry_run(self, tmp_path):
-        """Stale processing marker in dry run should return DRY_RUN."""
+        """Stale processing marker in dry run should return DRY_RUN without deleting the marker."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         target_dir = workspace / "my-repo"
@@ -3009,6 +3134,134 @@ class TestTickStaleDryRun:
         pipeline = Pipeline(config)
         result = pipeline.tick(target="my-repo", dry_run=True)
         assert result.status == TickResultStatus.DRY_RUN
+        assert proc_path.exists(), "Processing marker must not be deleted during dry run"
+
+    def test_stale_dry_run_give_up_no_mutation(self, tmp_path):
+        """Dry run with retry_count >= max_retries should return DRY_RUN without mutation."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Create a stale processing marker that is already past max_retries
+        import json as _json
+        proc_path = target_dir / ".processing"
+        proc_path.write_text(_json.dumps({
+            "queue_file": "/nonexistent/queue/entry.json",
+            "retry_count": 3,
+        }))
+        give_up_path = target_dir / ".give_up"
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                        "give_up": {"type": "file", "name": ".give_up"},
+                    },
+                    "timeout_minutes": 0,
+                    "max_retries": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+        assert proc_path.exists(), "Processing marker must not be deleted during dry run"
+        assert not give_up_path.exists(), "Give up marker must not be created during dry run"
+
+    def test_stale_dry_run_give_up_message(self, tmp_path):
+        """Dry run at max_retries should report the give-up message."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Create a stale processing marker that is already past max_retries
+        import json as _json
+        proc_path = target_dir / ".processing"
+        proc_path.write_text(_json.dumps({
+            "queue_file": "/nonexistent/queue/entry.json",
+            "retry_count": 3,
+        }))
+        give_up_path = target_dir / ".give_up"
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                        "give_up": {"type": "file", "name": ".give_up"},
+                    },
+                    "timeout_minutes": 0,
+                    "max_retries": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+        assert "Would give up on stale stage" in result.message
+        assert "retry 3 >= max 3" in result.message
+        assert proc_path.exists(), "Processing marker must not be deleted during dry run"
+        assert not give_up_path.exists(), "Give up marker must not be created during dry run"
+
+    def test_stale_dry_run_requeue_message(self, tmp_path):
+        """Dry run below max_retries should report the re-queue message."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Create a stale processing marker below max_retries
+        import json as _json
+        proc_path = target_dir / ".processing"
+        proc_path.write_text(_json.dumps({
+            "queue_file": "/nonexistent/queue/entry.json",
+            "retry_count": 1,
+        }))
+        give_up_path = target_dir / ".give_up"
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                        "give_up": {"type": "file", "name": ".give_up"},
+                    },
+                    "timeout_minutes": 0,
+                    "max_retries": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+        assert "Would re-queue stale stage" in result.message
+        assert "retry 2" in result.message
+        assert proc_path.exists(), "Processing marker must not be deleted during dry run"
+        assert not give_up_path.exists(), "Give up marker must not be created during dry run"
 
 
 class TestTickProcessingRetryCount:
@@ -3197,6 +3450,61 @@ class TestTickQueueAgentProcessingData:
         assert proc_data["retry_count"] == 3
         assert handler.check_complete(None, None) is False
 
+    def test_queue_agent_does_not_mutate_marker_spec_content(self, tmp_path):
+        """A queue_agent tick must not mutate the config's MarkerSpec.content."""
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test", "prompt": "do"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {"initial": "value"}},
+                    },
+                },
+            ],
+        })
+        original_spec = config.stages[0].markers["processing"]
+        assert original_spec.content == {"initial": "value"}
+
+        pipeline = Pipeline(config)
+
+        class MockQueueHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(
+                    success=True,
+                    stdout="ok",
+                    data={"queue_file": "/tmp/queue/abc123.json", "entry_id": "entry-123"},
+                )
+            def check_complete(self, action, context):
+                return False
+
+        handler = MockQueueHandler()
+        register_handler(ActionType.QUEUE_AGENT, handler)
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        proc_path = target_dir / ".processing"
+        assert proc_path.exists()
+        proc_data = json.loads(proc_path.read_text())
+        assert proc_data["retry_count"] == 0
+        assert proc_data["queue_file"] == "/tmp/queue/abc123.json"
+        assert proc_data["entry_id"] == "entry-123"
+        assert handler.check_complete(None, None) is False
+
+        assert config.stages[0].markers["processing"].content == {"initial": "value"}
+
 
 class TestModeConfigPathResolution:
     """Tests for mode_file/config_file path resolution relative to workspace_dir."""
@@ -3352,3 +3660,418 @@ class TestTickTargetStateNoneDefensive:
             result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.NO_WORK
         assert result.message == "No state derived"
+
+
+class TestCustomAsyncActionCompletionMarker:
+    """Completion markers must not be created for async custom actions."""
+
+    def _write_custom_module(self, tmp_path, name, body):
+        (tmp_path / f"{name}.py").write_text(body)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        return sys
+
+    def _cleanup_custom_module(self, sys_mod, tmp_path, name):
+        sys_mod.path.remove(str(tmp_path))
+        if name in sys_mod.modules:
+            del sys_mod.modules[name]
+
+    def test_async_custom_action_does_not_create_completion_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "async_action_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True, "queue_file": "/tmp/x.json"})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Async Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "async_action_mod.my_action"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert not (target_dir / "a.md").exists()
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "async_action_mod")
+
+    def test_sync_custom_action_creates_completion_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "sync_action_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True)
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Sync Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "sync_action_mod.my_action"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert (target_dir / "a.md").exists()
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "sync_action_mod")
+
+    def test_chain_async_custom_action_does_not_create_completion_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "chain_async_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Step 1",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "command", "params": {"command": "echo a"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "A1",
+                        "name": "Async Chained Step",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "custom", "params": {"callable": "chain_async_mod.my_action"}},
+                        "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert result.stage_id == "A1"
+            assert "A1" in result.chained_stages
+            assert (target_dir / "a.md").exists()
+            assert not (target_dir / "b.md").exists()
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_mod")
+
+    def test_chain_async_custom_action_creates_processing_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "chain_async_proc_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True, "queue_file": "/tmp/queue/abc123.json", "entry_id": "entry-123"})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Step 1",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "command", "params": {"command": "echo a"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "A1",
+                        "name": "Async Chained Step",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "custom", "params": {"callable": "chain_async_proc_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "b.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                        },
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert result.stage_id == "A1"
+            assert "A1" in result.chained_stages
+            assert not (target_dir / "b.md").exists()
+            assert (target_dir / ".processing").exists()
+            with open(target_dir / ".processing") as f:
+                processing = json.load(f)
+            assert processing.get("queue_file") == "/tmp/queue/abc123.json"
+            assert processing.get("entry_id") == "entry-123"
+            assert processing.get("retry_count") == 0
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_proc_mod")
+
+    def test_chain_async_custom_action_does_not_mutate_marker_spec_content(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "chain_async_no_mutate_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True, "queue_file": "/tmp/queue/abc123.json", "entry_id": "entry-123"})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Step 1",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "command", "params": {"command": "echo a"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "A1",
+                        "name": "Async Chained Step",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "custom", "params": {"callable": "chain_async_no_mutate_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "b.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {"initial": "value"}},
+                        },
+                    },
+                ],
+            })
+            original_spec = config.stages[1].markers["processing"]
+            assert original_spec.content == {"initial": "value"}
+
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert result.stage_id == "A1"
+            assert "A1" in result.chained_stages
+            assert not (target_dir / "b.md").exists()
+            assert (target_dir / ".processing").exists()
+            with open(target_dir / ".processing") as f:
+                processing = json.load(f)
+            assert processing.get("queue_file") == "/tmp/queue/abc123.json"
+            assert processing.get("entry_id") == "entry-123"
+            assert processing.get("retry_count") == 0
+
+            assert config.stages[1].markers["processing"].content == {"initial": "value"}
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_no_mutate_mod")
+
+    def test_chain_async_custom_action_without_processing_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "chain_async_noproc_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Step 1",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "command", "params": {"command": "echo a"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "A1",
+                        "name": "Async Chained Step",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "custom", "params": {"callable": "chain_async_noproc_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "b.md"},
+                        },
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert result.stage_id == "A1"
+            assert "A1" in result.chained_stages
+            assert not (target_dir / "b.md").exists()
+            assert not (target_dir / ".processing").exists()
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_noproc_mod")
+
+    def test_non_chained_async_custom_action_creates_processing_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "nonchain_async_proc_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True, "queue_file": "/tmp/queue/abc123.json", "entry_id": "entry-123"})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Async Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "nonchain_async_proc_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "a.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                        },
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert not (target_dir / "a.md").exists()
+            assert (target_dir / ".processing").exists()
+            with open(target_dir / ".processing") as f:
+                processing = json.load(f)
+            assert processing.get("queue_file") == "/tmp/queue/abc123.json"
+            assert processing.get("entry_id") == "entry-123"
+            assert processing.get("retry_count") == 0
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "nonchain_async_proc_mod")
+
+    def test_non_chained_async_custom_action_does_not_mutate_marker_spec_content(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "nonchain_async_no_mutate_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True, "queue_file": "/tmp/queue/abc123.json", "entry_id": "entry-123"})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Async Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "nonchain_async_no_mutate_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "a.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {"initial": "value"}},
+                        },
+                    },
+                ],
+            })
+            original_spec = config.stages[0].markers["processing"]
+            assert original_spec.content == {"initial": "value"}
+
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert not (target_dir / "a.md").exists()
+            assert (target_dir / ".processing").exists()
+            with open(target_dir / ".processing") as f:
+                processing = json.load(f)
+            assert processing.get("queue_file") == "/tmp/queue/abc123.json"
+            assert processing.get("entry_id") == "entry-123"
+            assert processing.get("retry_count") == 0
+
+            assert config.stages[0].markers["processing"].content == {"initial": "value"}
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "nonchain_async_no_mutate_mod")
+
+    def test_non_chained_async_custom_action_not_reexecuted(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "nonchain_async_reexec_mod", """
+from cronpypeline.actions import ActionResult
+
+counter = {"runs": 0}
+
+def my_action(action, context):
+    counter["runs"] += 1
+    return ActionResult(success=True, data={"async": True})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Async Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "nonchain_async_reexec_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "a.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                        },
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            first = pipeline.tick(target="my-repo")
+            assert first.status == TickResultStatus.ACTION_EXECUTED
+            second = pipeline.tick(target="my-repo")
+            assert second.status == TickResultStatus.NO_WORK
+            assert not (target_dir / "a.md").exists()
+            assert (target_dir / ".processing").exists()
+
+            import importlib
+            mod = importlib.import_module("nonchain_async_reexec_mod")
+            assert mod.counter["runs"] == 1
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "nonchain_async_reexec_mod")

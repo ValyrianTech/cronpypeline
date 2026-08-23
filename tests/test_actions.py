@@ -694,6 +694,32 @@ def my_action(action, context):
             if "str_mod" in sys.modules:
                 del sys.modules["str_mod"]
 
+    def test_custom_action_returns_action_result(self, tmp_path):
+        module_code = """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True, "queue_file": "/tmp/x.json"})
+"""
+        (tmp_path / "actionresult_mod.py").write_text(module_code)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            action = ActionSpec(
+                type=ActionType.CUSTOM,
+                params={"callable": "actionresult_mod.my_action"},
+            )
+            ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+            handler = CustomActionHandler()
+            result = handler.execute(action, ctx)
+            assert result.success is True
+            assert result.data.get("async") is True
+            assert result.data.get("queue_file") == "/tmp/x.json"
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "actionresult_mod" in sys.modules:
+                del sys.modules["actionresult_mod"]
+
 
 class TestHttpRequestActionHandlerErrors:
     """Tests for HTTP request handler error handling."""
@@ -820,3 +846,19 @@ class TestActionResult:
     def test_timeout_result(self):
         r = ActionResult(success=False, timed_out=True, exit_code=-1)
         assert r.timed_out is True
+
+    def test_data_none_normalized_to_empty_dict(self):
+        r = ActionResult(success=True, data=None)
+        assert r.data == {}
+
+    def test_data_defaults_to_empty_dict(self):
+        r = ActionResult(success=True)
+        assert r.data == {}
+
+    def test_data_dict_preserved(self):
+        r = ActionResult(success=True, data={"async": True})
+        assert r.data == {"async": True}
+
+    def test_data_none_get_async_returns_false(self):
+        r = ActionResult(success=True, data=None)
+        assert r.data.get("async", False) is False

@@ -73,6 +73,10 @@ class ActionResult:
     dry_run: bool = False
     data: dict[str, Any] = dc_field(default_factory=dict)
 
+    def __post_init__(self):
+        if self.data is None:
+            self.data = {}
+
 
 def format_template(template: str, variables: dict[str, Any]) -> str:
     """Format a template string with variable substitution.
@@ -234,7 +238,9 @@ class CustomActionHandler(ActionHandler):
 
         result = func(action, context)
 
-        if isinstance(result, tuple):
+        if isinstance(result, ActionResult):
+            return result
+        elif isinstance(result, tuple):
             success, output = result
             return ActionResult(success=success, stdout=str(output))
         elif isinstance(result, bool):

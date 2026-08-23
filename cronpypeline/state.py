@@ -94,9 +94,7 @@ A rejected stage is actionable unless rejection tracking is enabled (max_rejecti
         if self.is_complete or self.is_processing or self.is_given_up:
             return False
         # Rejection only blocks if rejection tracking is enabled
-        if self.is_rejected and self.stage.max_rejections > 0:
-            return False
-        return True
+        return not (self.is_rejected and self.stage.max_rejections > 0)
 
 
 @dataclass

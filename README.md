@@ -240,7 +240,9 @@ Stages are evaluated in array order (first-match-wins). The first stage whose tr
 
 ### Chaining
 
-Stages with `"chain": true` allow same-tick continuation when the action is synchronous (command, subprocess, custom). The pipeline chains through consecutive mechanical stages until it hits a non-chain stage, an async action (`queue_agent`), or a failure. This lets multi-step mechanical workflows complete in a single tick instead of waiting for multiple cron cycles.
+Stages with `"chain": true` allow same-tick continuation when the action is synchronous (command, subprocess, custom). The pipeline chains through consecutive mechanical stages until it hits a non-chain stage, an async action, or a failure. This lets multi-step mechanical workflows complete in a single tick instead of waiting for multiple cron cycles.
+
+Async actions include `queue_agent` actions and custom actions that return `data: {"async": true}`. For chaining purposes, async custom actions are treated like `queue_agent` actions: they stop the chain and create a processing marker instead of a completion marker. The processing marker is written with `retry_count=0` and the action's result data merged in, preventing duplicate agent queueing on subsequent ticks.
 
 When a chained stage's action fails, the chain stops and the tick returns a `TickResult` with `ACTION_FAILED` status for the failed stage (instead of silently stopping the chain). The failed stage's ID is reported in `result.stage_id` and listed in `result.failed_chained_stages`. If the failed stage declares an `on_fail` action, it is executed before the failure is reported. When the failed action produces no output, the failure message is `"Chained stage X failed"` (no trailing colon).
 
@@ -436,6 +438,8 @@ Each stage has a `timeout_minutes` config. If a task's processing marker is olde
 2. Increments the retry counter
 3. Either re-queues the action (if retries remain) or writes a give-up marker
 
+In dry-run mode, the pipeline reports what it would do — "Would re-queue stale stage X" or "Would give up on stale stage X (retry N >= max M)" — without actually deleting the processing marker or re-queueing. When the re-executed (re-queued) action fails, the pipeline returns `ACTION_FAILED` (instead of `ACTION_EXECUTED`), runs the stage's `on_fail` action if configured, and reports the failure message.
+
 **Queue-file-based staleness**: If the processing marker contains a `queue_file` field, staleness is detected immediately when the queue file is gone (agent finished without producing completion) — no waiting for the timeout.
 
 ### Retries and give-up
@@ -526,6 +530,16 @@ Built-in:
 - **subprocess**: Runs a Python script as a subprocess
 - **http_request**: Makes HTTP requests via `urllib` with auth token resolution
 - **custom**: Calls a user-provided Python callable
+
+A `custom` action callable (referenced via `params.callable`) receives `(action, context)` and may return a full `ActionResult` object (including a `data` dict), which is passed through unchanged. Returning `data: {"async": true}` signals that the action is asynchronous: the pipeline defers completion marker creation to the external agent and creates a processing marker instead.
+
+```python
+from cronpypeline import ActionResult
+
+def my_async_action(action, context):
+    # ... queue work with an external agent ...
+    return ActionResult(success=True, data={"async": True, "queue_file": "/path/to/queue/entry.json"})
+```
 
 Custom: Register a Python callable via `register_handler()`:
 
@@ -732,6 +746,8 @@ Custom action callables that build prompts programmatically and queue agents:
 - `queue_review_agent` — builds a review prompt with cycle numbers, diff stats, PR state, queues
 - Prompt builders: `build_fix_prompt`, `build_coder_prompt`, `build_review_prompt`
 
+`queue_fix_agent`, `queue_coder_agent`, and `queue_review_agent` mark their results as async (`data: {"async": true}`), so they do not create a completion marker immediately — the pipeline creates a processing marker instead and defers completion to the external agent.
+
 **SWE pipeline config**: A full example config is available at `configs/swe_pipeline.json` with all SWE stages (A1–A9 diagnostics, fix agents, B1, C-select/gate/code/publish/pr-review/pr-status/session-terminal/stale).
 
 #### VNN pipeline plugin (`cronpypeline.plugins.vnn_plugin`)
@@ -838,7 +854,7 @@ from cronpypeline import TickResult, TickResultStatus
 # - NO_WORK          — nothing to do
 # - DRY_RUN          — would have executed (dry-run mode)
 # - GAVE_UP          — stage exhausted retries or rejections
-# - LOCK_FAILED      — could not acquire lock
+# - LOCK_FAILED      — could not acquire lock (FileLock.__enter__ raises RuntimeError)
 # - DISABLED         — pipeline disabled
 
 result.target       # "my-repo"

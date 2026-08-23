@@ -9,6 +9,14 @@
 - StageState.is_actionable now treats a rejected stage as actionable when max_rejections=0 (rejection tracking disabled).
 - mode_file and config_file paths are now resolved relative to workspace_dir instead of the current working directory.
 - http_request action handler now rejects non-http/https URL schemes (e.g. file://) to prevent arbitrary file access.
+- Async custom actions (e.g. queue_fix_agent, queue_coder_agent, queue_review_agent) no longer create their completion marker immediately; the pipeline now respects `data: {"async": true}` returned by custom actions and defers completion to the external agent.
+- Custom action handler now passes through `ActionResult` return values instead of stringifying them.
+- `ActionResult.data` now defaults to `{}` when `None` is passed, fixing an AttributeError when accessing `result.data.get('async')`.
+- Async chained stages now create a processing marker (with `retry_count=0` and the result data merged in) to prevent duplicate agent queueing.
+- Non-chained async custom actions now create a processing marker (with `retry_count=0` and the result data merged in) so they are not re-triggered on every tick, preventing duplicate agent queueing.
+- `_handle_stale` now returns a DRY_RUN result before deleting processing markers or re-queueing when in dry-run mode, and correctly reports "Would give up" when the retry limit is reached.
+- `_handle_stale` now returns ACTION_FAILED (and runs `on_fail`) when the re-executed action fails, instead of reporting ACTION_EXECUTED.
+- `FileLock.__enter__` now raises `RuntimeError` when the lock cannot be acquired instead of silently continuing.
 - Bumped setuptools build requirement to >=83.0.0 to address PYSEC-2026-3447.
 
 ### Security

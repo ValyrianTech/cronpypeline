@@ -10,7 +10,7 @@ Each tick:
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from dataclasses import field as dc_field
 from enum import Enum
 from pathlib import Path
@@ -470,12 +470,14 @@ class Pipeline:
         stage = stage_state.stage
         marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
         if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers:
-            processing_spec = stage.markers["processing"]
             # Preserve retry count if re-queueing
             retry_count = 0
             if stage_state.processing_data and "retry_count" in stage_state.processing_data:
                 retry_count = stage_state.processing_data["retry_count"]
-            processing_spec.content = {**processing_spec.content, "retry_count": retry_count}
+            processing_spec = replace(stage.markers["processing"], content={
+                **stage.markers["processing"].content,
+                "retry_count": retry_count,
+            })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
         # Execute action
@@ -490,13 +492,12 @@ class Pipeline:
 
         # Update processing marker with result data (for stale detection and tracking)
         if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers and result.success and result.data:
-            processing_spec = stage.markers["processing"]
-            retry_count = processing_spec.content.get("retry_count", 0)
-            processing_spec.content = {
-                **processing_spec.content,
+            retry_count = stage.markers["processing"].content.get("retry_count", 0)
+            processing_spec = replace(stage.markers["processing"], content={
+                **stage.markers["processing"].content,
                 "retry_count": retry_count,
                 **result.data,
-            }
+            })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
         if not result.success:
@@ -524,15 +525,33 @@ class Pipeline:
             create_marker(marker_spec, target_dir, context=marker_ctx)
 
         # Create completion marker for sync actions (command, subprocess, custom)
-        if stage.action.type != ActionType.QUEUE_AGENT and "completion" in stage.markers:
+        if (
+            stage.action.type != ActionType.QUEUE_AGENT
+            and "completion" in stage.markers
+            and not result.data.get("async", False)
+        ):
             create_marker(stage.markers["completion"], target_dir, context=marker_ctx)
+
+        # Create processing marker for async custom actions (non-chained)
+        if (
+            stage.action.type == ActionType.CUSTOM
+            and "processing" in stage.markers
+            and result.success
+            and result.data.get("async", False)
+        ):
+            processing_spec = replace(stage.markers["processing"], content={
+                **stage.markers["processing"].content,
+                "retry_count": 0,
+                **result.data,
+            })
+            create_marker(processing_spec, target_dir, context=marker_ctx)
 
         # Invalidate markers from other stages
         for inv_spec in stage.invalidates:
             delete_marker(inv_spec, target_dir, context=marker_ctx)
 
         # Handle chaining
-        chained = []
+        chained: list[str] = []
         if stage.chain and stage.action.type != ActionType.QUEUE_AGENT:
             chained_result = self._try_chain(target, target_dir, dry_run, verbose, stage)
             if chained_result:
@@ -589,7 +608,7 @@ class Pipeline:
             (i for i, s in enumerate(stages) if s.id == completed_stage.id), -1
         )
 
-        chained = []
+        chained: list[str] = []
         current_stage = completed_stage
 
         for i in range(completed_idx + 1, len(stages)):
@@ -640,8 +659,17 @@ class Pipeline:
                 create_marker(marker_spec, target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
 
             # Create completion marker
-            if "completion" in next_stage.markers:
+            if "completion" in next_stage.markers and not result.data.get("async", False):
                 create_marker(next_stage.markers["completion"], target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
+
+            # Create processing marker for async chained stages
+            if result.data.get("async", False) and "processing" in next_stage.markers:
+                processing_spec = replace(next_stage.markers["processing"], content={
+                    **next_stage.markers["processing"].content,
+                    "retry_count": 0,
+                    **result.data,
+                })
+                create_marker(processing_spec, target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
 
             # Invalidate markers from other stages
             chain_marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, {})
@@ -675,10 +703,23 @@ class Pipeline:
         :param target_config: Per-target configuration dict.
         :param dry_run: Whether this is a dry run.
         :param verbose: Whether verbose output is enabled.
-        :returns: TickResult — either GAVE_UP, DRY_RUN, or ACTION_EXECUTED.
+        :returns: TickResult — either GAVE_UP, DRY_RUN, ACTION_EXECUTED, or
+            ACTION_FAILED.
         """
         stage = stage_state.stage
         retry_count = stage_state.retry_count
+
+        if dry_run:
+            if retry_count >= stage.max_retries:
+                message = f"Would give up on stale stage {stage.id} (retry {retry_count} >= max {stage.max_retries})"
+            else:
+                message = f"Would re-queue stale stage {stage.id} (retry {retry_count + 1})"
+            return TickResult(
+                target=target,
+                stage_id=stage.id,
+                status=TickResultStatus.DRY_RUN,
+                message=message,
+            )
 
         # Clean up stale marker
         marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
@@ -696,19 +737,12 @@ class Pipeline:
                 message=f"Stage {stage.id} gave up after {retry_count} retries",
             )
 
-        # Re-queue with incremented retry count
-        if dry_run:
-            return TickResult(
-                target=target,
-                stage_id=stage.id,
-                status=TickResultStatus.DRY_RUN,
-                message=f"Would re-queue stale stage {stage.id} (retry {retry_count + 1})",
-            )
-
         # Create new processing marker with incremented retry count
         if "processing" in stage.markers:
-            processing_spec = stage.markers["processing"]
-            processing_spec.content = {**processing_spec.content, "retry_count": retry_count + 1}
+            processing_spec = replace(stage.markers["processing"], content={
+                **stage.markers["processing"].content,
+                "retry_count": retry_count + 1,
+            })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
         # Re-execute the action
@@ -723,14 +757,33 @@ class Pipeline:
         )
         result = execute_action(stage.action, ctx)
 
+        if not result.success:
+            # Run on_fail if configured
+            if stage.on_fail:
+                fail_ctx = TickContext(
+                    target=target,
+                    workspace_dir=self.workspace_dir,
+                    dry_run=dry_run,
+                    verbose=verbose,
+                    target_config=target_config,
+                )
+                execute_action(stage.on_fail, fail_ctx)
+            return TickResult(
+                target=target,
+                stage_id=stage.id,
+                status=TickResultStatus.ACTION_FAILED,
+                message=f"Action failed: {result.stderr or result.stdout}",
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
+
         # Update processing marker with result data
         if result.success and result.data and "processing" in stage.markers:
-            processing_spec = stage.markers["processing"]
-            processing_spec.content = {
-                **processing_spec.content,
+            processing_spec = replace(stage.markers["processing"], content={
+                **stage.markers["processing"].content,
                 "retry_count": retry_count + 1,
                 **result.data,
-            }
+            })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
         return TickResult(
