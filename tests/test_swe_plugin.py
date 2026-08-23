@@ -2342,6 +2342,14 @@ class TestRunCPrReview:
         with pytest.raises(FileNotFoundError):
             run_c_pr_review(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
 
+    def test_no_sha_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        result = run_c_pr_review(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "SHA" in result.stderr
+
     def test_reviews_pr_and_writes_marker(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
@@ -3307,19 +3315,21 @@ class TestRunCReviewIssuePrevSha:
 
 
 class TestRunCCoverageIssueNoSha:
-    def test_no_sha_raises_error(self, tmp_path):
+    def test_no_sha_returns_failure(self, tmp_path):
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target, default_branch="main")
-        with pytest.raises(TypeError):
-            run_c_coverage_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        result = run_c_coverage_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "SHA" in result.stderr
 
 
 class TestRunCReviewIssueNoSha:
-    def test_no_sha_raises_error(self, tmp_path):
+    def test_no_sha_returns_failure(self, tmp_path):
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target, default_branch="main")
-        with pytest.raises(TypeError):
-            run_c_review_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        result = run_c_review_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "SHA" in result.stderr
 
 
 # ─── More edge case tests ────────────────────────────────────────────────────

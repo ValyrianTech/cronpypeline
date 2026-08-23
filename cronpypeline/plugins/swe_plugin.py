@@ -419,7 +419,7 @@ def reset_issue_status(action: ActionSpec, context: TickContext) -> tuple[bool, 
     return False, f"Issue {issue_id} not found"
 
 
-def _git(repo_dir: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+def _git(repo_dir: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run a git command in the given repo directory.
 
     :param repo_dir: Target repo directory.
@@ -1158,20 +1158,6 @@ DOC_SYNC_MARKER = "doc_sync.json"
 DOC_SYNC_QUEUED_MARKER = "doc_sync_queued.json"
 
 
-def _git(repo_dir: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """Run a git command in the given repo directory.
-
-    :param repo_dir: Path to the git repository.
-    :param args: Git command arguments.
-    :param check: If True, raise on non-zero exit.
-    :returns: CompletedProcess result.
-    """
-    return subprocess.run(
-        ["git", "-C", str(repo_dir), *args],
-        capture_output=True, text=True, check=check,
-    )  # nosec B603 - git commands with fixed args
-
-
 def integration_head_sha(target_dir: Path, default_branch: str) -> str | None:
     """Return the integration branch HEAD sha, or default branch tip.
 
@@ -1653,6 +1639,8 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     pr_number = pr_data["pr_number"]
 
     token = _load_github_token(target_config)
+    if token is None:
+        return ActionResult(success=False, stderr="No GitHub token configured")
     slug = (target_config.get("slug") or "").strip()
     owner, gh_repo_name = slug.split("/", 1)
 
@@ -1829,6 +1817,8 @@ def run_c_coverage_issue(action: ActionSpec, context: TickContext) -> ActionResu
     repo_name = context.target
     default_branch = target_config.get("default_branch", "main")
     sha = integration_head_sha(target_dir, default_branch)
+    if sha is None:
+        return ActionResult(success=False, stderr="Failed to determine integration head SHA")
     issue_id = f"coverage-{sha[:8]}"
     pct = _a7_coverage_pct(target_dir) or 0.0
 
@@ -1967,6 +1957,8 @@ def run_c_review_issue(action: ActionSpec, context: TickContext) -> ActionResult
     repo_name = context.target
     default_branch = target_config.get("default_branch", "main")
     sha = integration_head_sha(target_dir, default_branch)
+    if sha is None:
+        return ActionResult(success=False, stderr="Failed to determine integration head SHA")
     issue_id = f"review-{sha[:8]}"
 
     review_gen = _count_done_review_issues(target_dir) + 1
@@ -2092,6 +2084,8 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
     repo_name = context.target
     default_branch = target_config.get("default_branch", "main")
     sha = integration_head_sha(target_dir, default_branch)
+    if sha is None:
+        return ActionResult(success=False, stderr="Failed to determine integration head SHA")
     pr_exists = (target_dir / SWE_SUBDIR / "pr_published.json").exists()
 
     # Checkout integration branch
@@ -2219,6 +2213,8 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     sha = integration_head_sha(target_dir, default_branch)
 
     token = _load_github_token(target_config)
+    if token is None:
+        return ActionResult(success=False, stderr="No GitHub token configured")
     slug = (target_config.get("slug") or "").strip()
     owner, gh_repo_name = slug.split("/", 1)
 
@@ -2343,6 +2339,9 @@ def run_c_pr_review(action: ActionSpec, context: TickContext) -> ActionResult:
     pr_number = pr_data["pr_number"]
     pr_cycles = pr_data.get("pr_review_cycles", 0)
     max_cycles = target_config.get("max_pr_review_cycles", MAX_PR_REVIEW_CYCLES)
+
+    if sha is None:
+        return ActionResult(success=False, stderr="Failed to determine integration head SHA")
 
     slug = (target_config.get("slug") or "").strip()
     owner, gh_repo_name = slug.split("/", 1)
