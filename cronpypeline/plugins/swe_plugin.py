@@ -5,7 +5,8 @@ referenced from pipeline JSON configs via "callable": "cronpypeline.plugins.swe_
 """
 
 import json
-import subprocess
+import shutil
+import subprocess  # nosec B404 - subprocess is used by design to run git commands for pipeline state detection
 from pathlib import Path
 from typing import Any
 
@@ -46,9 +47,12 @@ def detect_agent_forgot_marker(context: dict[str, Any]) -> bool:
         return False
 
     # Check if there are git commits on the current branch
+    git_bin = shutil.which("git")
+    if git_bin is None:
+        return False
     try:
-        result = subprocess.run(
-            ["git", "log", "--oneline", "-1"],
+        result = subprocess.run(  # nosec B603 - git_bin is resolved to an absolute path via shutil.which; args are a static list
+            [git_bin, "log", "--oneline", "-1"],
             cwd=str(target_dir),
             capture_output=True,
             text=True,
@@ -89,7 +93,7 @@ def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, 
 
     for cmd in commands:
         try:
-            subprocess.run(cmd, cwd=str(target_dir), capture_output=True, timeout=30, check=False)
+            subprocess.run(cmd, cwd=str(target_dir), capture_output=True, timeout=30, check=False)  # nosec B603 - commands are static lists passed without a shell
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
