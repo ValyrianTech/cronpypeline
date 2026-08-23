@@ -831,6 +831,37 @@ class TestRejectionCounter:
         result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.ACTION_EXECUTED
 
+    def test_rejection_marker_ignored_when_tracking_disabled(self, tmp_path):
+        """Stage with max_rejections=0 should still execute even with a rejection marker present."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        import json as _json
+        (workspace / "my-repo" / ".rejection").write_text(_json.dumps({"rejection_count": 1}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Review",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "command", "params": {"command": "echo review"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+                    },
+                    "max_rejections": 0,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (workspace / "my-repo" / "done.md").exists()
+
 
 class TestRetryPromptSupport:
     """Tests for retry/reminder prompt support on stale re-queue."""
