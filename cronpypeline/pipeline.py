@@ -689,11 +689,15 @@ class Pipeline:
         retry_count = stage_state.retry_count
 
         if dry_run:
+            if retry_count >= stage.max_retries:
+                message = f"Would give up on stale stage {stage.id} (retry {retry_count} >= max {stage.max_retries})"
+            else:
+                message = f"Would re-queue stale stage {stage.id} (retry {retry_count + 1})"
             return TickResult(
                 target=target,
                 stage_id=stage.id,
                 status=TickResultStatus.DRY_RUN,
-                message=f"Would re-queue stale stage {stage.id} (retry {retry_count + 1})",
+                message=message,
             )
 
         # Clean up stale marker
