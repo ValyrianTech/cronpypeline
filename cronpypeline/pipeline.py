@@ -532,7 +532,7 @@ class Pipeline:
             delete_marker(inv_spec, target_dir, context=marker_ctx)
 
         # Handle chaining
-        chained = []
+        chained: list[str] = []
         if stage.chain and stage.action.type != ActionType.QUEUE_AGENT:
             chained_result = self._try_chain(target, target_dir, dry_run, verbose, stage)
             if chained_result:
@@ -589,7 +589,7 @@ class Pipeline:
             (i for i, s in enumerate(stages) if s.id == completed_stage.id), -1
         )
 
-        chained = []
+        chained: list[str] = []
         current_stage = completed_stage
 
         for i in range(completed_idx + 1, len(stages)):
