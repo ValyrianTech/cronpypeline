@@ -3052,6 +3052,92 @@ class TestTickStaleDryRun:
         assert proc_path.exists(), "Processing marker must not be deleted during dry run"
         assert not give_up_path.exists(), "Give up marker must not be created during dry run"
 
+    def test_stale_dry_run_give_up_message(self, tmp_path):
+        """Dry run at max_retries should report the give-up message."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Create a stale processing marker that is already past max_retries
+        import json as _json
+        proc_path = target_dir / ".processing"
+        proc_path.write_text(_json.dumps({
+            "queue_file": "/nonexistent/queue/entry.json",
+            "retry_count": 3,
+        }))
+        give_up_path = target_dir / ".give_up"
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                        "give_up": {"type": "file", "name": ".give_up"},
+                    },
+                    "timeout_minutes": 0,
+                    "max_retries": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+        assert "Would give up on stale stage" in result.message
+        assert "retry 3 >= max 3" in result.message
+        assert proc_path.exists(), "Processing marker must not be deleted during dry run"
+        assert not give_up_path.exists(), "Give up marker must not be created during dry run"
+
+    def test_stale_dry_run_requeue_message(self, tmp_path):
+        """Dry run below max_retries should report the re-queue message."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Create a stale processing marker below max_retries
+        import json as _json
+        proc_path = target_dir / ".processing"
+        proc_path.write_text(_json.dumps({
+            "queue_file": "/nonexistent/queue/entry.json",
+            "retry_count": 1,
+        }))
+        give_up_path = target_dir / ".give_up"
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                        "give_up": {"type": "file", "name": ".give_up"},
+                    },
+                    "timeout_minutes": 0,
+                    "max_retries": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+        assert "Would re-queue stale stage" in result.message
+        assert "retry 2" in result.message
+        assert proc_path.exists(), "Processing marker must not be deleted during dry run"
+        assert not give_up_path.exists(), "Give up marker must not be created during dry run"
+
 
 class TestTickProcessingRetryCount:
     """Tests for processing marker retry_count preservation."""
