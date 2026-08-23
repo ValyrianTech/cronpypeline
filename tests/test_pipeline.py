@@ -559,6 +559,72 @@ class TestTickStaleHandling:
         assert (target_dir / ".gave_up").exists()
         assert not (target_dir / ".processing").exists()
 
+    def _make_stale_stage(self, workspace, target_name="my-repo", on_fail=None):
+        target_dir = workspace / target_name
+        target_dir.mkdir()
+
+        # Create a stale processing marker
+        processing_data = {"retry_count": 1, "timestamp": time.time() - 3600}
+        (target_dir / ".processing").write_text(json.dumps(processing_data))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        stage = {
+            "id": "A0",
+            "name": "Failing Step",
+            "trigger": {"type": "file_missing", "path": "a.md"},
+            "action": {"type": "command", "params": {"command": "sh -c 'echo fail >&2; exit 1'"}},
+            "markers": {
+                "completion": {"type": "file", "name": "a.md"},
+                "processing": {"type": "json", "name": ".processing", "content": {}},
+            },
+            "timeout_minutes": 30,
+            "max_retries": 3,
+        }
+        if on_fail is not None:
+            stage["on_fail"] = on_fail
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [stage],
+        })
+        return target_dir, Pipeline(config)
+
+    def test_stale_requeue_failing_action_returns_action_failed(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_stage(workspace)
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.stderr
+        assert "fail" in result.stderr
+
+    def test_stale_requeue_failing_action_runs_on_fail(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_stage(
+            workspace,
+            on_fail={"type": "command", "params": {"command": "touch on_fail_marker.txt"}},
+        )
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert (target_dir / "on_fail_marker.txt").exists()
+
+    def test_stale_requeue_failing_action_no_on_fail(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_stage(workspace)
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert not (target_dir / "on_fail_marker.txt").exists()
+
 
 class TestActionHandlerWiring:
     """Tests for wiring action handlers from PipelineConfig.action_handler."""
