@@ -846,3 +846,19 @@ class TestActionResult:
     def test_timeout_result(self):
         r = ActionResult(success=False, timed_out=True, exit_code=-1)
         assert r.timed_out is True
+
+    def test_data_none_normalized_to_empty_dict(self):
+        r = ActionResult(success=True, data=None)
+        assert r.data == {}
+
+    def test_data_defaults_to_empty_dict(self):
+        r = ActionResult(success=True)
+        assert r.data == {}
+
+    def test_data_dict_preserved(self):
+        r = ActionResult(success=True, data={"async": True})
+        assert r.data == {"async": True}
+
+    def test_data_none_get_async_returns_false(self):
+        r = ActionResult(success=True, data=None)
+        assert r.data.get("async", False) is False
