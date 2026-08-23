@@ -435,3 +435,325 @@ class TestQueueCoderAgentDryRun:
         result = queue_coder_agent(action, ctx)
         assert result.success is True
         assert result.dry_run is True
+
+
+class TestParseChangeRequests:
+    """Tests for _parse_change_requests — parses review body for change requests."""
+
+    def test_issues_and_concerns_bold_numbered(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        body = (
+            "## Review\n\n"
+            "### Issues & Concerns\n\n"
+            "**1. Fix the bug**\nDetails about the bug\n\n"
+            "**2. Add tests**\nNeed more test coverage\n\n"
+            "No other issues found.\n"
+        )
+        result = _parse_change_requests(body)
+        assert len(result) == 2
+        assert "Fix the bug" in result[0]
+        assert "Add tests" in result[1]
+
+    def test_issues_and_concerns_heading_numbered(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        body = (
+            "## Review\n\n"
+            "### Issues & Concerns\n\n"
+            "#### 1. Fix the bug\nDetails about the bug\n\n"
+            "#### 2. Add tests\nNeed more test coverage\n"
+        )
+        result = _parse_change_requests(body)
+        assert len(result) >= 1
+        assert "Fix the bug" in result[0]
+
+    def test_issues_and_concerns_plain_numbered(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        body = (
+            "## Review\n\n"
+            "### Issues & Concerns\n\n"
+            "1. Fix the bug\nDetails about the bug\n\n"
+            "2. Add tests\nNeed more test coverage\n"
+        )
+        result = _parse_change_requests(body)
+        assert len(result) == 2
+        assert "Fix the bug" in result[0]
+        assert "Add tests" in result[1]
+
+    def test_generic_numbered_list(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        body = (
+            "Please address the following:\n\n"
+            "1. Fix the bug\n"
+            "2. Add tests\n"
+            "3. Update docs\n"
+        )
+        result = _parse_change_requests(body)
+        assert len(result) == 3
+        assert "Fix the bug" in result[0]
+        assert "Add tests" in result[1]
+        assert "Update docs" in result[2]
+
+    def test_bullet_points(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        body = (
+            "Please address:\n"
+            "- Fix the bug\n"
+            "- Add tests\n"
+            "* Update docs\n"
+        )
+        result = _parse_change_requests(body)
+        assert len(result) == 3
+        assert "Fix the bug" in result[0]
+        assert "Add tests" in result[1]
+
+    def test_last_resort_paragraphs(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        body = "Fix the bug in foo.\n\nAdd tests for bar.\n\nUpdate the docs."
+        result = _parse_change_requests(body)
+        assert len(result) == 3
+        assert "Fix the bug" in result[0]
+        assert "Add tests" in result[1]
+
+    def test_filters_no_issues_found(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        body = "No issues found.\n\nNo issues identified."
+        result = _parse_change_requests(body)
+        assert len(result) == 0
+
+    def test_filters_headings(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        body = "## Review\n\nSome heading\n\n1. Actual issue\n"
+        result = _parse_change_requests(body)
+        # The heading "## Review" should be filtered, only "Actual issue" remains
+        assert all(not item.startswith("#") for item in result)
+
+    def test_truncates_long_items(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        long_text = "A" * 300
+        body = f"{long_text}\n\nShort item"
+        result = _parse_change_requests(body)
+        # Long items should be truncated to 200 chars
+        for item in result:
+            assert len(item) <= 200
+
+    def test_filters_empty_items(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        body = "1. \n\n2. Real issue\n"
+        result = _parse_change_requests(body)
+        assert all(item.strip() for item in result)
+
+    def test_empty_body(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        result = _parse_change_requests("")
+        assert result == []
+
+    def test_no_issues_section_no_numbered_list(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        body = "Just some random text without any structure."
+        result = _parse_change_requests(body)
+        # Should fall through to last-resort paragraphs
+        assert len(result) == 1
+        assert "random text" in result[0]
+
+
+class TestQueueFixAgentSymlinkOSError:
+    """Tests for queue_fix_agent with broken symlink."""
+
+    def test_broken_symlink_falls_back_to_raw_path(self, tmp_path):
+        report_dir = tmp_path / ".SWE" / "reports" / "lint"
+        report_dir.mkdir(parents=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Lint — FAIL\n\n3 errors")
+        latest = report_dir / "latest.md"
+        latest.symlink_to("r.md")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(latest),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+                "prompt_field": "content",
+                "default_fields": {
+                    "sender": "SWE_PIPELINE",
+                    "runs_left": 3,
+                },
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = queue_fix_agent(action, ctx)
+        assert result.success is True
+
+
+class TestQueueFixAgentInvalidatePaths:
+    """Tests for queue_fix_agent with invalidate_paths and completion_marker."""
+
+    def test_prompt_with_invalidate_paths(self, tmp_path):
+        report_dir = tmp_path / ".SWE" / "reports" / "lint"
+        report_dir.mkdir(parents=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Lint — FAIL\n\n3 errors")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+                "prompt_field": "content",
+                "default_fields": {
+                    "sender": "SWE_PIPELINE",
+                    "runs_left": 3,
+                },
+                "invalidate_paths": [".SWE/reports/lint/latest.md", ".SWE/reports/typecheck/latest.md"],
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = queue_fix_agent(action, ctx)
+        assert result.success is True
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        assert "rm -f" in entry["content"]
+        assert ".SWE/reports/lint/latest.md" in entry["content"]
+
+    def test_prompt_with_completion_marker(self, tmp_path):
+        report_dir = tmp_path / ".SWE" / "reports" / "lint"
+        report_dir.mkdir(parents=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Lint — FAIL\n\n3 errors")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+                "prompt_field": "content",
+                "default_fields": {
+                    "sender": "SWE_PIPELINE",
+                    "runs_left": 3,
+                },
+                "completion_marker": ".SWE/coding_complete.marker",
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = queue_fix_agent(action, ctx)
+        assert result.success is True
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        assert "completion marker" in entry["content"].lower()
+        assert ".SWE/coding_complete.marker" in entry["content"]
+
+    def test_prompt_with_both_invalidate_and_completion(self, tmp_path):
+        report_dir = tmp_path / ".SWE" / "reports" / "lint"
+        report_dir.mkdir(parents=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Lint — FAIL\n\n3 errors")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+                "prompt_field": "content",
+                "default_fields": {
+                    "sender": "SWE_PIPELINE",
+                    "runs_left": 3,
+                },
+                "invalidate_paths": [".SWE/reports/lint/latest.md"],
+                "completion_marker": ".SWE/coding_complete.marker",
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = queue_fix_agent(action, ctx)
+        assert result.success is True
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        assert "rm -f" in entry["content"]
+        assert "completion marker" in entry["content"].lower()
+
+
+class TestParseChangeRequestsEdgeCases:
+    """Tests for _parse_change_requests filtering edge cases."""
+
+    def test_filters_heading_items(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        # Body with a heading that gets captured as an item, then filtered
+        body = "## Some Heading\n\n1. Real issue here\n"
+        result = _parse_change_requests(body)
+        # Headings starting with # should be filtered out
+        assert all(not item.startswith("#") for item in result)
+
+    def test_filters_empty_text_after_strip(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        # Body with numbered items that have only whitespace content
+        body = "1.   \n\n2.   \n\n3. Real issue\n"
+        result = _parse_change_requests(body)
+        # Empty items should be filtered
+        assert all(item.strip() for item in result)
+        assert len(result) >= 1
+
+    def test_heading_filtered_from_last_resort(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        # Body with only a heading - falls to last-resort, then filtered by startswith("#")
+        body = "## Some Heading\n\nReal issue here"
+        result = _parse_change_requests(body)
+        # The heading should be filtered out
+        assert all(not item.startswith("#") for item in result)
+        assert "Real issue here" in result
+
+    def test_whitespace_only_item_filtered(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        # Body with last-resort paragraphs where one is whitespace-only
+        body = "Real issue\n\n   \n\nAnother issue"
+        result = _parse_change_requests(body)
+        # Whitespace-only items should be filtered
+        assert all(item.strip() for item in result)
+
+    def test_heading_in_numbered_item_filtered(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        # Numbered item whose content starts with # — should be filtered by line 530
+        body = "1. ## Sub-heading\n\n2. Real issue\n"
+        result = _parse_change_requests(body)
+        assert all(not item.startswith("#") for item in result)
+
+    def test_whitespace_only_bullet_filtered(self):
+        from cronpypeline.plugins.swe_prompts import _parse_change_requests
+        # Bullet with only whitespace content — should be filtered by line 535
+        body = "-   \n\n- Real issue\n"
+        result = _parse_change_requests(body)
+        assert all(item.strip() for item in result)
+
+
+class TestQueueFixAgentBrokenSymlinkOSError:
+    """Test queue_fix_agent with a broken symlink that raises OSError on resolve."""
+
+    def test_broken_symlink_oserror_falls_back(self, tmp_path):
+        report_dir = tmp_path / ".SWE" / "reports" / "lint"
+        report_dir.mkdir(parents=True)
+        report_path = report_dir / "r.md"
+        report_path.write_text("# Lint — FAIL\n\n3 errors")
+        latest = report_dir / "latest.md"
+        latest.symlink_to("r.md")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(latest),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+                "prompt_field": "content",
+                "default_fields": {
+                    "sender": "SWE_PIPELINE",
+                    "runs_left": 3,
+                },
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        # Mock Path.resolve to raise OSError, then fall back to raw path
+        with patch.object(Path, "resolve", side_effect=OSError("broken symlink")):
+            result = queue_fix_agent(action, ctx)
+        assert result.success is True
