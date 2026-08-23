@@ -43,6 +43,8 @@ python -m venv .venv
 pip install -e .
 ```
 
+The build system requires `setuptools>=83.0.0` (bumped from `>=68.0` to address security vulnerability PYSEC-2026-3447).
+
 ### Optional dependencies
 
 ```bash
@@ -240,6 +242,8 @@ Stages are evaluated in array order (first-match-wins). The first stage whose tr
 
 Stages with `"chain": true` allow same-tick continuation when the action is synchronous (command, subprocess, custom). The pipeline chains through consecutive mechanical stages until it hits a non-chain stage, an async action (`queue_agent`), or a failure. This lets multi-step mechanical workflows complete in a single tick instead of waiting for multiple cron cycles.
 
+When a chained stage's action fails, the chain stops and the tick returns a `TickResult` with `ACTION_FAILED` status for the failed stage (instead of silently stopping the chain). The failed stage's ID is reported in `result.stage_id` and listed in `result.failed_chained_stages`. If the failed stage declares an `on_fail` action, it is executed before the failure is reported. When the failed action produces no output, the failure message is `"Chained stage X failed"` (no trailing colon).
+
 ### Mode switching
 
 A pipeline can define a `mode_file` — a JSON file with `{"mode": "some_mode"}`. Stages with a `modes` list are only active when the current mode is in that list. Stages without `modes` are always active. This enables runtime behavior switching (e.g. "default" vs "github session" mode) without changing the config.
@@ -272,6 +276,8 @@ Stages can declare an `invalidates` list — markers from other stages to delete
 
 Stages can define a `rejection` marker (JSON type) and `max_rejections` count. Rejections are tracked separately from retries — when `rejection_count >= max_rejections`, the stage writes a give-up marker. Below the max, the rejection marker is cleared so the stage can be re-processed. This supports revision/review loops where an agent's work is rejected and must be redone.
 
+A rejection marker only blocks a stage from being actionable when rejection tracking is enabled (`max_rejections > 0`). When `max_rejections=0` (rejection tracking disabled), a stage with a rejection marker remains actionable.
+
 ### Queue-file staleness
 
 Processing markers can include a `queue_file` field (written automatically by `ConversationQueueHandler`). When the queue file no longer exists, the stage is immediately marked stale — no waiting for `timeout_minutes` to elapse. This detects the case where an agent finished but didn't produce a completion marker. Falls back to time-based staleness when no `queue_file` field is present.
@@ -302,11 +308,11 @@ The filesystem is the source of truth — no database, no in-memory state:
 | `workspace_dir` | string | yes | — | Root workspace directory |
 | `stages` | array | yes | `[]` | Ordered list of stage definitions |
 | `lock_file` | string | no | `"pipeline.lock"` | Lock file path (relative to workspace) |
-| `config_file` | string | no | `null` | Optional pipeline config toggle file (`{"enabled": false}` disables) |
+| `config_file` | string | no | `null` | Optional pipeline config toggle file (`{"enabled": false}` disables). Relative paths are resolved relative to `workspace_dir` |
 | `targets` | object | no | `null` | Target specification (see below) |
 | `action_handler` | object | no | `null` | Action handler plugin config (wired automatically) |
 | `log_file` | string | no | `null` | Optional log file path |
-| `mode_file` | string | no | `null` | Path to JSON file with `{"mode": "..."}` for mode switching |
+| `mode_file` | string | no | `null` | Path to JSON file with `{"mode": "..."}` for mode switching. Relative paths are resolved relative to `workspace_dir` |
 | `target_lock` | bool | no | `false` | Cross-stage lock — blocks all stages for a target while any stage is processing |
 | `pre_tick` | object | no | `null` | Pre-tick hook config (`{"callable": "module.func"}`) |
 | `post_tick` | object | no | `null` | Post-tick hook config (`{"callable": "module.func"}`) |
@@ -441,6 +447,7 @@ Each stage has a `timeout_minutes` config. If a task's processing marker is olde
 ### Rejections and give-up
 
 - `max_rejections` (default 0 = disabled): a separate counter from retries, tracked via a `rejection` marker (JSON type with `rejection_count`).
+- A rejection marker only blocks a stage from being actionable when `max_rejections > 0` (rejection tracking enabled). When `max_rejections=0`, a rejected stage remains actionable.
 - When `rejection_count >= max_rejections`, the stage writes a give-up marker.
 - Below the max, the rejection marker is cleared so the stage can be re-processed.
 - Supports revision/review loops where an agent's output is rejected and must be redone.
@@ -646,7 +653,7 @@ register_handler(ActionType.QUEUE_AGENT, handler)
 
 #### HTTP request handler
 
-Makes HTTP requests using `urllib` from the stdlib. Supports `GET`, `POST`, `PATCH`, `PUT`, `DELETE` methods, custom headers, request body, and auth token resolution.
+Makes HTTP requests using `urllib` from the stdlib. Supports `GET`, `POST`, `PATCH`, `PUT`, `DELETE` methods, custom headers, request body, and auth token resolution. Only `http` and `https` URL schemes are accepted — requests to other schemes (e.g. `file://`) are rejected with an error.
 
 ```json
 {
@@ -790,7 +797,7 @@ configs/
 .venv/bin/python -m pytest tests/test_pipeline.py -v
 ```
 
-The test suite includes **462 tests** covering:
+The test suite includes **613 tests** covering:
 - Unit tests for each core class (config parsing, marker resolution, trigger evaluation, lock acquisition, action execution)
 - Integration tests using temp directories as workspaces, simulating multi-tick execution
 - Crash safety tests verifying state recovery from partial filesystem state
@@ -841,6 +848,7 @@ result.message      # "Executed Step 1"
 result.stdout       # command output
 result.stderr       # command error output
 result.chained_stages  # ["A1", "A2"] if chaining occurred
+result.failed_chained_stages  # ["A2"] chained stage IDs whose actions failed
 ```
 
 ### Full public API
