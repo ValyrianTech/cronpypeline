@@ -649,7 +649,13 @@ class Pipeline:
 
             # Create processing marker for async chained stages
             if result.data.get("async", False) and "processing" in next_stage.markers:
-                create_marker(next_stage.markers["processing"], target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
+                processing_spec = next_stage.markers["processing"]
+                processing_spec.content = {
+                    **processing_spec.content,
+                    "retry_count": 0,
+                    **result.data,
+                }
+                create_marker(processing_spec, target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
 
             # Invalidate markers from other stages
             chain_marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, {})
