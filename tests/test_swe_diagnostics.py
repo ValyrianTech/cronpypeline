@@ -132,6 +132,34 @@ class TestParseInterrogateOutput:
         assert result["status"] == "FAIL"
         assert result["coverage"] == 87.0
 
+    def test_parse_multiline_skips_non_total_lines(self):
+        """Lines without TOTAL should be skipped via continue."""
+        output = (
+            "| src/main.py            |  10   |   2   |   8   |  80.0% |\n"
+            "| src/utils.py           |  20   |   5   |  15   |  75.0% |\n"
+            "| TOTAL                  |  30   |   7   |  23   |  76.7% |\n"
+            "------- RESULT: PASSED (minimum: 80.0%, actual: 76.7%) -------"
+        )
+        result = parse_interrogate_output(output)
+        assert result["status"] == "PASS"
+        assert result["total"] == 30
+        assert result["missing"] == 7
+        assert result["covered"] == 23
+        assert result["coverage"] == 76.7
+
+    def test_parse_total_row_no_numbers(self):
+        """TOTAL row with no parseable numbers should leave defaults at 0."""
+        output = (
+            "| TOTAL                  | N/A   |  N/A  |  N/A  |  N/A  |\n"
+            "------- RESULT: FAILED (minimum: 80.0%, actual: 50.0%) -------"
+        )
+        result = parse_interrogate_output(output)
+        assert result["status"] == "FAIL"
+        assert result["coverage"] == 50.0
+        assert result["total"] == 0
+        assert result["missing"] == 0
+        assert result["covered"] == 0
+
 
 class TestParsePydocstyleOutput:
     """Tests for parse_pydocstyle_output."""

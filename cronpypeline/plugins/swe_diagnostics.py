@@ -107,14 +107,11 @@ def parse_interrogate_output(output: str, **kwargs: Any) -> dict[str, Any]:
             continue
         nums = re.findall(r"(\d+(?:\.\d+)?)", line)
         if len(nums) >= 4:
-            try:
-                result["total"] = int(float(nums[0]))
-                result["missing"] = int(float(nums[1]))
-                result["covered"] = int(float(nums[2]))
-                if result["coverage"] == 0.0:
-                    result["coverage"] = float(nums[3])
-            except ValueError:
-                pass
+            result["total"] = int(float(nums[0]))
+            result["missing"] = int(float(nums[1]))
+            result["covered"] = int(float(nums[2]))
+            if result["coverage"] == 0.0:
+                result["coverage"] = float(nums[3])
             break
     result["status"] = "PASS" if passed else "FAIL"
     return result
