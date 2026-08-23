@@ -606,6 +606,15 @@ class Pipeline:
             result = execute_action(next_stage.action, ctx)
 
             if not result.success:
+                if next_stage.on_fail:
+                    fail_ctx = TickContext(
+                        target=target,
+                        workspace_dir=self.workspace_dir,
+                        dry_run=dry_run,
+                        verbose=verbose,
+                        target_config={},
+                    )
+                    execute_action(next_stage.on_fail, fail_ctx)
                 break
 
             # Create produced markers
