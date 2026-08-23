@@ -524,7 +524,11 @@ class Pipeline:
             create_marker(marker_spec, target_dir, context=marker_ctx)
 
         # Create completion marker for sync actions (command, subprocess, custom)
-        if stage.action.type != ActionType.QUEUE_AGENT and "completion" in stage.markers:
+        if (
+            stage.action.type != ActionType.QUEUE_AGENT
+            and "completion" in stage.markers
+            and not result.data.get("async", False)
+        ):
             create_marker(stage.markers["completion"], target_dir, context=marker_ctx)
 
         # Invalidate markers from other stages
@@ -640,7 +644,7 @@ class Pipeline:
                 create_marker(marker_spec, target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
 
             # Create completion marker
-            if "completion" in next_stage.markers:
+            if "completion" in next_stage.markers and not result.data.get("async", False):
                 create_marker(next_stage.markers["completion"], target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
 
             # Invalidate markers from other stages

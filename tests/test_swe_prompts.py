@@ -158,6 +158,7 @@ class TestQueueFixAgent:
 
         assert result.success is True
         assert "queue_file" in result.data
+        assert result.data.get("async") is True
 
         entry = json.loads(Path(result.data["queue_file"]).read_text())
         assert entry["agent"] == "FixAgent"
@@ -241,6 +242,7 @@ class TestQueueCoderAgent:
             result = queue_coder_agent(action, ctx)
 
         assert result.success is True
+        assert result.data.get("async") is True
         entry = json.loads(Path(result.data["queue_file"]).read_text())
         assert entry["agent"] == "CoderAgent"
         assert "Fix the crash in foo()" in entry["content"]
@@ -292,6 +294,7 @@ class TestQueueReviewAgent:
             result = queue_review_agent(action, ctx)
 
         assert result.success is True
+        assert result.data.get("async") is True
         entry = json.loads(Path(result.data["queue_file"]).read_text())
         assert entry["agent"] == "ReviewAgent"
         assert "2" in entry["content"]  # cycle number

@@ -273,7 +273,10 @@ def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
             "prompt": prompt,
         },
     )
-    return handler.execute(queue_action, context)
+    result = handler.execute(queue_action, context)
+    if result.success and not result.dry_run:
+        result.data = {**result.data, "async": True}
+    return result
 
 
 def queue_coder_agent(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -323,7 +326,10 @@ def queue_coder_agent(action: ActionSpec, context: TickContext) -> ActionResult:
             "prompt": prompt,
         },
     )
-    return handler.execute(queue_action, context)
+    result = handler.execute(queue_action, context)
+    if result.success and not result.dry_run:
+        result.data = {**result.data, "async": True}
+    return result
 
 
 def queue_review_agent(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -371,4 +377,7 @@ def queue_review_agent(action: ActionSpec, context: TickContext) -> ActionResult
             "prompt": prompt,
         },
     )
-    return handler.execute(queue_action, context)
+    result = handler.execute(queue_action, context)
+    if result.success and not result.dry_run:
+        result.data = {**result.data, "async": True}
+    return result
