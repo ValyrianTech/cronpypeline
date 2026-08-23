@@ -3352,3 +3352,128 @@ class TestTickTargetStateNoneDefensive:
             result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.NO_WORK
         assert result.message == "No state derived"
+
+
+class TestCustomAsyncActionCompletionMarker:
+    """Completion markers must not be created for async custom actions."""
+
+    def _write_custom_module(self, tmp_path, name, body):
+        (tmp_path / f"{name}.py").write_text(body)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        return sys
+
+    def _cleanup_custom_module(self, sys_mod, tmp_path, name):
+        sys_mod.path.remove(str(tmp_path))
+        if name in sys_mod.modules:
+            del sys_mod.modules[name]
+
+    def test_async_custom_action_does_not_create_completion_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "async_action_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True, "queue_file": "/tmp/x.json"})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Async Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "async_action_mod.my_action"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert not (target_dir / "a.md").exists()
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "async_action_mod")
+
+    def test_sync_custom_action_creates_completion_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "sync_action_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True)
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Sync Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "sync_action_mod.my_action"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert (target_dir / "a.md").exists()
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "sync_action_mod")
+
+    def test_chain_async_custom_action_does_not_create_completion_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "chain_async_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Step 1",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "command", "params": {"command": "echo a"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "A1",
+                        "name": "Async Chained Step",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "custom", "params": {"callable": "chain_async_mod.my_action"}},
+                        "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert result.stage_id == "A1"
+            assert "A1" in result.chained_stages
+            assert (target_dir / "a.md").exists()
+            assert not (target_dir / "b.md").exists()
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_mod")

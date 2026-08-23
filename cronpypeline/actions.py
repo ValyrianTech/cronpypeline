@@ -234,7 +234,9 @@ class CustomActionHandler(ActionHandler):
 
         result = func(action, context)
 
-        if isinstance(result, tuple):
+        if isinstance(result, ActionResult):
+            return result
+        elif isinstance(result, tuple):
             success, output = result
             return ActionResult(success=success, stdout=str(output))
         elif isinstance(result, bool):
