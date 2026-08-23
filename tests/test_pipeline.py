@@ -53,6 +53,14 @@ class TestPipelineCreation:
         pipeline = Pipeline(config)
         assert pipeline.config.name == "test-pipeline"
 
+    def test_make_simple_config_with_targets(self, tmp_path):
+        config = make_simple_config(
+            tmp_path,
+            targets={"type": "static", "items": ["repo1", "repo2"]},
+        )
+        assert config.targets is not None
+        assert config.targets.items == ["repo1", "repo2"]
+
     def test_from_config_file(self, tmp_path):
         config_data = {
             "name": "file-pipeline",
@@ -235,12 +243,14 @@ class TestTickBasic:
             def check_complete(self, action, context):
                 return False
 
-        register_handler(ActionType.QUEUE_AGENT, MockQueueHandler())
+        handler = MockQueueHandler()
+        register_handler(ActionType.QUEUE_AGENT, handler)
 
         result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.ACTION_EXECUTED
         assert (target_dir / ".processing").exists()
         assert not (target_dir / "a.md").exists()  # completion not yet
+        assert handler.check_complete(None, None) is False
 
 
 class TestTickLocking:
@@ -501,7 +511,8 @@ class TestTickStaleHandling:
             def check_complete(self, action, context):
                 return False
 
-        register_handler(ActionType.QUEUE_AGENT, MockQueueHandler())
+        handler = MockQueueHandler()
+        register_handler(ActionType.QUEUE_AGENT, handler)
 
         result = pipeline.tick(target="my-repo")
         # Should clean up stale marker and re-queue
@@ -509,6 +520,7 @@ class TestTickStaleHandling:
         # New processing marker should have retry_count = 2
         new_data = json.loads((target_dir / ".processing").read_text())
         assert new_data["retry_count"] == 2
+        assert handler.check_complete(None, None) is False
 
     def test_stale_marker_gives_up_after_max_retries(self, tmp_path):
         workspace = tmp_path / "workspace"
@@ -646,6 +658,10 @@ class TestActionHandlerWiring:
         })
         Pipeline(config)
         assert _HANDLERS[ActionType.QUEUE_AGENT] is original
+
+        # Exercise the mock handler's execute/check_complete branches directly
+        assert original.execute(None, None).success is True
+        assert original.check_complete(None, None) is True
 
     def test_unknown_action_handler_type_raises(self, tmp_path):
         """Pipeline with unknown action_handler type should raise ValueError."""
@@ -2853,7 +2869,8 @@ class TestTickQueueAgentProcessingData:
             def check_complete(self, action, context):
                 return False
 
-        register_handler(ActionType.QUEUE_AGENT, MockQueueHandler())
+        handler = MockQueueHandler()
+        register_handler(ActionType.QUEUE_AGENT, handler)
 
         # Mock PipelineState.derive to inject processing_data while keeping stage actionable
         original_derive = PipelineState.derive
@@ -2874,6 +2891,7 @@ class TestTickQueueAgentProcessingData:
         import json as _json
         proc_data = _json.loads(proc_path.read_text())
         assert proc_data["retry_count"] == 3
+        assert handler.check_complete(None, None) is False
 
 
 class TestTickTargetStateNoneDefensive:

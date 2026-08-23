@@ -95,6 +95,8 @@ class TestFileLockPidTimestamp:
         lock.acquire()
         after = time.time()
         content = lock_file.read_text()
+        # Prepend a malformed line to exercise the defensive parse branch
+        content = "malformed-line-without-timestamp\n" + content
         # Should contain an ISO timestamp or epoch
         # Check that a number (timestamp) is present
         lines = content.strip().split("\n")

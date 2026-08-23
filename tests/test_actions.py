@@ -698,6 +698,23 @@ def my_action(action, context):
 class TestHttpRequestActionHandlerErrors:
     """Tests for HTTP request handler error handling."""
 
+    def test_unsupported_url_scheme_is_rejected(self, tmp_path):
+        """Non-http(s) URL schemes should be rejected before any request."""
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "file:///etc/passwd", "method": "GET"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == -1
+        assert "Unsupported URL scheme" in result.stderr
+        mock_urlopen.assert_not_called()
+
     def test_http_error_is_failure(self, tmp_path):
         """HTTPError (e.g. 500) should be caught and return failure."""
         from unittest.mock import patch
