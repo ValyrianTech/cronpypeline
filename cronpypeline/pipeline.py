@@ -538,11 +538,12 @@ class Pipeline:
             if chained_result:
                 final_stage_id, chained, failed_stage_id, failed_result = chained_result
                 if failed_stage_id is not None:
+                    detail = failed_result.stderr or failed_result.stdout if failed_result else None
                     return TickResult(
                         target=target,
                         stage_id=failed_stage_id,
                         status=TickResultStatus.ACTION_FAILED,
-                        message=f"Chained stage {failed_stage_id} failed: {failed_result.stderr or failed_result.stdout}" if failed_result else f"Chained stage {failed_stage_id} failed",
+                        message=f"Chained stage {failed_stage_id} failed: {detail}" if detail else f"Chained stage {failed_stage_id} failed",
                         stdout=failed_result.stdout if failed_result else "",
                         stderr=failed_result.stderr if failed_result else "",
                         chained_stages=chained,
