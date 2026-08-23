@@ -87,7 +87,10 @@ class StageState:
 
     @property
     def is_actionable(self) -> bool:
-        """Whether this stage can be acted upon (not complete, not processing, not given up, not rejected)."""
+        """Whether this stage can be acted upon (not complete, not processing, not given up).
+
+A rejected stage is actionable unless rejection tracking is enabled (max_rejections > 0).
+"""
         if self.is_complete or self.is_processing or self.is_given_up:
             return False
         # Rejection only blocks if rejection tracking is enabled
