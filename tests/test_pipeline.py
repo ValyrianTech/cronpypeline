@@ -2155,6 +2155,19 @@ class TestTickResult:
         assert "repo" in s
         assert "A0" in s
 
+    def test_chain_failure_result_str(self):
+        r = TickResult(
+            target="repo",
+            stage_id="A1",
+            status=TickResultStatus.ACTION_FAILED,
+            message="Chained stage A1 failed",
+            failed_chained_stages=["A1"],
+        )
+        s = str(r)
+        assert "repo" in s
+        assert "A1" in s
+        assert "action_failed" in s
+
 
 class TestTickLockFailures:
     """Tests for lock acquisition failures."""
@@ -2620,8 +2633,9 @@ class TestTickChainEdgeCases:
         pipeline = Pipeline(config)
         result = pipeline.tick(target="my-repo")
         # A0 succeeds, A1 fails — chain breaks
-        assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert result.chained_stages == []
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.stage_id == "A1"
+        assert "A1" in result.failed_chained_stages
 
     def test_chain_runs_on_fail_for_failing_chained_stage(self, tmp_path):
         """When a chained stage's action fails, its on_fail action should run."""
@@ -2655,9 +2669,88 @@ class TestTickChainEdgeCases:
         pipeline = Pipeline(config)
         result = pipeline.tick(target="my-repo")
         # A0 succeeds, A1 fails — chain breaks, but on_fail should run
-        assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert result.chained_stages == []
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.stage_id == "A1"
+        assert "A1" in result.failed_chained_stages
         assert (target_dir / "on_fail_marker.txt").exists()
+
+    def test_chain_failure_reports_failed_stage(self, tmp_path):
+        """When a chained stage fails, the TickResult reports the failing stage."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Failing Step",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "false"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.stage_id == "A1"
+        assert "A1" in result.failed_chained_stages
+        assert "A1" in result.message
+
+    def test_chain_failure_with_prior_chained_stages(self, tmp_path):
+        """A0 chains into A1 (success), A1 chains into A2 (failure)."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Step 2",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A2",
+                    "name": "Failing Step",
+                    "trigger": {"type": "file_missing", "path": "c.md"},
+                    "action": {"type": "command", "params": {"command": "false"}},
+                    "markers": {"completion": {"type": "file", "name": "c.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.stage_id == "A2"
+        assert "A1" in result.chained_stages
+        assert "A2" in result.failed_chained_stages
 
     def test_chain_does_not_run_on_fail_for_successful_chained_stage(self, tmp_path):
         """When a chained stage succeeds, its on_fail action should NOT run."""
