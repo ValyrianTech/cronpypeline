@@ -1,0 +1,205 @@
+{
+  "name": "vnn-pipeline",
+  "workspace_dir": "{workspace_dir}",
+  "lock_file": ".VNN/pipeline.lock",
+  "target_lock": true,
+  "pre_tick": {
+    "callable": "cronpypeline.plugins.vnn_plugin.vnn_pre_tick"
+  },
+  "post_tick": {
+    "callable": "cronpypeline.plugins.vnn_plugin.vnn_post_tick"
+  },
+  "targets": {
+    "type": "registry",
+    "file": ".VNN/stories.json",
+    "key": "stories",
+    "filter": {"enabled": true}
+  },
+  "action_handler": {
+    "type": "conversation_queue",
+    "params": {
+      "queue_dir": "/opt/serendipity/data/conversation_queue",
+      "agent_settings_dir": ".VNN/agent_settings",
+      "prompt_field": "content",
+      "default_fields": {
+        "sender": "VNN_PIPELINE",
+        "conversation_id": "",
+        "folder_name": "VNN",
+        "model_name": "default_model",
+        "runs_left": 3
+      },
+      "flatten_agent_settings": true
+    }
+  },
+  "stages": [
+    {
+      "id": "revision",
+      "name": "Revision — re-write rejected article",
+      "trigger": {
+        "type": "and",
+        "conditions": [
+          {
+            "type": "file_exists",
+            "path": "rejected-article.md"
+          },
+          {
+            "type": "file_missing",
+            "path": "article.md"
+          },
+          {
+            "type": "file_missing",
+            "path": ".processing"
+          },
+          {
+            "type": "file_missing",
+            "path": ".gave_up"
+          }
+        ]
+      },
+      "action": {
+        "type": "queue_agent",
+        "params": {
+          "agent": "WriterAgent",
+          "prompt_template": "Revise the article for story {target}. The previous version was rejected. Review rejected-article.md in {target_dir} and produce an improved article.md.",
+          "reminder_prompt_template": "Your previous revision for story {target} was incomplete. Please finish writing article.md in {target_dir}."
+        }
+      },
+      "markers": {
+        "completion": {"type": "file", "name": "article.md"},
+        "processing": {"type": "json", "name": ".processing", "content": {}},
+        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+        "give_up": {"type": "file", "name": ".gave_up"}
+      },
+      "timeout_minutes": 30,
+      "max_retries": 3,
+      "max_rejections": 5,
+      "invalidates": [
+        {"type": "file", "name": "rejected-article.md"}
+      ]
+    },
+    {
+      "id": "publishing",
+      "name": "Publishing — publish completed article",
+      "trigger": {
+        "type": "and",
+        "conditions": [
+          {
+            "type": "file_exists",
+            "path": "article.md"
+          },
+          {
+            "type": "file_missing",
+            "path": "published.json"
+          },
+          {
+            "type": "file_missing",
+            "path": ".processing"
+          },
+          {
+            "type": "file_missing",
+            "path": ".gave_up"
+          }
+        ]
+      },
+      "action": {
+        "type": "queue_agent",
+        "params": {
+          "agent": "PublishAgent",
+          "prompt_template": "Publish the article for story {target}. The article is at {target_dir}/article.md. Publish it and create published.json.",
+          "reminder_prompt_template": "Your previous publishing attempt for story {target} was incomplete. Please finish publishing the article at {target_dir}/article.md."
+        }
+      },
+      "markers": {
+        "completion": {"type": "json", "name": "published.json", "content": {}},
+        "processing": {"type": "json", "name": ".processing", "content": {}},
+        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+        "give_up": {"type": "file", "name": ".gave_up"}
+      },
+      "timeout_minutes": 30,
+      "max_retries": 3,
+      "max_rejections": 3,
+      "invalidates": [
+        {"type": "file", "name": "rejected-article.md"}
+      ]
+    },
+    {
+      "id": "writing",
+      "name": "Writing — write article from research",
+      "trigger": {
+        "type": "and",
+        "conditions": [
+          {
+            "type": "file_exists",
+            "path": "research.md"
+          },
+          {
+            "type": "file_missing",
+            "path": "article.md"
+          },
+          {
+            "type": "file_missing",
+            "path": ".processing"
+          },
+          {
+            "type": "file_missing",
+            "path": ".gave_up"
+          }
+        ]
+      },
+      "action": {
+        "type": "queue_agent",
+        "params": {
+          "agent": "WriterAgent",
+          "prompt_template": "Write an article for story {target} based on the research in {target_dir}/research.md. Save the article as article.md in {target_dir}.",
+          "reminder_prompt_template": "Your previous writing attempt for story {target} was incomplete. Please finish writing article.md in {target_dir} based on the research in {target_dir}/research.md."
+        }
+      },
+      "markers": {
+        "completion": {"type": "file", "name": "article.md"},
+        "processing": {"type": "json", "name": ".processing", "content": {}},
+        "give_up": {"type": "file", "name": ".gave_up"}
+      },
+      "timeout_minutes": 30,
+      "max_retries": 3,
+      "invalidates": [
+        {"type": "file", "name": "rejected-article.md"}
+      ]
+    },
+    {
+      "id": "research",
+      "name": "Research — gather information for story",
+      "trigger": {
+        "type": "and",
+        "conditions": [
+          {
+            "type": "file_missing",
+            "path": "research.md"
+          },
+          {
+            "type": "file_missing",
+            "path": ".processing"
+          },
+          {
+            "type": "file_missing",
+            "path": ".gave_up"
+          }
+        ]
+      },
+      "action": {
+        "type": "queue_agent",
+        "params": {
+          "agent": "ResearchAgent",
+          "prompt_template": "Research story {target} and produce a research report. Save it as research.md in {target_dir}.",
+          "reminder_prompt_template": "Your previous research for story {target} was incomplete. Please finish writing research.md in {target_dir}."
+        }
+      },
+      "markers": {
+        "completion": {"type": "file", "name": "research.md"},
+        "processing": {"type": "json", "name": ".processing", "content": {}},
+        "give_up": {"type": "file", "name": ".gave_up"}
+      },
+      "timeout_minutes": 60,
+      "max_retries": 3
+    }
+  ]
+}
