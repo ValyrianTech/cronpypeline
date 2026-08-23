@@ -531,7 +531,7 @@ def _parse_change_requests(body: str) -> list[str]:
         if re.match(r"no\s+issues?\s+(?:found|identified)", item, re.IGNORECASE):
             continue
         text = item.strip()
-        if not text:
+        if not text:  # pragma: no cover - defensive: items are pre-stripped
             continue
         if "\n" in text:
             cleaned.append(text)

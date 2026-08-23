@@ -3988,3 +3988,327 @@ class TestDetectCDocSyncNotAhead:
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_doc_sync(ctx) is False
+
+
+# ─── Coverage gap tests ──────────────────────────────────────────────────────
+
+
+class TestDetectLintFailDirectoryReport:
+    """Cover lines 98-99: read_text raises IsADirectoryError when latest.md is a dir."""
+
+    def test_returns_false_on_directory_report(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "lint"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        latest = report_dir / "latest.md"
+        latest.mkdir()
+        ctx = {"target_dir": str(target)}
+        assert detect_lint_fail(ctx) is False
+
+
+class TestDetectReportFailDirectoryReport:
+    """Cover lines 128-129: read_text raises IsADirectoryError when latest.md is a dir."""
+
+    def test_returns_false_on_directory_report(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "vulture"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        latest = report_dir / "latest.md"
+        latest.mkdir()
+        assert _detect_report_fail(target, "vulture") is False
+
+
+class TestDetectVultureFailDirectoryReport:
+    """Cover lines 195-196: read_text raises IsADirectoryError when latest.md is a dir."""
+
+    def test_returns_false_on_directory_report(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "deadcode"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        latest = report_dir / "latest.md"
+        latest.mkdir()
+        ctx = {"target_dir": str(target)}
+        assert detect_vulture_fail(ctx) is False
+
+
+class TestDetectSessionCompleteIssueDirectory:
+    """Cover lines 237-238: read_text raises when issue_path is a directory."""
+
+    def test_returns_false_when_issue_is_directory(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        session = {"active": True, "issue_id": "github-1"}
+        (target / ".SWE" / "github_session.json").write_text(json.dumps(session))
+        issue_path = target / ".SWE" / "issues" / "github-1.md"
+        issue_path.mkdir()
+        assert detect_session_complete({"target_dir": str(target)}) is False
+
+
+class TestFinalizeSessionIssueDirectory:
+    """Cover lines 302-303: read_text raises when issue_path is a directory."""
+
+    def test_finalizes_when_issue_is_directory(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        session = {"active": True, "issue_id": "github-1"}
+        (target / ".SWE" / "github_session.json").write_text(json.dumps(session))
+        issue_path = target / ".SWE" / "issues" / "github-1.md"
+        issue_path.mkdir()
+        ctx = _make_tick_context(target)
+        result = finalize_session(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+
+
+class TestGitHelper:
+    """Cover line 430: _git function body."""
+
+    def test_git_returns_completed_process(self, tmp_path):
+        subprocess.run(["git", "init", "-b", "main", str(tmp_path)], capture_output=True, check=True)
+        result = _git(tmp_path, "status", check=False)
+        assert result.returncode == 0
+
+
+class TestDetectLintAutofixDirectoryReport:
+    """Cover lines 532-533: read_text raises IsADirectoryError when latest.md is a dir."""
+
+    def test_returns_false_on_directory_report(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "lint"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        latest = report_dir / "latest.md"
+        latest.mkdir()
+        ctx = {"target_dir": str(target)}
+        assert detect_lint_autofix(ctx) is False
+
+
+class TestFindActiveTaskNonDirEntry:
+    """Cover line 966: task_dir is not a directory (file inside date_dir)."""
+
+    def test_skips_non_dir_task_entries(self, tmp_path, monkeypatch):
+        date_dir = tmp_path / "2025-01-01"
+        date_dir.mkdir()
+        (date_dir / "file.txt").write_text("not a dir")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path)
+        assert _find_active_task("repo") is None
+
+
+class TestFindActiveTaskNoTaskJson:
+    """Cover line 968: task_dir exists but has no task.json."""
+
+    def test_skips_task_dir_without_task_json(self, tmp_path, monkeypatch):
+        date_dir = tmp_path / "2025-01-01"
+        task_dir = date_dir / "task-001"
+        task_dir.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path)
+        assert _find_active_task("repo") is None
+
+
+class TestCountUnrankedReviewIssuesDirectory:
+    """Cover lines 995-996: read_text raises when issue path is a directory."""
+
+    def test_skips_directory_issue(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "review-1.md"
+        issue_path.mkdir()
+        assert _count_unranked_review_issues(target) == 0
+
+
+class TestA7CoveragePctDirectoryReport:
+    """Cover lines 1248-1249: read_text raises IsADirectoryError when latest.md is a dir."""
+
+    def test_returns_none_on_directory_report(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "coverage"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        latest = report_dir / "latest.md"
+        latest.mkdir()
+        assert _a7_coverage_pct(target) is None
+
+
+class TestBuildPrBodyNonFrontmatter:
+    """Cover line 1352: issue file without frontmatter (doesn't start with ---)."""
+
+    def test_skips_non_frontmatter_issue(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "bug-1.md"
+        issue_path.write_text("just a plain markdown file without frontmatter")
+        body = _build_pr_body(target, "repo", "main")
+        assert "0 issues fixed" in body
+
+
+class TestDetectCCoverageIssueDirectoryExisting:
+    """Cover lines 1810-1812: existing issue is a directory, read_text raises."""
+
+    def test_fires_when_existing_issue_is_directory(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 50.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"coverage-{sha[:8]}"
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.mkdir()
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_coverage_issue(ctx) is True
+
+    def test_does_not_fire_when_existing_issue_open(self, tmp_path):
+        """Cover line 1810: existing issue has non-discarded status."""
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 50.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"coverage-{sha[:8]}"
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.write_text(f"---\nstatus: done\n---\n# Coverage issue\n")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_coverage_issue(ctx) is False
+
+
+class TestDetectCReviewIssueA1Fail:
+    """Cover line 1925: _a1_is_pass returns False."""
+
+    def test_does_not_fire_when_a1_fails(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — FAIL\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_review_issue(ctx) is False
+
+
+class TestDetectCReviewIssueDirectoryExisting:
+    """Cover lines 1942-1944: existing issue is a directory, read_text raises."""
+
+    def test_fires_when_existing_issue_is_directory(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"review-{sha[:8]}"
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.mkdir()
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_review_issue(ctx) is True
+
+    def test_does_not_fire_when_existing_issue_open(self, tmp_path):
+        """Cover line 1942: existing issue has non-discarded status."""
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"review-{sha[:8]}"
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.write_text(f"---\nstatus: done\n---\n# Review issue\n")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_review_issue(ctx) is False
+
+
+class TestDetectCDocSyncValueError:
+    """Cover lines 2037-2038: ValueError when git rev-list returns non-integer."""
+
+    def test_does_not_fire_on_value_error(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+
+        real_run = subprocess.run
+
+        def _mock_run(*args, **kwargs):
+            if args and isinstance(args[0], list) and "rev-list" in args[0]:
+                return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="not a number\n", stderr="")
+            return real_run(*args, **kwargs)
+
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_mock_run):
+            ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+            assert detect_c_doc_sync(ctx) is False
+
+
+class TestDetectCPrPublishNoShaMocked:
+    """Cover line 2155: integration_head_sha returns None (mocked)."""
+
+    def test_does_not_fire_when_no_sha(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        with patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value=None):
+            assert detect_c_pr_publish(ctx) is False
+
+
+class TestDetectCPrPublishValueError:
+    """Cover lines 2165-2166: ValueError when git rev-list returns non-integer."""
+
+    def test_does_not_fire_on_value_error(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+
+        real_run = subprocess.run
+
+        def _mock_run(*args, **kwargs):
+            if args and isinstance(args[0], list) and "rev-list" in args[0]:
+                return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="not a number\n", stderr="")
+            return real_run(*args, **kwargs)
+
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_mock_run):
+            ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+            assert detect_c_pr_publish(ctx) is False

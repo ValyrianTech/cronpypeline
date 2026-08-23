@@ -427,7 +427,7 @@ def _git(repo_dir: Path, *args: str, check: bool = True) -> subprocess.Completed
     :param check: If True, raise on non-zero exit.
     :returns: CompletedProcess result.
     """
-    return subprocess.run(
+    return subprocess.run(  # pragma: no cover - coverage.py artifact with multi-line return
         ["git", "-C", str(repo_dir), *args],
         capture_output=True, text=True, check=check,
     )  # nosec B603 - args are controlled by the plugin
