@@ -2925,6 +2925,124 @@ class TestTickQueueAgentProcessingData:
         assert handler.check_complete(None, None) is False
 
 
+class TestModeConfigPathResolution:
+    """Tests for mode_file/config_file path resolution relative to workspace_dir."""
+
+    def test_relative_mode_file_resolved_against_workspace_dir(self, tmp_path):
+        """A relative mode_file should be resolved relative to workspace_dir."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        (workspace / "mode.json").write_text(json.dumps({"mode": "production"}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "mode_file": "mode.json",
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Prod step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo prod"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "modes": ["production"],
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        assert pipeline.mode_file == workspace / "mode.json"
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (workspace / "my-repo" / "a.md").exists()
+
+    def test_relative_config_file_resolved_against_workspace_dir(self, tmp_path):
+        """A relative config_file should be resolved relative to workspace_dir."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        (workspace / "toggle.json").write_text(json.dumps({"enabled": False}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "config_file": "toggle.json",
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        assert pipeline.config_file == workspace / "toggle.json"
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.DISABLED
+        assert not (workspace / "my-repo" / "a.md").exists()
+
+    def test_absolute_mode_file_path_preserved(self, tmp_path):
+        """An absolute mode_file should be preserved and still work."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        mode_file = tmp_path / "mode.json"
+        mode_file.write_text(json.dumps({"mode": "production"}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "mode_file": str(mode_file),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Prod step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo prod"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "modes": ["production"],
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        assert pipeline.mode_file == mode_file
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+
+    def test_absolute_config_file_path_preserved(self, tmp_path):
+        """An absolute config_file should be preserved and still work."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        config_toggle = tmp_path / "toggle.json"
+        config_toggle.write_text(json.dumps({"enabled": False}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "config_file": str(config_toggle),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        assert pipeline.config_file == config_toggle
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.DISABLED
+
+
 class TestTickTargetStateNoneDefensive:
     """Test the defensive target_state is None check."""
 

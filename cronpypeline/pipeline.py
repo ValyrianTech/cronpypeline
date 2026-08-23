@@ -132,6 +132,14 @@ class Pipeline:
             dry_run=False,
         )
 
+        self.mode_file = Path(config.mode_file) if config.mode_file else None
+        if self.mode_file and not self.mode_file.is_absolute():
+            self.mode_file = self.workspace_dir / self.mode_file
+
+        self.config_file = Path(config.config_file) if config.config_file else None
+        if self.config_file and not self.config_file.is_absolute():
+            self.config_file = self.workspace_dir / self.config_file
+
         # Wire action handler from config if present
         if config.action_handler:
             handler = _instantiate_action_handler(
@@ -243,8 +251,8 @@ class Pipeline:
         :returns: TickResult for the selected target.
         """
         # Check config_file enabled toggle
-        if self.config.config_file:
-            toggle_path = Path(self.config.config_file)
+        if self.config_file:
+            toggle_path = self.config_file
             if toggle_path.exists():
                 try:
                     toggle_data = json.loads(toggle_path.read_text())
@@ -344,9 +352,9 @@ class Pipeline:
 
         :returns: Current mode string, or None if no mode_file or unreadable.
         """
-        if not self.config.mode_file:
+        if not self.mode_file:
             return None
-        mode_path = Path(self.config.mode_file)
+        mode_path = self.mode_file
         if not mode_path.exists():
             return None
         try:
