@@ -88,6 +88,38 @@ def parse_mypy_output(output: str, **kwargs: Any) -> dict[str, Any]:
     return result
 
 
+def parse_interrogate_output(output: str, **kwargs: Any) -> dict[str, Any]:
+    """Parse interrogate output for docstring coverage.
+
+    Interrogate's verbose output ends with a RESULT footer and a TOTAL row.
+
+    :param output: Raw stdout from interrogate.
+    :returns: Dict with ``coverage``, ``covered``, ``missing``, ``total``, and ``status``.
+    """
+    result: dict[str, Any] = {"coverage": 0.0, "covered": 0, "missing": 0, "total": 0}
+    m = re.search(r"RESULT:\s+(PASSED|FAILED)", output)
+    passed = bool(m and m.group(1) == "PASSED")
+    m = re.search(r"actual:\s*([\d.]+)%", output)
+    if m:
+        result["coverage"] = float(m.group(1))
+    for line in output.splitlines():
+        if "TOTAL" not in line:
+            continue
+        nums = re.findall(r"(\d+(?:\.\d+)?)", line)
+        if len(nums) >= 4:
+            try:
+                result["total"] = int(float(nums[0]))
+                result["missing"] = int(float(nums[1]))
+                result["covered"] = int(float(nums[2]))
+                if result["coverage"] == 0.0:
+                    result["coverage"] = float(nums[3])
+            except ValueError:
+                pass
+            break
+    result["status"] = "PASS" if passed else "FAIL"
+    return result
+
+
 def parse_pydocstyle_output(output: str, **kwargs: Any) -> dict[str, Any]:
     """Parse pydocstyle output for violation count.
 
@@ -246,6 +278,7 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
     report_dir = Path(params.get("report_dir", "."))
     parser_path = params.get("parser", "")
     report_name = params.get("report_name", "report_{timestamp}.md")
+    report_title = params.get("report_title", "Diagnostic Report")
     parser_kwargs = params.get("parser_kwargs", {})
 
     # Format command with context variables
@@ -295,11 +328,12 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
     timestamp = generate_timestamp()
     status = parsed.get("status", "UNKNOWN")
     report_lines = [
-        f"# Diagnostic Report — {timestamp}",
+        f"# {report_title} — {status}",
         "",
         f"**Status**: {status}",
         f"**Command**: `{command}`",
         f"**Exit code**: {exit_code}",
+        f"**Timestamp**: {timestamp}",
         "",
         "## Parsed Results",
         "",

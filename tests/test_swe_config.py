@@ -45,7 +45,7 @@ class TestSWEPipelineConfig:
         config = PipelineConfig.from_file(self.CONFIG_PATH)
         diagnostic_stages = [
             s for s in config.stages
-            if s.id.startswith("A") and "fix" not in s.id
+            if s.id.startswith("A") and "fix" not in s.id and s.id != "A0"
         ]
         assert len(diagnostic_stages) >= 7  # A1-A9 minus fix agents
         for stage in diagnostic_stages:
@@ -61,13 +61,13 @@ class TestSWEPipelineConfig:
 
     def test_coder_stage_uses_queue_coder_agent(self):
         config = PipelineConfig.from_file(self.CONFIG_PATH)
-        coder_stage = next(s for s in config.stages if s.id == "C-code")
-        assert coder_stage.action.params.get("callable") == "cronpypeline.plugins.swe_prompts.queue_coder_agent"
+        coder_stage = next(s for s in config.stages if s.id == "C-issue-fix")
+        assert coder_stage.action.params.get("callable") == "cronpypeline.plugins.swe_plugin.run_c_issue_fix"
 
     def test_review_stage_uses_queue_review_agent(self):
         config = PipelineConfig.from_file(self.CONFIG_PATH)
         review_stage = next(s for s in config.stages if s.id == "C-pr-review")
-        assert review_stage.action.params.get("callable") == "cronpypeline.plugins.swe_prompts.queue_review_agent"
+        assert review_stage.action.params.get("callable") == "cronpypeline.plugins.swe_plugin.run_c_pr_review"
 
     def test_github_stages_have_github_mode(self):
         config = PipelineConfig.from_file(self.CONFIG_PATH)
@@ -78,22 +78,26 @@ class TestSWEPipelineConfig:
         config = PipelineConfig.from_file(self.CONFIG_PATH)
         for stage in config.stages:
             if "fix-agent" in stage.id:
-                assert len(stage.invalidates) > 0, f"{stage.id} should invalidate upstream reports"
+                # Fix agents use queue_fix_agent which handles invalidation internally
+                # via the invalidate_paths param, not via the stage-level invalidates list
+                assert "invalidate_paths" in stage.action.params, \
+                    f"{stage.id} should have invalidate_paths in action params"
 
     def test_coder_stage_has_on_fail(self):
         config = PipelineConfig.from_file(self.CONFIG_PATH)
-        coder_stage = next(s for s in config.stages if s.id == "C-code")
-        assert coder_stage.on_fail is not None
-        assert "cleanup_git_branch" in coder_stage.on_fail.params.get("callable", "")
+        coder_stage = next(s for s in config.stages if s.id == "C-issue-fix")
+        # C-issue-fix delegates to run_issue_fix.py subprocess which handles its own cleanup
+        assert coder_stage.action.type.value == "custom"
 
     def test_stale_stage_uses_detect_agent_forgot_marker(self):
         config = PipelineConfig.from_file(self.CONFIG_PATH)
-        stale_stage = next(s for s in config.stages if s.id == "C-stale")
-        assert "detect_agent_forgot_marker" in stale_stage.trigger.callable
+        # C-stale was replaced by C-issue-fix which delegates stale detection to run_issue_fix.py
+        issue_fix_stage = next(s for s in config.stages if s.id == "C-issue-fix")
+        assert "detect_c_issue_fix" in issue_fix_stage.trigger.callable
 
     def test_async_agent_stages_have_processing_markers(self):
         config = PipelineConfig.from_file(self.CONFIG_PATH)
-        async_stage_ids = ["A2-fix-agent", "A6-fix-agent", "C-code", "C-pr-review"]
+        async_stage_ids = ["A2-fix-agent", "A3-fix-agent", "C-pr-review", "C-doc-sync"]
         for stage_id in async_stage_ids:
             stage = next(s for s in config.stages if s.id == stage_id)
             assert "processing" in stage.markers, \

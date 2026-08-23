@@ -80,6 +80,7 @@
           "command": "{test_cmd}",
           "report_dir": ".SWE/reports/test-infra",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_pytest_output",
+          "report_title": "Test Infrastructure Check",
           "report_name": "test-infra_{timestamp}.md"
         }
       },
@@ -106,6 +107,7 @@
           "command": "{lint_cmd}",
           "report_dir": ".SWE/reports/lint",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_ruff_output",
+          "report_title": "Lint Check",
           "report_name": "lint_{timestamp}.md"
         }
       },
@@ -150,6 +152,8 @@
           "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
           "command": "{docstring_cmd}",
           "report_dir": ".SWE/reports/docstrings",
+          "parser": "cronpypeline.plugins.swe_diagnostics.parse_interrogate_output",
+          "report_title": "Docstring Coverage",
           "report_name": "docstrings_{timestamp}.md"
         }
       },
@@ -176,6 +180,7 @@
           "command": "{typecheck_cmd}",
           "report_dir": ".SWE/reports/typecheck",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_mypy_output",
+          "report_title": "Type Check",
           "report_name": "typecheck_{timestamp}.md"
         }
       },
@@ -202,6 +207,7 @@
           "command": "bandit -r .",
           "report_dir": ".SWE/reports/security",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_bandit_output",
+          "report_title": "Security Audit",
           "report_name": "security_{timestamp}.md"
         }
       },
@@ -228,6 +234,7 @@
           "command": "{deadcode_cmd}",
           "report_dir": ".SWE/reports/deadcode",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_vulture_output",
+          "report_title": "Dead Code",
           "report_name": "deadcode_{timestamp}.md"
         }
       },
@@ -255,6 +262,7 @@
           "report_dir": ".SWE/reports/coverage",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_coverage_output",
           "parser_kwargs": {"threshold": 80.0},
+          "report_title": "Test Coverage",
           "report_name": "coverage_{timestamp}.md"
         }
       },
@@ -282,6 +290,7 @@
           "report_dir": ".SWE/reports/complexity",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_radon_output",
           "parser_kwargs": {"threshold": "C"},
+          "report_title": "Complexity",
           "report_name": "complexity_{timestamp}.md"
         }
       },
@@ -308,6 +317,7 @@
           "command": "pip-audit",
           "report_dir": ".SWE/reports/dep-audit",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_pip_audit_output",
+          "report_title": "Dependency Audit",
           "report_name": "dep-audit_{timestamp}.md"
         }
       },

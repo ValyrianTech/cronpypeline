@@ -97,9 +97,13 @@ def detect_lint_fail(context: dict[str, Any]) -> bool:
         text = report_path.read_text(encoding="utf-8")
     except Exception:
         return False
-    m_errors = re.search(r'(\d+)\s+error\(s\)', text)
+    m_errors = re.search(r'\*\*errors\*\*:\s*(\d+)', text)
+    if not m_errors:
+        m_errors = re.search(r'(\d+)\s+error\(s\)', text)
     errors = int(m_errors.group(1)) if m_errors else 0
-    m_fixable = re.search(r'(\d+)\s+auto-fixable', text)
+    m_fixable = re.search(r'\*\*fixable\*\*:\s*(\d+)', text)
+    if not m_fixable:
+        m_fixable = re.search(r'(\d+)\s+auto-fixable', text)
     fixable = int(m_fixable.group(1)) if m_fixable else 0
     if errors <= 0 or fixable > 0:
         return False
@@ -527,7 +531,9 @@ def detect_lint_autofix(context: dict[str, Any]) -> bool:
         text = report_path.read_text(encoding="utf-8")
     except Exception:
         return False
-    m_fixable = re.search(r"(\d+)\s+auto-fixable", text)
+    m_fixable = re.search(r"\*\*fixable\*\*:\s*(\d+)", text)
+    if not m_fixable:
+        m_fixable = re.search(r"(\d+)\s+auto-fixable", text)
     fixable = int(m_fixable.group(1)) if m_fixable else 0
     if fixable <= 0:
         return False

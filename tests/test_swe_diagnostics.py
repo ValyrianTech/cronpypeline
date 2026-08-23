@@ -7,6 +7,7 @@ from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.swe_diagnostics import (
     parse_bandit_output,
     parse_coverage_output,
+    parse_interrogate_output,
     parse_mypy_output,
     parse_pip_audit_output,
     parse_pydocstyle_output,
@@ -97,6 +98,39 @@ class TestParseMypyOutput:
         result = parse_mypy_output(output)
         assert result["errors"] == 3
         assert result["status"] == "FAIL"
+
+
+class TestParseInterrogateOutput:
+    """Tests for parse_interrogate_output."""
+
+    def test_parse_passed(self):
+        output = (
+            "| TOTAL                  | 100   |  13   |  87   |  87.0% |\n"
+            "------- RESULT: PASSED (minimum: 80.0%, actual: 87.0%) -------"
+        )
+        result = parse_interrogate_output(output)
+        assert result["status"] == "PASS"
+        assert result["coverage"] == 87.0
+        assert result["covered"] == 87
+        assert result["missing"] == 13
+        assert result["total"] == 100
+
+    def test_parse_failed(self):
+        output = (
+            "| TOTAL                  | 100   |  50   |  50   |  50.0% |\n"
+            "------- RESULT: FAILED (minimum: 80.0%, actual: 50.0%) -------"
+        )
+        result = parse_interrogate_output(output)
+        assert result["status"] == "FAIL"
+        assert result["coverage"] == 50.0
+        assert result["covered"] == 50
+        assert result["missing"] == 50
+
+    def test_parse_no_result_footer(self):
+        output = "| TOTAL                  | 100   |  13   |  87   |  87.0% |"
+        result = parse_interrogate_output(output)
+        assert result["status"] == "FAIL"
+        assert result["coverage"] == 87.0
 
 
 class TestParsePydocstyleOutput:
@@ -300,6 +334,47 @@ class TestRunDiagnostic:
         assert result.success is True
         content = Path(result.data["report_path"]).read_text()
         assert "raw output here" in content
+
+    def test_report_header_includes_title_and_status(self, tmp_path):
+        """Report first line should be '# {title} — {status}' for fix-agent triggers."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "echo 'Found 3 errors.'",
+                "report_dir": str(report_dir),
+                "parser": "cronpypeline.plugins.swe_diagnostics.parse_ruff_output",
+                "report_title": "Lint Check",
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = run_diagnostic(action, ctx)
+        content = Path(result.data["report_path"]).read_text()
+        first_line = content.splitlines()[0]
+        assert first_line == "# Lint Check — FAIL"
+
+    def test_report_default_title_when_not_specified(self, tmp_path):
+        """Report should use 'Diagnostic Report' as default title."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "echo test",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = run_diagnostic(action, ctx)
+        first_line = Path(result.data["report_path"]).read_text().splitlines()[0]
+        assert first_line.startswith("# Diagnostic Report —")
 
     def test_report_includes_metadata(self, tmp_path):
         """Report should include command, exit code, and timestamp metadata."""
