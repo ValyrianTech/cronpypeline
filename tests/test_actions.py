@@ -572,7 +572,6 @@ class TestActionHandlerBase:
     """Tests for ActionHandler base class."""
 
     def test_base_execute_raises_not_implemented(self, tmp_path):
-        handler = ActionResult.__class__  # dummy
         from cronpypeline.actions import ActionHandler
         base = ActionHandler()
         ctx = TickContext(target="test", workspace_dir=tmp_path)

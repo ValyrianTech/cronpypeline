@@ -316,7 +316,7 @@ class TestParseFrontmatterEdgeCases:
 
     def test_line_without_colon_skipped(self):
         """Lines without a colon in frontmatter should be skipped."""
-        fm, body = parse_frontmatter("---\nid: 42\nthis line has no colon\nstatus: open\n---\nBody")
+        fm, _body = parse_frontmatter("---\nid: 42\nthis line has no colon\nstatus: open\n---\nBody")
         assert fm["id"] == 42
         assert fm["status"] == "open"
         assert "this line has no colon" not in fm

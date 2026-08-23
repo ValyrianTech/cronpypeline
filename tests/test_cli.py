@@ -232,5 +232,5 @@ class TestCLIMain:
 
         with patch("sys.exit") as mock_exit, \
              patch("sys.argv", ["cronpypeline", "--config", str(config_file), "--target", "my-repo"]):
-            exec(compile(source, str(cli_path), "exec"), {"__name__": "__main__"})
+            exec(compile(source, str(cli_path), "exec"), {"__name__": "__main__"})  # noqa: S102
             mock_exit.assert_called_once_with(0)
