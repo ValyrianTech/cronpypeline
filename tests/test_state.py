@@ -415,6 +415,48 @@ class TestStageStateRejectionCount:
         assert state.is_rejected is True
         assert state.rejection_count == 3
 
+    def test_rejection_marker_blocks_actionable_when_tracking_enabled(self, tmp_path):
+        """A rejection marker should make the stage non-actionable when max_rejections > 0."""
+        stage = Stage(
+            id="A0",
+            name="Review",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "rejection": MarkerSpec(name=".rejection", type=MarkerType.JSON, content={}),
+            },
+            max_rejections=5,
+        )
+        create_marker(stage.markers["rejection"], tmp_path)
+        (tmp_path / ".rejection").write_text(json.dumps({"rejection_count": 1}))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_rejected is True
+        assert state.is_actionable is False
+
+    def test_rejection_marker_does_not_block_when_tracking_disabled(self, tmp_path):
+        """A rejection marker should NOT block the stage when max_rejections == 0 (disabled)."""
+        stage = Stage(
+            id="A0",
+            name="Review",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "rejection": MarkerSpec(name=".rejection", type=MarkerType.JSON, content={}),
+            },
+            max_rejections=0,
+        )
+        create_marker(stage.markers["rejection"], tmp_path)
+        (tmp_path / ".rejection").write_text(json.dumps({"rejection_count": 1}))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_rejected is True
+        assert state.is_actionable is True
+
 
 class TestStageStateProcessingQueueFile:
     """Tests for processing staleness with queue_file."""
