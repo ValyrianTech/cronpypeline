@@ -816,7 +816,7 @@ configs/
 .venv/bin/python -m pytest tests/test_pipeline.py -v
 ```
 
-The test suite includes **663 tests** covering:
+The test suite includes **1144 tests** covering:
 - Unit tests for each core class (config parsing, marker resolution, trigger evaluation, lock acquisition, action execution)
 - Integration tests using temp directories as workspaces, simulating multi-tick execution
 - Crash safety tests verifying state recovery from partial filesystem state
