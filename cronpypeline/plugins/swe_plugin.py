@@ -1668,6 +1668,11 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     merged = pr_info.get("merged", False)
 
     def _update_marker(new_state: str, **kwargs: Any) -> None:
+        """Update the PR marker file with a new state.
+
+        :param new_state: The new PR state to record (e.g. 'merged', 'rejected', 'open').
+        :param kwargs: Additional fields to merge into the PR marker data.
+        """
         pr_data["pr_state"] = new_state
         pr_data.update(kwargs)
         pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
