@@ -202,6 +202,13 @@ class Pipeline:
 
         try:
             return self._tick_inner(targets, target_config_map, dry_run, verbose)
+        except Exception as e:  # noqa: BLE001
+            return TickResult(
+                target=target or "*",
+                stage_id=None,
+                status=TickResultStatus.ACTION_FAILED,
+                message=f"Unhandled exception: {e}",
+            )
         finally:
             self.lock.release()
 

@@ -598,6 +598,146 @@ class TestTickAllExceptionHandling:
         assert not pipeline.lock.is_acquired
 
 
+class TestTickExceptionHandling:
+    """Tests for tick() converting exceptions to TickResult."""
+
+    def test_tick_catches_exception_and_returns_action_failed(self, tmp_path):
+        """When _tick_single raises, tick() should return ACTION_FAILED."""
+        from unittest.mock import patch
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo1"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        def raising_tick_single(target, target_config, dry_run, verbose):
+            raise KeyError("malformed marker")
+
+        with patch.object(pipeline, "_tick_single", raising_tick_single):
+            result = pipeline.tick(target="repo1")
+
+        assert result.target == "repo1"
+        assert result.stage_id is None
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.message.startswith("Unhandled exception:")
+        assert "malformed marker" in result.message
+
+    def test_tick_exception_message_captured(self, tmp_path):
+        """The exception message should be captured in the TickResult."""
+        from unittest.mock import patch
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo1"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        def raising_tick_single(target, target_config, dry_run, verbose):
+            raise ValueError("unknown trigger type")
+
+        with patch.object(pipeline, "_tick_single", raising_tick_single):
+            result = pipeline.tick(target="repo1")
+
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert "unknown trigger type" in result.message
+
+    def test_tick_lock_released_on_exception(self, tmp_path):
+        """The lock should be released even when an exception is caught."""
+        from unittest.mock import patch
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo1"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        def raising_tick_single(target, target_config, dry_run, verbose):
+            raise OSError("filesystem issue")
+
+        with patch.object(pipeline, "_tick_single", raising_tick_single):
+            result = pipeline.tick(target="repo1")
+
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert "filesystem issue" in result.message
+        assert not pipeline.lock.is_acquired
+
+    def test_tick_without_target_exception_uses_star(self, tmp_path):
+        """When no target is requested, the TickResult target should be '*'."""
+        from unittest.mock import patch
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo1"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        def raising_tick_single(target, target_config, dry_run, verbose):
+            raise RuntimeError("boom")
+
+        with patch.object(pipeline, "_tick_single", raising_tick_single):
+            result = pipeline.tick()
+
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.target == "*"
+
+
 class TestTickStaleHandling:
     """Tests for stale task detection and cleanup."""
 
