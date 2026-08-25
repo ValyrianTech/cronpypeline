@@ -655,20 +655,48 @@ def _load_github_token(target_config: dict[str, Any]) -> str | None:
             return val
     # Fallback: load .env file (check workspace parent dirs and CWD)
     for env_file in (
+        SWE_WORKSPACE_DIR.parent.parent.parent / ".env",
         SWE_WORKSPACE_DIR.parent.parent / ".env",
         Path.cwd() / ".env",
     ):
-        if env_file.exists():
-            try:
-                from dotenv import load_dotenv
-                load_dotenv(env_file, override=False)
-                for key in ("SWE_GITHUB_TOKEN", "GITHUB_TOKEN"):
-                    val = os.environ.get(key, "")
-                    if val:
-                        return val
-            except ImportError:
-                break
+        if not env_file.exists():
+            continue
+        _load_env_file(env_file)
+        for key in ("SWE_GITHUB_TOKEN", "GITHUB_TOKEN"):
+            val = os.environ.get(key, "")
+            if val:
+                return val
     return None
+
+
+def _load_env_file(path: Path) -> None:
+    """Load environment variables from a .env file.
+
+    Uses python-dotenv if available, otherwise falls back to a simple parser.
+
+    :param path: Path to the .env file.
+    """
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(path, override=False)
+        return
+    except ImportError:
+        pass
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip()
+        if val.startswith('"') and val.endswith('"'):
+            val = val[1:-1]
+        elif val.startswith("'") and val.endswith("'"):
+            val = val[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = val
 
 
 def _gh_api_get_list(

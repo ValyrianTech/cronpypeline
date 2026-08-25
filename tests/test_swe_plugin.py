@@ -667,6 +667,7 @@ class TestLoadGithubToken:
     def test_returns_none_when_no_token(self, monkeypatch):
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._load_env_file", lambda path: None)
         assert _load_github_token({}) is None
 
     def test_config_takes_priority_over_env(self, monkeypatch):
@@ -896,6 +897,7 @@ class TestDetectB1IssueGathering:
         target = _make_target_dir(tmp_path)
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._load_env_file", lambda path: None)
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
         assert detect_b1_issue_gathering(ctx) is False
 
@@ -929,6 +931,7 @@ class TestRunB1IssueGathering:
         target = _make_target_dir(tmp_path)
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._load_env_file", lambda path: None)
         ctx = _make_tick_context(target)
         result = run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
@@ -1971,6 +1974,7 @@ class TestDetectCPrStatus:
         target = _make_target_dir(tmp_path)
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._load_env_file", lambda path: None)
         (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 1}))
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
         assert detect_c_pr_status(ctx) is False
@@ -2170,6 +2174,7 @@ class TestDetectCPrPublish:
         subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._load_env_file", lambda path: None)
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is False
 
@@ -2223,6 +2228,7 @@ class TestRunCPrPublish:
         target = _make_target_dir(tmp_path)
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._load_env_file", lambda path: None)
         ctx = _make_tick_context(target, slug="owner/repo")
         result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
@@ -2296,6 +2302,7 @@ class TestDetectCPrReview:
         target = _make_target_dir(tmp_path)
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._load_env_file", lambda path: None)
         (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "delivery": "open_pr"}}
         assert detect_c_pr_review(ctx) is False
@@ -2449,6 +2456,7 @@ class TestDetectCDocSync:
         self._setup_git(target)
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._load_env_file", lambda path: None)
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_doc_sync(ctx) is False
 
@@ -3211,6 +3219,7 @@ class TestRunCPrStatusNoToken:
         target = _make_target_dir(tmp_path)
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._load_env_file", lambda path: None)
         (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
         ctx = _make_tick_context(target, slug="owner/repo")
         from urllib.error import URLError
@@ -4380,7 +4389,7 @@ class TestLoadGithubTokenDotenvFallback:
         with patch.dict("sys.modules", {"dotenv": dotenv_mod}):
             assert _load_github_token({}) == "dotenv-token"
 
-    def test_returns_none_when_dotenv_not_installed(self, tmp_path, monkeypatch):
+    def test_fallback_parser_when_dotenv_not_installed(self, tmp_path, monkeypatch):
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         from cronpypeline.plugins import swe_plugin
@@ -4389,9 +4398,9 @@ class TestLoadGithubTokenDotenvFallback:
         env_file = swe_dir.parent.parent / ".env"
         env_file.write_text("SWE_GITHUB_TOKEN=dotenv-token\n")
         monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
-        # dotenv is not installed → ImportError → break → None
+        # dotenv is not installed → inline fallback parser still reads .env
         with patch.dict("sys.modules", {"dotenv": None}):
-            assert _load_github_token({}) is None
+            assert _load_github_token({}) == "dotenv-token"
 
 
 # ─── run_c_pr_status review branches ────────────────────────────────────────
