@@ -76,7 +76,10 @@ class TickResult:
         :rtype: str
         """
         stage = self.stage_id or "-"
-        return f"{self.target} | {stage} -> {self.status.value} | {self.message}"
+        base = f"{self.target} | {stage} -> {self.status.value} | {self.message}"
+        if self.stderr:
+            return f"{base}\n{self.stderr}"
+        return base
 
 
 class PipelineTickError(Exception):
