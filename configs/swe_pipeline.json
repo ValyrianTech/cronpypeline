@@ -404,6 +404,41 @@
       "chain": true
     },
     {
+      "id": "A6-fix-agent",
+      "name": "Queue dead code fix agent",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_vulture_fail"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_prompts.queue_fix_agent",
+          "report_path": ".SWE/reports/deadcode/latest.md",
+          "agent": "DeadCodeAgent",
+          "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/lint/latest.md", ".SWE/reports/deadcode/latest.md"],
+          "completion_marker": ".SWE/markers/a6_fix_complete.marker",
+          "commit_message": "refactor: remove dead code (vulture)",
+          "verify_commands": [".venv/bin/vulture {target}/", ".venv/bin/pytest -q"],
+          "extra_instructions": "Requirements:\n- Remove genuinely unused imports, functions, methods, variables, and classes.\n- For items that are part of a public API (e.g. exposed in __all__, used by external consumers, or part of an abstract interface), do NOT remove them. Instead add them to a vulture whitelist file at `{target_dir}/vulture_whitelist.py`.\n- Be conservative: if uncertain whether something is truly unused (e.g. called dynamically, used in tests, or via framework magic), add it to the whitelist rather than removing it.\n- Do NOT change code logic."
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "file",
+          "name": "a6_fix_complete.marker",
+          "directory": ".SWE/markers"
+        },
+        "processing": {
+          "type": "json",
+          "name": ".processing_a6_fix",
+          "directory": ".SWE/markers"
+        }
+      },
+      "max_retries": 3,
+      "timeout_minutes": 30
+    },
+    {
       "id": "A7-coverage",
       "name": "Run pytest with coverage",
       "trigger": {
