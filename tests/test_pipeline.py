@@ -73,6 +73,42 @@ class TestPipelineCreation:
         assert pipeline.config.name == "file-pipeline"
 
 
+class TestTickResultStr:
+    """Tests for TickResult.__str__ formatting."""
+
+    def test_str_omits_stderr_when_empty(self):
+        result = TickResult(
+            target="repo1",
+            stage_id="A0",
+            status=TickResultStatus.ACTION_EXECUTED,
+            message="done",
+        )
+        assert str(result) == "repo1 | A0 -> action_executed | done"
+
+    def test_str_uses_dash_when_stage_id_none(self):
+        result = TickResult(
+            target="repo1",
+            stage_id=None,
+            status=TickResultStatus.NO_WORK,
+            message="no work",
+        )
+        assert str(result) == "repo1 | - -> no_work | no work"
+
+    def test_str_includes_stderr_when_non_empty(self):
+        result = TickResult(
+            target="repo1",
+            stage_id="A0",
+            status=TickResultStatus.ACTION_FAILED,
+            message="action failed",
+            stderr="Traceback (most recent call last):\n  ...",
+        )
+        expected = (
+            "repo1 | A0 -> action_failed | action failed\n"
+            "Traceback (most recent call last):\n  ..."
+        )
+        assert str(result) == expected
+
+
 class TestTickBasic:
     """Tests for basic tick execution."""
 
