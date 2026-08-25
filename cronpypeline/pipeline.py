@@ -10,6 +10,7 @@ Each tick:
 """
 
 import json
+import traceback
 from dataclasses import dataclass, replace
 from dataclasses import field as dc_field
 from enum import Enum
@@ -207,7 +208,8 @@ class Pipeline:
                 target=target or "*",
                 stage_id=None,
                 status=TickResultStatus.ACTION_FAILED,
-                message=f"Unhandled exception: {e}",
+                message=f"Unhandled {type(e).__name__}: {e}",
+                stderr=traceback.format_exc(),
             )
         finally:
             self.lock.release()
@@ -248,7 +250,8 @@ class Pipeline:
                         target=t,
                         stage_id=None,
                         status=TickResultStatus.ACTION_FAILED,
-                        message=f"Unhandled exception: {e}",
+                        message=f"Unhandled {type(e).__name__}: {e}",
+                        stderr=traceback.format_exc(),
                     ))
             return results
         finally:
