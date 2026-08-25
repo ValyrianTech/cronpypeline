@@ -929,6 +929,96 @@ class TestRejectionCounter:
         # The trigger is file_missing done.md, which is missing, so it should execute
         assert result.status == TickResultStatus.ACTION_EXECUTED
 
+    def test_rejection_below_max_preserves_and_increments_count(self, tmp_path):
+        """Rejection below max should preserve and increment the rejection count."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        import json as _json
+        (workspace / "my-repo" / ".rejection").write_text(_json.dumps({"rejection_count": 1}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Review",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "command", "params": {"command": "echo review"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+                    },
+                    "max_rejections": 5,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        # Stage should execute (re-processed)
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        # Rejection marker should still exist with incremented count
+        rej_path = workspace / "my-repo" / ".rejection"
+        assert rej_path.exists()
+        rej_data = _json.loads(rej_path.read_text())
+        assert rej_data["rejection_count"] == 2
+
+    def test_rejection_count_accumulates_to_give_up(self, tmp_path):
+        """Rejection count should accumulate across cycles until the stage gives up."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        import json as _json
+        rej_path = workspace / "my-repo" / ".rejection"
+        done_path = workspace / "my-repo" / "done.md"
+        rej_path.write_text(_json.dumps({"rejection_count": 1}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Review",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "command", "params": {"command": "echo review"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+                        "give_up": {"type": "file", "name": ".gave_up"},
+                    },
+                    "max_rejections": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        # Tick 1: count 1 -> 2, stage re-processed
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert _json.loads(rej_path.read_text())["rejection_count"] == 2
+
+        # Simulate a new rejection written by the agent (clear completion, rewrite count)
+        done_path.unlink()
+        rej_path.write_text(_json.dumps({"rejection_count": 2}))
+
+        # Tick 2: count 2 -> 3, stage re-processed
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert _json.loads(rej_path.read_text())["rejection_count"] == 3
+
+        # Simulate a new rejection written by the agent (clear completion, rewrite count)
+        done_path.unlink()
+        rej_path.write_text(_json.dumps({"rejection_count": 3}))
+
+        # Tick 3: count 3 >= max 3 -> give up
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.GAVE_UP
+        assert (workspace / "my-repo" / ".gave_up").exists()
+
     def test_no_rejection_marker_normal_behavior(self, tmp_path):
         """Without a rejection marker, stage should behave normally."""
         workspace = tmp_path / "workspace"

@@ -27,6 +27,7 @@ from cronpypeline.lock import FileLock
 from cronpypeline.markers import (
     create_marker,
     delete_marker,
+    read_marker,
 )
 from cronpypeline.state import PipelineState, StageState
 from cronpypeline.targets import load_targets, load_targets_with_config
@@ -422,9 +423,12 @@ class Pipeline:
                         message=f"Stage {ss.stage.id} gave up after {ss.rejection_count} rejections",
                     )
                 else:
-                    # Below max — clear rejection marker so stage can be re-processed
+                    # Below max — increment rejection count and keep the marker so the count accumulates
                     if "rejection" in ss.stage.markers:
-                        delete_marker(ss.stage.markers["rejection"], target_dir, context=marker_ctx)
+                        rej_data = read_marker(ss.stage.markers["rejection"], target_dir, context=marker_ctx) or {}
+                        rej_data["rejection_count"] = ss.rejection_count + 1
+                        rej_spec = replace(ss.stage.markers["rejection"], content=rej_data)
+                        create_marker(rej_spec, target_dir, context=marker_ctx)
                     ss.is_rejected = False  # Allow re-processing
 
         # Check for stale processing markers and handle them
