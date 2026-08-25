@@ -1020,6 +1020,37 @@ class TestRejectionCounter:
         assert result.status == TickResultStatus.GAVE_UP
         assert (workspace / "my-repo" / ".gave_up").exists()
 
+    def test_file_rejection_marker_deleted_below_max(self, tmp_path):
+        """FILE-type rejection markers can't hold a count; below max they are deleted for re-processing."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        rej_path = workspace / "my-repo" / ".rejection"
+        rej_path.touch()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Review",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "command", "params": {"command": "echo review"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "rejection": {"type": "file", "name": ".rejection"},
+                    },
+                    "max_rejections": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert not rej_path.exists()
+
     def test_no_rejection_marker_normal_behavior(self, tmp_path):
         """Without a rejection marker, stage should behave normally."""
         workspace = tmp_path / "workspace"

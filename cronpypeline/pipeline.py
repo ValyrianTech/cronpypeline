@@ -25,6 +25,7 @@ from cronpypeline.actions import (
 from cronpypeline.config import ActionType, PipelineConfig, Stage
 from cronpypeline.lock import FileLock
 from cronpypeline.markers import (
+    MarkerType,
     create_marker,
     delete_marker,
     read_marker,
@@ -425,10 +426,13 @@ class Pipeline:
                 else:
                     # Below max — increment rejection count and keep the marker so the count accumulates
                     if "rejection" in ss.stage.markers:
-                        rej_data = read_marker(ss.stage.markers["rejection"], target_dir, context=marker_ctx) or {}
-                        rej_data["rejection_count"] = ss.rejection_count + 1
-                        rej_spec = replace(ss.stage.markers["rejection"], content=rej_data)
-                        create_marker(rej_spec, target_dir, context=marker_ctx)
+                        rej_spec = ss.stage.markers["rejection"]
+                        if rej_spec.type == MarkerType.JSON:
+                            rej_data = read_marker(rej_spec, target_dir, context=marker_ctx) or {}
+                            rej_data["rejection_count"] = ss.rejection_count + 1
+                            create_marker(replace(rej_spec, content=rej_data), target_dir, context=marker_ctx)
+                        else:
+                            delete_marker(rej_spec, target_dir, context=marker_ctx)
                     ss.is_rejected = False  # Allow re-processing
 
         # Check for stale processing markers and handle them
