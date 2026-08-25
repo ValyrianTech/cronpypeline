@@ -2017,7 +2017,7 @@ def _parse_pip_audit_vulnerabilities(output: str) -> list[dict[str, Any]]:
             break
         if re.search(r"Found\s+\d+\s+known\s+vulnerabilit", line) \
                 or "No known vulnerabilities found" in line \
-                or line.startswith("WARNING") or line.startswith("INFO"):
+                or line.startswith(("WARNING", "INFO")):
             break
         if set(line.strip()) <= {"-", " "}:
             continue
@@ -2397,10 +2397,10 @@ def _compute_review_generation(
             try:
                 prev_result = subprocess.run(
                     ["git", "-C", str(target_dir), "rev-parse", default_branch],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True, text=True, timeout=10, check=False,
                 )
                 prev_sha = prev_result.stdout.strip() if prev_result.returncode == 0 else None
-            except Exception:
+            except (subprocess.TimeoutExpired, OSError):
                 prev_sha = None
             if not prev_sha:
                 review_gen = 1
