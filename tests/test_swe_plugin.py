@@ -4920,7 +4920,7 @@ class TestComputeReviewGeneration:
         self._write_session(target)
         for i in range(3):
             (target / ".SWE" / "issues" / f"review-s{i}000000.md").write_text(
-                f"---\nstatus: done\ntype: review\ncreated_at: 2025-06-01T00:00:00+00:00\n---\n# Review\n"
+                "---\nstatus: done\ntype: review\ncreated_at: 2025-06-01T00:00:00+00:00\n---\n# Review\n"
             )
         gen, prev, exceeded = _compute_review_generation(target, {"max_review_generations": 3}, "main")
         assert gen == 4
