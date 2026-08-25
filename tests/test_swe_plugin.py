@@ -7,6 +7,7 @@ already tested in test_plugins.py.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -38,6 +39,7 @@ from cronpypeline.plugins.swe_plugin import (
     _git,
     _git_issue_already_ingested,
     _git_issue_type_from_labels,
+    _load_env_file,
     _load_github_token,
     _normalize_pkg_name,
     _open_issue_count,
@@ -4401,6 +4403,27 @@ class TestLoadGithubTokenDotenvFallback:
         # dotenv is not installed → inline fallback parser still reads .env
         with patch.dict("sys.modules", {"dotenv": None}):
             assert _load_github_token({}) == "dotenv-token"
+
+    def test_load_env_file_fallback_parser(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("OTHER_VAR", raising=False)
+        monkeypatch.delenv("PLAIN_VAR", raising=False)
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "\n"
+            "# a comment line\n"
+            "SOME_MALFORMED_LINE\n"
+            'SWE_GITHUB_TOKEN="quoted-token"\n'
+            "OTHER_VAR='single-quoted'\n"
+            "PLAIN_VAR=plain-token\n",
+            encoding="utf-8",
+        )
+        with patch.dict("sys.modules", {"dotenv": None}):
+            _load_env_file(env_file)
+        assert os.environ["SWE_GITHUB_TOKEN"] == "quoted-token"
+        assert os.environ["OTHER_VAR"] == "single-quoted"
+        assert os.environ["PLAIN_VAR"] == "plain-token"
+        assert "SOME_MALFORMED_LINE" not in os.environ
 
 
 # ─── run_c_pr_status review branches ────────────────────────────────────────
