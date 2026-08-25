@@ -496,7 +496,6 @@ class Pipeline:
 
         # Update processing marker with result data (for stale detection and tracking)
         if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers and result.success and result.data:
-            retry_count = stage.markers["processing"].content.get("retry_count", 0)
             processing_spec = replace(stage.markers["processing"], content={
                 **stage.markers["processing"].content,
                 "retry_count": retry_count,

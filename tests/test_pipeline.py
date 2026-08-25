@@ -3540,6 +3540,74 @@ class TestTickQueueAgentProcessingData:
         assert proc_data["retry_count"] == 3
         assert handler.check_complete(None, None) is False
 
+    def test_processing_data_retry_count_preserved_with_result_data(self, tmp_path):
+        """When stage_state has processing_data with retry_count AND result.data is returned,
+        retry_count should be preserved (not reset to 0)."""
+        from unittest.mock import patch
+
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
+        from cronpypeline.state import PipelineState
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test", "prompt": "do"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                    },
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        class MockQueueHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(
+                    success=True,
+                    stdout="ok",
+                    data={"queue_file": "/tmp/queue/abc123.json", "entry_id": "entry-123"},
+                )
+            def check_complete(self, action, context):
+                return False
+
+        handler = MockQueueHandler()
+        register_handler(ActionType.QUEUE_AGENT, handler)
+
+        # Mock PipelineState.derive to inject processing_data while keeping stage actionable
+        original_derive = PipelineState.derive
+
+        def mock_derive(self, targets, target_configs=None):
+            original_derive(self, targets, target_configs)
+            for ts in self.target_states.values():
+                for ss in ts.stage_states.values():
+                    ss.processing_data = {"retry_count": 3}
+                    ss.is_processing = False
+
+        with patch.object(PipelineState, "derive", mock_derive):
+            result = pipeline.tick(target="my-repo")
+
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        proc_path = target_dir / ".processing"
+        assert proc_path.exists()
+        import json as _json
+        proc_data = _json.loads(proc_path.read_text())
+        # retry_count should be preserved from processing_data, not reset to 0
+        assert proc_data["retry_count"] == 3
+        assert proc_data["queue_file"] == "/tmp/queue/abc123.json"
+        assert proc_data["entry_id"] == "entry-123"
+        assert handler.check_complete(None, None) is False
+
     def test_queue_agent_does_not_mutate_marker_spec_content(self, tmp_path):
         """A queue_agent tick must not mutate the config's MarkerSpec.content."""
         from cronpypeline.actions import ActionHandler, ActionResult, register_handler
