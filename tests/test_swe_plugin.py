@@ -4490,7 +4490,6 @@ class TestRunCPrStatusReviews:
         ctx = _make_tick_context(target, slug="owner/repo")
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
-        real_run = subprocess.run
 
         def _mock_run(*args, **kwargs):
             cmd = args[0] if args else kwargs.get("args")
@@ -4892,7 +4891,7 @@ class TestComputeReviewGeneration:
         self._write_session(target)
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="err")
-            gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+            gen, prev, _exceeded = _compute_review_generation(target, {}, "main")
         assert gen == 1
         assert prev is None
 
@@ -4901,7 +4900,7 @@ class TestComputeReviewGeneration:
         self._write_session(target)
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run",
                    side_effect=subprocess.TimeoutExpired(cmd="git", timeout=10)):
-            gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+            gen, prev, _exceeded = _compute_review_generation(target, {}, "main")
         assert gen == 1
         assert prev is None
 
@@ -4911,7 +4910,7 @@ class TestComputeReviewGeneration:
         (target / ".SWE" / "issues" / "review-abc12345.md").write_text(
             "---\nstatus: done\ntype: review\ncreated_at: 2025-06-01T00:00:00+00:00\n---\n# Review\n"
         )
-        gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+        gen, prev, _exceeded = _compute_review_generation(target, {}, "main")
         assert gen == 2
         assert prev == "abc12345"
 
