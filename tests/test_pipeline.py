@@ -965,6 +965,51 @@ class TestRejectionCounter:
         # Completion marker should exist
         assert (workspace / "my-repo" / "done.md").exists()
 
+    def test_chained_stage_rejection_cleared_on_success(self, tmp_path):
+        """A chained stage's rejection marker should be cleared when it succeeds."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        import json as _json
+        (target_dir / ".rejection_b").write_text(_json.dumps({"rejection_count": 1}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Step 2",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "b.md"},
+                        "rejection": {"type": "json", "name": ".rejection_b", "content": {}},
+                    },
+                    "max_rejections": 5,
+                    "chain": False,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        # Both stages completed in one tick via chaining
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (target_dir / "a.md").exists()
+        assert (target_dir / "b.md").exists()
+        # Chained stage's rejection marker should be cleared on success
+        assert not (target_dir / ".rejection_b").exists()
+
     def test_rejection_count_accumulates_to_give_up(self, tmp_path):
         """Rejection count should accumulate across rejection cycles until the stage gives up."""
         workspace = tmp_path / "workspace"
