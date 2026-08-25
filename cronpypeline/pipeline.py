@@ -424,16 +424,30 @@ class Pipeline:
                         message=f"Stage {ss.stage.id} gave up after {ss.rejection_count} rejections",
                     )
                 else:
-                    # Below max — increment rejection count and keep the marker so the count accumulates
-                    if "rejection" in ss.stage.markers:
-                        rej_spec = ss.stage.markers["rejection"]
-                        if rej_spec.type == MarkerType.JSON:
-                            rej_data = read_marker(rej_spec, target_dir, context=marker_ctx) or {}
-                            rej_data["rejection_count"] = ss.rejection_count + 1
-                            create_marker(replace(rej_spec, content=rej_data), target_dir, context=marker_ctx)
-                        else:
-                            delete_marker(rej_spec, target_dir, context=marker_ctx)
-                    ss.is_rejected = False  # Allow re-processing
+                    # Below max — only increment if the stage's trigger actually fires
+                    # (i.e., the stage will actually be re-processed this tick)
+                    trigger_context = {
+                        "target": target,
+                        "target_dir": str(target_dir),
+                        "workspace_dir": str(self.workspace_dir),
+                        "target_config": target_config,
+                    }
+                    if (
+                        not ss.is_complete
+                        and not ss.is_processing
+                        and not ss.is_given_up
+                        and evaluate_trigger(ss.stage.trigger, target_dir, context=trigger_context)
+                    ):
+                        # Increment rejection count and keep the marker so the count accumulates
+                        if "rejection" in ss.stage.markers:
+                            rej_spec = ss.stage.markers["rejection"]
+                            if rej_spec.type == MarkerType.JSON:
+                                rej_data = read_marker(rej_spec, target_dir, context=marker_ctx) or {}
+                                rej_data["rejection_count"] = ss.rejection_count + 1
+                                create_marker(replace(rej_spec, content=rej_data), target_dir, context=marker_ctx)
+                            else:
+                                delete_marker(rej_spec, target_dir, context=marker_ctx)
+                        ss.is_rejected = False  # Allow re-processing
 
         # Check for stale processing markers and handle them
         for ss in target_state.stage_states.values():

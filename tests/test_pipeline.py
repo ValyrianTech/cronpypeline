@@ -1109,6 +1109,55 @@ class TestRejectionCounter:
         assert result.status == TickResultStatus.ACTION_EXECUTED
         assert (workspace / "my-repo" / "done.md").exists()
 
+    def test_rejection_count_not_incremented_when_trigger_does_not_fire(self, tmp_path):
+        """Rejection count should NOT increment when the stage's trigger doesn't fire."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        import json as _json
+        rej_path = target_dir / ".rejection"
+        done_path = target_dir / "done.md"
+        # Rejection marker with count 1
+        rej_path.write_text(_json.dumps({"rejection_count": 1}))
+        # Completion file exists, so trigger `file_missing done.md` does NOT fire
+        done_path.touch()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Review",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "command", "params": {"command": "echo review"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+                        "give_up": {"type": "file", "name": ".gave_up"},
+                    },
+                    "max_rejections": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        # Run two ticks; both should find no work since the trigger doesn't fire
+        result1 = pipeline.tick(target="my-repo")
+        result2 = pipeline.tick(target="my-repo")
+
+        assert result1.status == TickResultStatus.NO_WORK
+        assert result2.status == TickResultStatus.NO_WORK
+
+        # Rejection count must remain unchanged
+        rej_data = _json.loads(rej_path.read_text())
+        assert rej_data["rejection_count"] == 1
+
+        # Give-up marker must NOT have been created
+        assert not (target_dir / ".gave_up").exists()
+
 
 class TestRetryPromptSupport:
     """Tests for retry/reminder prompt support on stale re-queue."""
