@@ -2390,8 +2390,7 @@ def _compute_review_generation(
             session_start_dt = None
         done_reviews = _count_done_review_issues(target_dir, since_dt=session_start_dt)
         review_gen = done_reviews + 1
-        if review_gen < 2:
-            review_gen = 2
+        review_gen = max(review_gen, 2)
         if max_gens > 0 and review_gen > max_gens:
             return (review_gen, None, True)
         if done_reviews == 0:
