@@ -269,8 +269,8 @@ class ActionHandlerConfig:
         :param data: Dictionary with ``type`` and optional ``params``.
         :returns: An :class:`ActionHandlerConfig` instance.
         """
-        params = data.get("params", {})
-        if not params:
+        params = data.get("params")
+        if params is None:
             params = {k: v for k, v in data.items() if k != "type"}
         return cls(
             type=data["type"],

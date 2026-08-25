@@ -73,7 +73,11 @@ class ActionResult:
     dry_run: bool = False
     data: dict[str, Any] = dc_field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Initialize the result after construction.
+
+        Ensures ``data`` is never None by defaulting it to an empty dict.
+        """
         if self.data is None:
             self.data = {}
 

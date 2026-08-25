@@ -5,6 +5,7 @@ import json
 import pytest
 
 from cronpypeline.config import (
+    ActionHandlerConfig,
     ActionSpec,
     ActionType,
     PipelineConfig,
@@ -348,6 +349,43 @@ class TestPipelineConfig:
                     },
                 ],
             })
+
+
+class TestActionHandlerConfig:
+    """Tests for ActionHandlerConfig parsing."""
+
+    def test_explicit_empty_params_with_other_keys(self):
+        c = ActionHandlerConfig.from_dict({
+            "type": "conversation_queue",
+            "params": {},
+            "description": "queue handler",
+        })
+        assert c.type == "conversation_queue"
+        assert c.params == {}
+
+    def test_explicit_empty_params_with_no_other_keys(self):
+        c = ActionHandlerConfig.from_dict({
+            "type": "conversation_queue",
+            "params": {},
+        })
+        assert c.type == "conversation_queue"
+        assert c.params == {}
+
+    def test_no_params_captures_other_keys(self):
+        c = ActionHandlerConfig.from_dict({
+            "type": "conversation_queue",
+            "queue_dir": "/tmp/queue",
+        })
+        assert c.type == "conversation_queue"
+        assert c.params == {"queue_dir": "/tmp/queue"}
+
+    def test_non_empty_params(self):
+        c = ActionHandlerConfig.from_dict({
+            "type": "conversation_queue",
+            "params": {"queue_dir": "/tmp/queue"},
+        })
+        assert c.type == "conversation_queue"
+        assert c.params == {"queue_dir": "/tmp/queue"}
 
 
 class TestTargetSpec:

@@ -39,6 +39,8 @@ TASKS_DIR = SWE_WORKSPACE_DIR / "tasks"
 RANKING_SCRIPT = "/home/wouter/Repos/spellbook/apps/Serendipity/SWE/scripts/run_swe_issue_ranking.py"
 ISSUE_FIX_SCRIPT = "/home/wouter/Repos/spellbook/apps/Serendipity/SWE/scripts/run_issue_fix.py"
 
+GIT_BIN = shutil.which("git") or "git"
+
 
 def detect_open_issue(context: dict[str, Any]) -> bool:
     """Trigger: detect if there's an open issue to work on.
@@ -429,7 +431,7 @@ def _git(repo_dir: Path, *args: str, check: bool = True) -> subprocess.Completed
     :returns: CompletedProcess result.
     """
     return subprocess.run(  # pragma: no cover - coverage.py artifact with multi-line return
-        ["git", "-C", str(repo_dir), *args],
+        [GIT_BIN, "-C", str(repo_dir), *args],
         capture_output=True, text=True, check=check,
     )  # nosec B603 - args are controlled by the plugin
 
@@ -505,7 +507,7 @@ def commit_phase_a_change(
         env["GIT_COMMITTER_NAME"] = PHASE_A_GIT_AUTHOR_NAME
         env["GIT_COMMITTER_EMAIL"] = PHASE_A_GIT_AUTHOR_EMAIL
         subprocess.run(
-            ["git", "-C", str(repo_dir), "commit", "-m", message],
+            [GIT_BIN, "-C", str(repo_dir), "commit", "-m", message],
             check=True, env=env, capture_output=True, text=True,
         )  # nosec B603 - static args
         return _git(repo_dir, "rev-parse", "HEAD").stdout.strip()
@@ -575,7 +577,7 @@ def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
         proc = subprocess.run(
             command, shell=True, cwd=str(target_dir),
             capture_output=True, text=True, timeout=600, check=False,
-        )  # nosec B603 - command from config, intentional shell for CLI flexibility
+        )  # nosec B602 - command from trusted pipeline config, intentional shell for CLI flexibility
         stdout, stderr, exit_code = proc.stdout, proc.stderr, proc.returncode
     except subprocess.TimeoutExpired:
         return ActionResult(success=False, stderr="ruff --fix timed out (600s)")
@@ -1414,7 +1416,7 @@ def _build_doc_sync_prompt(
         )
 
     return (
-        f"Sync documentation for the locally cloned repo at:\n"
+        f"Sync documentation for the locally cloned repo at:\n"  # nosec B608 - builds an AI agent prompt, not a SQL query
         f"  {target_dir}\n\n"
         f"## Your task\n\n"
         f"You are a Documentation Synchronization AI. Your job is to update "
@@ -1668,6 +1670,11 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     merged = pr_info.get("merged", False)
 
     def _update_marker(new_state: str, **kwargs: Any) -> None:
+        """Update the PR marker file with a new state.
+
+        :param new_state: The new PR state to record (e.g. 'merged', 'rejected', 'open').
+        :param kwargs: Additional fields to merge into the PR marker data.
+        """
         pr_data["pr_state"] = new_state
         pr_data.update(kwargs)
         pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
@@ -1824,7 +1831,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                 sha = integration_head_sha(target_dir, default_branch)
                 if sha:
                     push_result = subprocess.run(
-                        ["git", "-C", str(target_dir), "push", "origin", INTEGRATION_BRANCH],
+                        [GIT_BIN, "-C", str(target_dir), "push", "origin", INTEGRATION_BRANCH],
                         capture_output=True, text=True, timeout=120, check=False,
                     )  # nosec B603 - git push with fixed args
                     if push_result.returncode == 0:
@@ -1929,7 +1936,7 @@ def run_c_coverage_issue(action: ActionSpec, context: TickContext) -> ActionResu
             # Extract the stdout section from the markdown report
             stdout_match = re.search(r"## stdout\n```\n(.*?)```", report_text, re.DOTALL)
             stdout_text = stdout_match.group(1) if stdout_match else report_text
-            files = []
+            files: list[dict[str, Any]] = []
             for fm in re.finditer(
                 r"^(\S+\.py)\s+(\d+)\s+(\d+)\s+(\d+)%(?:\s+(.+))?$",
                 stdout_text, re.MULTILINE,
@@ -2017,7 +2024,7 @@ def _parse_pip_audit_vulnerabilities(output: str) -> list[dict[str, Any]]:
             break
         if re.search(r"Found\s+\d+\s+known\s+vulnerabilit", line) \
                 or "No known vulnerabilities found" in line \
-                or line.startswith("WARNING") or line.startswith("INFO"):
+                or line.startswith(("WARNING", "INFO")):
             break
         if set(line.strip()) <= {"-", " "}:
             continue
@@ -2390,18 +2397,17 @@ def _compute_review_generation(
             session_start_dt = None
         done_reviews = _count_done_review_issues(target_dir, since_dt=session_start_dt)
         review_gen = done_reviews + 1
-        if review_gen < 2:
-            review_gen = 2
+        review_gen = max(review_gen, 2)
         if max_gens > 0 and review_gen > max_gens:
             return (review_gen, None, True)
         if done_reviews == 0:
             try:
                 prev_result = subprocess.run(
-                    ["git", "-C", str(target_dir), "rev-parse", default_branch],
-                    capture_output=True, text=True, timeout=10,
-                )
+                    [GIT_BIN, "-C", str(target_dir), "rev-parse", default_branch],
+                    capture_output=True, text=True, timeout=10, check=False,
+                )  # nosec B603 - default_branch is a trusted config value; git_bin is absolute
                 prev_sha = prev_result.stdout.strip() if prev_result.returncode == 0 else None
-            except Exception:
+            except (subprocess.TimeoutExpired, OSError):
                 prev_sha = None
             if not prev_sha:
                 review_gen = 1
@@ -2553,7 +2559,7 @@ def detect_c_doc_sync(context: dict[str, Any]) -> bool:
 
     # Check integration is ahead of default
     behind = subprocess.run(
-        ["git", "-C", str(target_dir), "rev-list", "--count",
+        [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
          f"{default_branch}..{INTEGRATION_BRANCH}"],
         capture_output=True, text=True, check=False,
     )  # nosec B603 - git with fixed args
@@ -2683,7 +2689,7 @@ def detect_c_pr_publish(context: dict[str, Any]) -> bool:
 
     # Integration must be ahead of default
     behind = subprocess.run(
-        ["git", "-C", str(target_dir), "rev-list", "--count",
+        [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
          f"{default_branch}..{INTEGRATION_BRANCH}"],
         capture_output=True, text=True, check=False,
     )  # nosec B603 - git with fixed args
@@ -2760,7 +2766,7 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     # Push integration branch
     try:
         push_result = subprocess.run(
-            ["git", "-C", str(target_dir), "push", "--set-upstream", "origin", INTEGRATION_BRANCH],
+            [GIT_BIN, "-C", str(target_dir), "push", "--set-upstream", "origin", INTEGRATION_BRANCH],
             capture_output=True, text=True, timeout=120, check=False,
         )  # nosec B603 - git push with fixed args
     except subprocess.TimeoutExpired:

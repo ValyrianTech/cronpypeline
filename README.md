@@ -242,7 +242,7 @@ Stages are evaluated in array order (first-match-wins). The first stage whose tr
 
 Stages with `"chain": true` allow same-tick continuation when the action is synchronous (command, subprocess, custom). The pipeline chains through consecutive mechanical stages until it hits a non-chain stage, an async action, or a failure. This lets multi-step mechanical workflows complete in a single tick instead of waiting for multiple cron cycles.
 
-Async actions include `queue_agent` actions and custom actions that return `data: {"async": true}`. For chaining purposes, async custom actions are treated like `queue_agent` actions: they stop the chain and create a processing marker instead of a completion marker. The processing marker is written with `retry_count=0` and the action's result data merged in, preventing duplicate agent queueing on subsequent ticks.
+Async actions include `queue_agent` actions and custom actions that return `data: {"async": true}`. For chaining purposes, async custom actions are treated like `queue_agent` actions: they stop the chain and create a processing marker instead of a completion marker. The chaining logic skips chaining when either the action type is `queue_agent` or the action returns `data: {"async": true}`. The processing marker is written with `retry_count=0` and the action's result data merged in, preventing duplicate agent queueing on subsequent ticks.
 
 When a chained stage's action fails, the chain stops and the tick returns a `TickResult` with `ACTION_FAILED` status for the failed stage (instead of silently stopping the chain). The failed stage's ID is reported in `result.stage_id` and listed in `result.failed_chained_stages`. If the failed stage declares an `on_fail` action, it is executed before the failure is reported. When the failed action produces no output, the failure message is `"Chained stage X failed"` (no trailing colon).
 
@@ -276,7 +276,7 @@ Stages can declare an `invalidates` list — markers from other stages to delete
 
 ### Rejection tracking
 
-Stages can define a `rejection` marker (JSON type) and `max_rejections` count. Rejections are tracked separately from retries — when `rejection_count >= max_rejections`, the stage writes a give-up marker. Below the max, the rejection marker is cleared so the stage can be re-processed. This supports revision/review loops where an agent's work is rejected and must be redone.
+Stages can define a `rejection` marker (JSON type) and `max_rejections` count. Rejections are tracked separately from retries — when `rejection_count >= max_rejections`, the stage writes a give-up marker. Below the max, the rejection count is written back into the JSON rejection marker (incremented only when the stage's trigger actually fires, so the stage will be re-processed this tick) so it accumulates across ticks. The rejection marker is cleared only when the stage's work actually completes (the completion marker is created), not when work is re-queued. This supports revision/review loops where an agent's work is rejected and must be redone.
 
 A rejection marker only blocks a stage from being actionable when rejection tracking is enabled (`max_rejections > 0`). When `max_rejections=0` (rejection tracking disabled), a stage with a rejection marker remains actionable.
 
@@ -453,7 +453,8 @@ In dry-run mode, the pipeline reports what it would do — "Would re-queue stale
 - `max_rejections` (default 0 = disabled): a separate counter from retries, tracked via a `rejection` marker (JSON type with `rejection_count`).
 - A rejection marker only blocks a stage from being actionable when `max_rejections > 0` (rejection tracking enabled). When `max_rejections=0`, a rejected stage remains actionable.
 - When `rejection_count >= max_rejections`, the stage writes a give-up marker.
-- Below the max, the rejection marker is cleared so the stage can be re-processed.
+- Below the max, the rejection count is written back into the JSON rejection marker (accumulating across ticks) so the count is not lost. The rejection marker is cleared only when the stage's work actually completes (the completion marker is created), not when work is re-queued.
+- FILE-type rejection markers cannot store a count, so when a FILE-type rejection marker is used with `max_rejections`, the marker is simply deleted.
 - Supports revision/review loops where an agent's output is rejected and must be redone.
 
 ```json
@@ -713,6 +714,8 @@ Custom triggers and actions for the SWE pipeline:
 - `reset_issue_status` — action: resets issue status to "open" after failure (updates YAML frontmatter)
 - `sync_session_mode` — pre_tick hook: syncs `.SWE/github_session.json` to the pipeline `mode_file`
 
+Git is invoked via `shutil.which("git")` (resolved to an absolute path, falling back to `"git"`), so the binary location is detected at runtime rather than hardcoded.
+
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
 
 Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency).
@@ -813,7 +816,7 @@ configs/
 .venv/bin/python -m pytest tests/test_pipeline.py -v
 ```
 
-The test suite includes **613 tests** covering:
+The test suite includes **1144 tests** covering:
 - Unit tests for each core class (config parsing, marker resolution, trigger evaluation, lock acquisition, action execution)
 - Integration tests using temp directories as workspaces, simulating multi-tick execution
 - Crash safety tests verifying state recovery from partial filesystem state

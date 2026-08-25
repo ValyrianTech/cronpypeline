@@ -25,8 +25,10 @@ from cronpypeline.actions import (
 from cronpypeline.config import ActionType, PipelineConfig, Stage
 from cronpypeline.lock import FileLock
 from cronpypeline.markers import (
+    MarkerType,
     create_marker,
     delete_marker,
+    read_marker,
 )
 from cronpypeline.state import PipelineState, StageState
 from cronpypeline.targets import load_targets, load_targets_with_config
@@ -422,10 +424,30 @@ class Pipeline:
                         message=f"Stage {ss.stage.id} gave up after {ss.rejection_count} rejections",
                     )
                 else:
-                    # Below max — clear rejection marker so stage can be re-processed
-                    if "rejection" in ss.stage.markers:
-                        delete_marker(ss.stage.markers["rejection"], target_dir, context=marker_ctx)
-                    ss.is_rejected = False  # Allow re-processing
+                    # Below max — only increment if the stage's trigger actually fires
+                    # (i.e., the stage will actually be re-processed this tick)
+                    trigger_context = {
+                        "target": target,
+                        "target_dir": str(target_dir),
+                        "workspace_dir": str(self.workspace_dir),
+                        "target_config": target_config,
+                    }
+                    if (
+                        not ss.is_complete
+                        and not ss.is_processing
+                        and not ss.is_given_up
+                        and evaluate_trigger(ss.stage.trigger, target_dir, context=trigger_context)
+                    ):
+                        # Increment rejection count and keep the marker so the count accumulates
+                        if "rejection" in ss.stage.markers:
+                            rej_spec = ss.stage.markers["rejection"]
+                            if rej_spec.type == MarkerType.JSON:
+                                rej_data = read_marker(rej_spec, target_dir, context=marker_ctx) or {}
+                                rej_data["rejection_count"] = ss.rejection_count + 1
+                                create_marker(replace(rej_spec, content=rej_data), target_dir, context=marker_ctx)
+                            else:
+                                delete_marker(rej_spec, target_dir, context=marker_ctx)
+                        ss.is_rejected = False  # Allow re-processing
 
         # Check for stale processing markers and handle them
         for ss in target_state.stage_states.values():
@@ -492,7 +514,6 @@ class Pipeline:
 
         # Update processing marker with result data (for stale detection and tracking)
         if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers and result.success and result.data:
-            retry_count = stage.markers["processing"].content.get("retry_count", 0)
             processing_spec = replace(stage.markers["processing"], content={
                 **stage.markers["processing"].content,
                 "retry_count": retry_count,
@@ -531,6 +552,9 @@ class Pipeline:
             and not result.data.get("async", False)
         ):
             create_marker(stage.markers["completion"], target_dir, context=marker_ctx)
+            # Clear rejection marker only when the work is actually completed
+            if "rejection" in stage.markers:
+                delete_marker(stage.markers["rejection"], target_dir, context=marker_ctx)
 
         # Create processing marker for async custom actions (non-chained)
         if (
@@ -552,7 +576,11 @@ class Pipeline:
 
         # Handle chaining
         chained: list[str] = []
-        if stage.chain and stage.action.type != ActionType.QUEUE_AGENT:
+        if (
+            stage.chain
+            and stage.action.type != ActionType.QUEUE_AGENT
+            and not result.data.get("async", False)
+        ):
             chained_result = self._try_chain(target, target_dir, target_config, active_stages, dry_run, verbose, stage)
             if chained_result:
                 final_stage_id, chained, failed_stage_id, failed_result = chained_result
@@ -674,6 +702,9 @@ class Pipeline:
             # Create completion marker
             if "completion" in next_stage.markers and not result.data.get("async", False):
                 create_marker(next_stage.markers["completion"], target_dir, context=marker_ctx)
+                # Clear rejection marker only when the work is actually completed
+                if "rejection" in next_stage.markers:
+                    delete_marker(next_stage.markers["rejection"], target_dir, context=marker_ctx)
 
             # Create processing marker for async chained stages
             if result.data.get("async", False) and "processing" in next_stage.markers:

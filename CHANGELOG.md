@@ -17,7 +17,15 @@
 - `_handle_stale` now returns a DRY_RUN result before deleting processing markers or re-queueing when in dry-run mode, and correctly reports "Would give up" when the retry limit is reached.
 - `_handle_stale` now returns ACTION_FAILED (and runs `on_fail`) when the re-executed action fails, instead of reporting ACTION_EXECUTED.
 - `FileLock.__enter__` now raises `RuntimeError` when the lock cannot be acquired instead of silently continuing.
+- MarkerSpec objects are no longer mutated in-place when the pipeline creates processing markers (e.g. for async actions, chained stages, or stale re-queueing); the pipeline now uses `dataclasses.replace()` to build new marker specs, preventing shared config objects from being modified during tick execution.
 - Bumped setuptools build requirement to >=83.0.0 to address PYSEC-2026-3447.
+- Rejection marker is now cleared only when the stage's work actually completes (when the completion marker is created), not when a `queue_agent` action re-queues work below `max_rejections`. Applies to both regular and chained stages.
+- Rejection count now increments only when the stage's trigger actually fires (i.e., the stage will be re-processed this tick), rather than on every tick regardless of the trigger.
+- FILE-type rejection markers never accumulate a rejection count; when used with `max_rejections`, the marker is simply deleted (FILE markers can't store data).
+- Rejection count is now written back into the JSON rejection marker below `max_rejections` so it accumulates across ticks instead of being lost when the marker is cleared.
+- `retry_count` is now read from the actual on-disk processing marker data (`stage_state.processing_data`) instead of the static config content, so it is correctly preserved across re-queues by a `queue_agent` action.
+- Pipeline now stops chaining when a custom action returns `data: {"async": true}`, matching `queue_agent` behavior; previously async custom actions would incorrectly chain to the next stage.
+- `ActionHandlerConfig.from_dict` now treats an empty `params: {}` dict as present (not missing), so other top-level keys are no longer incorrectly merged into `params`.
 
 ### Security
 - Addressed bandit findings: added nosec annotations for intentional subprocess/shell usage, resolved git binary via shutil.which, and validated HTTP URL schemes.

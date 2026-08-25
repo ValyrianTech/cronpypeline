@@ -25,6 +25,7 @@ from cronpypeline.plugins.swe_plugin import (
     _build_pr_body,
     _build_pr_review_prompt,
     _close_and_comment_github_issue,
+    _compute_review_generation,
     _count_done_review_issues,
     _count_unranked_review_issues,
     _detect_report_fail,
@@ -38,9 +39,14 @@ from cronpypeline.plugins.swe_plugin import (
     _git_issue_already_ingested,
     _git_issue_type_from_labels,
     _load_github_token,
+    _normalize_pkg_name,
     _open_issue_count,
+    _ordinal_suffix,
+    _parse_pip_audit_vulnerabilities,
     _read_github_session,
     _resolve_latest_report,
+    _slugify,
+    _venv_binary,
     _write_pipeline_issue,
     cleanup_git_branch,
     commit_phase_a_change,
@@ -68,6 +74,11 @@ from cronpypeline.plugins.swe_plugin import (
     finalize_session,
     integration_head_sha,
     reset_issue_status,
+    run_a5_bandit,
+    run_a6_vulture,
+    run_a7_coverage,
+    run_a8_radon,
+    run_a9_dep_audit,
     run_b1_issue_gathering,
     run_c_coverage_issue,
     run_c_doc_sync,
@@ -2519,10 +2530,9 @@ class TestRunCDocSync:
         result = run_c_doc_sync(ActionSpec(type=ActionType.CUSTOM, params={"queue_dir": str(tmp_path / "queue")}), ctx)
         assert result.success is True
         # Check that a conversation queue file was created
-        queue_dir = target / ".SWE" / "queue"
-        if queue_dir.exists():
-            files = list(queue_dir.glob("*.json"))
-            assert len(files) > 0
+        queue_dir = tmp_path / "queue"
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) > 0
 
 
 # ─── detect_open_issues ─────────────────────────────────────────────────────
@@ -4319,3 +4329,734 @@ class TestDetectCPrPublishValueError:
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_mock_run):
             ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
             assert detect_c_pr_publish(ctx) is False
+
+
+# ─── Helper: build a mocked urlopen response ────────────────────────────────
+
+
+def _mock_http_response(payload: Any) -> MagicMock:
+    """Build a mock HTTP response context manager for urlopen patching."""
+    resp = MagicMock()
+    resp.read.return_value = json.dumps(payload).encode()
+    resp.__enter__ = MagicMock(return_value=resp)
+    resp.__exit__ = MagicMock(return_value=False)
+    return resp
+
+
+# ─── _write_report helper (latest.md overwrite) ─────────────────────────────
+
+
+class TestWriteReportHelper:
+    def test_overwrites_existing_latest_symlink(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "lint", "r1.md", "# Lint 1\n")
+        _write_report(target, "lint", "r2.md", "# Lint 2\n")
+        latest = target / ".SWE" / "reports" / "lint" / "latest.md"
+        assert latest.is_symlink()
+        assert latest.resolve().name == "r2.md"
+
+
+# ─── _load_github_token dotenv fallback ─────────────────────────────────────
+
+
+class TestLoadGithubTokenDotenvFallback:
+    def test_loads_token_from_dotenv(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        env_file = swe_dir.parent.parent / ".env"
+        env_file.write_text("SWE_GITHUB_TOKEN=dotenv-token\n")
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+
+        import types
+        dotenv_mod = types.ModuleType("dotenv")
+
+        def load_dotenv(env_file, override=False):
+            monkeypatch.setenv("SWE_GITHUB_TOKEN", "dotenv-token")
+
+        dotenv_mod.load_dotenv = load_dotenv
+        with patch.dict("sys.modules", {"dotenv": dotenv_mod}):
+            assert _load_github_token({}) == "dotenv-token"
+
+    def test_returns_none_when_dotenv_not_installed(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        env_file = swe_dir.parent.parent / ".env"
+        env_file.write_text("SWE_GITHUB_TOKEN=dotenv-token\n")
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        # dotenv is not installed → ImportError → break → None
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) is None
+
+
+# ─── run_c_pr_status review branches ────────────────────────────────────────
+
+
+class TestRunCPrStatusReviews:
+    def test_approved_review_updates_marker(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 100, "state": "APPROVED", "body": "LGTM"}])
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "approved"
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["pr_state"] == "approved"
+        assert pr_data["last_review_id"] == 100
+
+    def test_commented_review_without_changes_keywords(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 101, "state": "COMMENTED", "body": "Just a note"}])
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+
+    def test_commented_review_requesting_changes_treated_as_changes_requested(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 102, "state": "COMMENTED", "body": "Please request changes before merge"}])
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "changes_requested"
+
+    def test_changes_requested_cycle_limit(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7, "pr_state": "open", "pr_review_cycles": 2})
+        )
+        ctx = _make_tick_context(target, slug="owner/repo", max_pr_review_cycles=2)
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 200, "state": "CHANGES_REQUESTED", "body": "## Change Requests\n\n1. Fix bug"}])
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "changes_requested"
+        assert not list((target / ".SWE" / "issues").glob("pr-revision-*.md"))
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["last_review_id"] == 200
+
+    def test_changes_requested_with_non_numeric_existing_issue(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        (target / ".SWE" / "issues" / "pr-revision-7-abc.md").write_text("---\nstatus: open\n---\n# Existing")
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 300, "state": "CHANGES_REQUESTED", "body": "## Change Requests\n\n1. Fix bug"}])
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "changes_requested"
+
+    def test_changes_requested_already_handled_all_done_pushes(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7,
+            "pr_state": "changes_requested",
+            "last_review_id": 400,
+            "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 1,
+        }))
+        (target / ".SWE" / "issues" / "pr-revision-7-1.md").write_text("---\nstatus: done\n---\n# Done")
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        real_run = subprocess.run
+
+        def _mock_run(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]), \
+             patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="abc12345"), \
+             patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_mock_run):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+
+    def test_changes_requested_all_done_push_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7,
+            "pr_state": "changes_requested",
+            "last_review_id": 400,
+            "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 1,
+        }))
+        (target / ".SWE" / "issues" / "pr-revision-7-1.md").write_text("---\nstatus: done\n---\n# Done")
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]), \
+             patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="abc12345"), \
+             patch("cronpypeline.plugins.swe_plugin.subprocess.run",
+                   return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="rejected")):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "Push failed" in result.stderr
+
+
+# ─── run_c_coverage_issue per-file gaps ─────────────────────────────────────
+
+
+class TestRunCCoverageIssueGaps:
+    def test_parses_per_file_gaps(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report = (
+            "# Coverage — PASS\n\n- **Coverage:** 80.0%\n\n"
+            "## stdout\n```\n"
+            "foo.py    10    2    80%    5-6\n"
+            "bar.py    20    0    100%\n"
+            "TOTAL     30    2    93%\n"
+            "```\n"
+        )
+        _write_report(target, "coverage", "r.md", report)
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        ctx = _make_tick_context(target, default_branch="main")
+        result = run_c_coverage_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        issue_file = target / ".SWE" / "issues" / f"{result.data['issue_id']}.md"
+        content = issue_file.read_text()
+        assert "foo.py" in content
+        assert "80%" in content
+
+    def test_skips_total_line_via_finditer_mock(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 80.0%\n\n## stdout\n```\nfoo.py    10    2    80%\n```\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        ctx = _make_tick_context(target, default_branch="main")
+
+        fake_match = MagicMock()
+        fake_match.group.side_effect = lambda g: "TOTAL" if g == 1 else "10"
+
+        with patch("cronpypeline.plugins.swe_plugin.re.finditer", return_value=[fake_match]):
+            result = run_c_coverage_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+
+    def test_oserror_reading_report_is_ignored(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_dir = target / ".SWE" / "reports" / "coverage"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        latest = report_dir / "latest.md"
+        latest.mkdir()
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        ctx = _make_tick_context(target, default_branch="main")
+        result = run_c_coverage_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+
+
+# ─── dependency audit helpers ───────────────────────────────────────────────
+
+
+class TestNormalizePkgName:
+    def test_normalizes(self):
+        assert _normalize_pkg_name("Some.Pkg_Name") == "some-pkg-name"
+
+
+class TestSlugify:
+    def test_slugifies(self):
+        assert _slugify("Some Pkg!!!") == "some-pkg"
+        assert _slugify("  Hello World  ") == "hello-world"
+
+
+class TestVenvBinary:
+    def test_returns_venv_binary_when_present(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".venv" / "bin").mkdir(parents=True)
+        (target / ".venv" / "bin" / "bandit").write_text("")
+        assert _venv_binary(target, "bandit") == str(target / ".venv" / "bin" / "bandit")
+
+    def test_returns_bare_name_when_missing(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        assert _venv_binary(target, "bandit") == "bandit"
+
+
+class TestParsePipAuditVulnerabilities:
+    def test_parses_vulns(self):
+        output = (
+            "Name      Version  ID                  Fix Versions\n"
+            "--------  -------  ------------------  ------------\n"
+            "requests  2.31.0   PYSEC-2023-74       2.32.0\n"
+            "urllib3   1.26.15  GHSA-v845-jxx5-vc9f 1.26.16, 2.0.4\n"
+            "Found 2 known vulnerabilities in 2 packages\n"
+        )
+        vulns = _parse_pip_audit_vulnerabilities(output)
+        assert len(vulns) == 2
+        assert vulns[0]["name"] == "requests"
+        assert vulns[0]["fix_versions"] == ["2.32.0"]
+        assert vulns[1]["id"] == "GHSA-v845-jxx5-vc9f"
+        assert vulns[1]["fix_versions"] == ["1.26.16", "2.0.4"]
+
+    def test_returns_empty_without_header(self):
+        assert _parse_pip_audit_vulnerabilities("no table here") == []
+
+    def test_skips_separator_and_short_lines(self):
+        output = (
+            "Name    Version  ID\n"
+            "------- -------- ---\n"
+            "---\n"
+            "short\n"
+            "No known vulnerabilities found\n"
+        )
+        assert _parse_pip_audit_vulnerabilities(output) == []
+
+    def test_stops_on_warning_prefix(self):
+        output = (
+            "Name    Version  ID\n"
+            "------- -------- ---\n"
+            "WARNING: something\n"
+            "pkg 1.0 ID-1\n"
+        )
+        assert _parse_pip_audit_vulnerabilities(output) == []
+
+
+# ─── diagnostic runner wrappers (A5-A9) ─────────────────────────────────────
+
+
+class TestRunDiagnosticWrappers:
+    def _capture(self):
+        captured = {}
+
+        def fake_run_diagnostic(action, context):
+            captured["action"] = action
+            return ActionResult(success=True, data={"report_path": "/tmp/r.md"})
+
+        return captured, fake_run_diagnostic
+
+    def test_run_a7_coverage_default_threshold(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            result = run_a7_coverage(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert captured["action"].params["parser_kwargs"]["threshold"] == 80.0
+
+    def test_run_a7_coverage_custom_threshold(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, coverage_threshold=75.5)
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            run_a7_coverage(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert captured["action"].params["parser_kwargs"]["threshold"] == 75.5
+
+    def test_run_a5_bandit_uses_security_cmd(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, security_cmd="bandit -r .")
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            run_a5_bandit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert captured["action"].params["command"] == "bandit -r ."
+
+    def test_run_a5_bandit_venv_binary_with_target(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / "repo").mkdir()
+        (target / ".venv" / "bin").mkdir(parents=True)
+        (target / ".venv" / "bin" / "bandit").write_text("")
+        ctx = _make_tick_context(target)
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            run_a5_bandit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        venv = str(target / ".venv" / "bin" / "bandit")
+        assert captured["action"].params["command"] == f"{venv} -r repo -f txt"
+
+    def test_run_a5_bandit_venv_binary_without_target(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".venv" / "bin").mkdir(parents=True)
+        (target / ".venv" / "bin" / "bandit").write_text("")
+        ctx = _make_tick_context(target)
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            run_a5_bandit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        venv = str(target / ".venv" / "bin" / "bandit")
+        assert captured["action"].params["command"] == f"{venv} -r . -f txt"
+
+    def test_run_a6_vulture_venv_binary(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / "repo").mkdir()
+        (target / ".venv" / "bin").mkdir(parents=True)
+        (target / ".venv" / "bin" / "vulture").write_text("")
+        ctx = _make_tick_context(target)
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            run_a6_vulture(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        venv = str(target / ".venv" / "bin" / "vulture")
+        assert captured["action"].params["command"] == f"{venv} repo"
+
+    def test_run_a8_radon_venv_binary(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / "repo").mkdir()
+        (target / ".venv" / "bin").mkdir(parents=True)
+        (target / ".venv" / "bin" / "radon").write_text("")
+        ctx = _make_tick_context(target)
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            run_a8_radon(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        venv = str(target / ".venv" / "bin" / "radon")
+        assert captured["action"].params["command"] == f"{venv} cc repo -s -a"
+
+
+class TestRunA9DepAudit:
+    _STDOUT = (
+        "Name      Version  ID                  Fix Versions\n"
+        "--------  -------  ------------------  ------------\n"
+        "requests  2.31.0   PYSEC-2023-74       2.32.0\n"
+        "weirdlib  1.0.0    GHSA-1234-5678\n"
+        "pip       22.0.0   PYSEC-2022-000      22.1.0\n"
+        "Found 3 known vulnerabilities in 3 packages\n"
+    )
+
+    def _mock_result(self, success=True, status="FAIL", stdout=None, data=None):
+        base = {"parsed": {"status": status}, "report_path": "/tmp/report.md"}
+        if data:
+            base.update(data)
+        return ActionResult(success=success, stdout=stdout if stdout is not None else self._STDOUT, data=base)
+
+    def test_creates_issues_for_vulnerabilities(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result()):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["issues_created"] == 2  # pip is skipped as tooling
+        assert (target / ".SWE" / "issues" / "dep-audit-requests-pysec-2023-74.md").exists()
+        assert (target / ".SWE" / "issues" / "dep-audit-weirdlib-ghsa-1234-5678.md").exists()
+
+    def test_returns_early_on_success_with_non_fail_status(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result(status="PASS")):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert not list((target / ".SWE" / "issues").glob("dep-audit-*.md"))
+
+    def test_returns_early_on_failed_diagnostic(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result(success=False)):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+
+    def test_returns_early_on_dry_run(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, dry_run=True)
+        result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.dry_run is True
+
+    def test_skips_existing_issue(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "issues" / "dep-audit-requests-pysec-2023-74.md").write_text("---\nstatus: open\n---\n# Existing")
+        ctx = _make_tick_context(target)
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result()):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.data["issues_created"] == 1  # only weirdlib
+
+
+# ─── review issue counting/finding with since_dt ────────────────────────────
+
+
+    def test_mock_result_with_data(self):
+        result = self._mock_result(data={"extra": "value"})
+        assert result.data["extra"] == "value"
+        assert result.data["parsed"]["status"] == "FAIL"
+
+
+class TestCountDoneReviewIssuesSinceDt:
+    def _issue(self, target, name, created_at):
+        path = target / ".SWE" / "issues" / name
+        path.write_text(f"---\nstatus: done\ntype: review\ncreated_at: {created_at}\n---\n# Review\n")
+
+    def test_counts_only_after_since(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        since = datetime.fromisoformat("2025-01-01T00:00:00+00:00")
+        self._issue(target, "review-new00000.md", "2025-06-01T00:00:00+00:00")
+        self._issue(target, "review-old00000.md", "2024-01-01T00:00:00+00:00")
+        self._issue(target, "review-bad00000.md", "not-a-date")
+        assert _count_done_review_issues(target, since_dt=since) == 2
+
+
+class TestFindPreviousReviewShaSinceDt:
+    def test_finds_sha_after_since(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        since = datetime.fromisoformat("2025-01-01T00:00:00+00:00")
+        (target / ".SWE" / "issues" / "review-abc12345.md").write_text(
+            "---\nstatus: done\ntype: review\ncreated_at: 2025-06-01T00:00:00+00:00\n---\n# Review\n"
+        )
+        assert _find_previous_review_sha(target, since_dt=since) == "abc12345"
+
+    def test_skips_old_invalid_and_missing_created_at(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        since = datetime.fromisoformat("2025-01-01T00:00:00+00:00")
+        (target / ".SWE" / "issues" / "review-old11111.md").write_text(
+            "---\nstatus: done\ntype: review\ncreated_at: 2024-01-01T00:00:00+00:00\n---\n# Review\n"
+        )
+        (target / ".SWE" / "issues" / "review-bad22222.md").write_text(
+            "---\nstatus: done\ntype: review\ncreated_at: not-a-date\n---\n# Review\n"
+        )
+        (target / ".SWE" / "issues" / "review-noc33333.md").write_text(
+            "---\nstatus: done\ntype: review\n---\n# Review\n"
+        )
+        assert _find_previous_review_sha(target, since_dt=since) is None
+
+
+# ─── _ordinal_suffix ────────────────────────────────────────────────────────
+
+
+class TestOrdinalSuffix:
+    def test_teens_return_th(self):
+        assert _ordinal_suffix(11) == "th"
+        assert _ordinal_suffix(12) == "th"
+        assert _ordinal_suffix(13) == "th"
+        assert _ordinal_suffix(111) == "th"
+
+    def test_regular_suffixes(self):
+        assert _ordinal_suffix(1) == "st"
+        assert _ordinal_suffix(2) == "nd"
+        assert _ordinal_suffix(3) == "rd"
+        assert _ordinal_suffix(4) == "th"
+
+
+# ─── _compute_review_generation ─────────────────────────────────────────────
+
+
+class TestComputeReviewGeneration:
+    def _write_session(self, target, started_at="2025-01-01T00:00:00+00:00", active=True):
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": active, "started_at": started_at})
+        )
+
+    def test_active_session_no_reviews_uses_git_sha(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._write_session(target)
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="abc12345\n", stderr="")
+            gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+        assert gen == 2
+        assert prev == "abc12345"
+        assert exceeded is False
+
+    def test_active_session_no_reviews_git_fails(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._write_session(target)
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="err")
+            gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+        assert gen == 1
+        assert prev is None
+
+    def test_active_session_git_timeout(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._write_session(target)
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run",
+                   side_effect=subprocess.TimeoutExpired(cmd="git", timeout=10)):
+            gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+        assert gen == 1
+        assert prev is None
+
+    def test_active_session_with_prior_review(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._write_session(target)
+        (target / ".SWE" / "issues" / "review-abc12345.md").write_text(
+            "---\nstatus: done\ntype: review\ncreated_at: 2025-06-01T00:00:00+00:00\n---\n# Review\n"
+        )
+        gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+        assert gen == 2
+        assert prev == "abc12345"
+
+    def test_active_session_max_gens_exceeded(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._write_session(target)
+        for i in range(3):
+            (target / ".SWE" / "issues" / f"review-s{i}000000.md").write_text(
+                f"---\nstatus: done\ntype: review\ncreated_at: 2025-06-01T00:00:00+00:00\n---\n# Review\n"
+            )
+        gen, prev, exceeded = _compute_review_generation(target, {"max_review_generations": 3}, "main")
+        assert gen == 4
+        assert prev is None
+        assert exceeded is True
+
+    def test_invalid_session_started_at(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._write_session(target, started_at="not-a-date")
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="abc12345\n", stderr="")
+            gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+        assert gen == 2
+        assert prev == "abc12345"
+        assert exceeded is False
+
+
+# ─── run_c_review_issue max_gens / generation >= 3 ──────────────────────────
+
+
+class TestRunCReviewIssueGenerations:
+    def _setup_git(self, target):
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+
+    def test_max_gens_exceeded_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_git(target)
+        for i in range(3):
+            (target / ".SWE" / "issues" / f"review-{i:08d}.md").write_text("---\nstatus: done\ntype: review\n---\n# Review\n")
+        ctx = _make_tick_context(target, default_branch="main", max_review_generations=3)
+        result = run_c_review_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "Max review generations" in result.stderr
+
+    def test_third_generation_includes_bugs_only_guidance(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_git(target)
+        for i in range(2):
+            (target / ".SWE" / "issues" / f"review-{i:08d}.md").write_text("---\nstatus: done\ntype: review\n---\n# Review\n")
+        ctx = _make_tick_context(target, default_branch="main", max_review_generations=3)
+        result = run_c_review_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["review_generation"] == 3
+        issue_file = target / ".SWE" / "issues" / f"{result.data['issue_id']}.md"
+        assert "File **only bugs**" in issue_file.read_text()
+
+
+# ─── sync_session_mode completed ────────────────────────────────────────────
+
+
+class TestSyncSessionModeCompleted:
+    def test_completed_session_returns_false(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(json.dumps({"active": True, "completed": True}))
+        mode_file = tmp_path / "mode.json"
+        ctx = {"target_dir": str(target), "target_config": {"mode_file": str(mode_file)}}
+        assert sync_session_mode(ctx) is False
+
+
+# ─── run_c_pr_status: already-handled cycle limit + not-all-done ─────────────
+
+
+class TestRunCPrStatusAlreadyHandled:
+    def test_cycle_limit_reached_idles(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7, "pr_state": "changes_requested",
+            "last_review_id": 500, "pr_review_cycles": 2,
+        }))
+        ctx = _make_tick_context(target, slug="owner/repo", max_pr_review_cycles=2)
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 500, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+
+    def test_filed_issue_not_done_idles(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7, "pr_state": "changes_requested",
+            "last_review_id": 500, "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 1,
+        }))
+        (target / ".SWE" / "issues" / "pr-revision-7-1.md").write_text("---\nstatus: open\n---\n# Not done")
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 500, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+
+    def test_filed_issue_missing_idles(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7, "pr_state": "changes_requested",
+            "last_review_id": 500, "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 1,
+        }))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 500, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+
+    def test_marker_unlink_oserror_ignored(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7, "pr_state": "changes_requested",
+            "last_review_id": 400, "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 1,
+        }))
+        (target / ".SWE" / "issues" / "pr-revision-7-1.md").write_text("---\nstatus: done\n---\n# Done")
+        (target / ".SWE" / "pr_reviewed.json").mkdir()
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]), \
+             patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="abc12345"), \
+             patch("cronpypeline.plugins.swe_plugin.subprocess.run",
+                   return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+
+
+class TestParsePipAuditVulnerabilitiesEmptyLine:
+    def test_breaks_on_empty_line_after_header(self):
+        output = (
+            "Name    Version  ID\n"
+            "------- -------- ---\n"
+            "\n"
+            "pkg 1.0 ID-1\n"
+        )
+        assert _parse_pip_audit_vulnerabilities(output) == []
