@@ -23,7 +23,7 @@
 - Rejection count now increments only when the stage's trigger actually fires (i.e., the stage will be re-processed this tick), rather than on every tick regardless of the trigger.
 - FILE-type rejection markers never accumulate a rejection count; when used with `max_rejections`, the marker is simply deleted (FILE markers can't store data).
 - Rejection count is now written back into the JSON rejection marker below `max_rejections` so it accumulates across ticks instead of being lost when the marker is cleared.
-- `retry_count` is now reset to 0 in the processing marker when a `queue_agent` action re-queues work (previously carried over from the stale processing marker, causing incorrect retry counting).
+- `retry_count` is now read from the actual on-disk processing marker data (`stage_state.processing_data`) instead of the static config content, so it is correctly preserved across re-queues by a `queue_agent` action.
 - Pipeline now stops chaining when a custom action returns `data: {"async": true}`, matching `queue_agent` behavior; previously async custom actions would incorrectly chain to the next stage.
 - `ActionHandlerConfig.from_dict` now treats an empty `params: {}` dict as present (not missing), so other top-level keys are no longer incorrectly merged into `params`.
 
