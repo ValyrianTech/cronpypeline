@@ -7,6 +7,7 @@ already tested in test_plugins.py.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -38,6 +39,7 @@ from cronpypeline.plugins.swe_plugin import (
     _git,
     _git_issue_already_ingested,
     _git_issue_type_from_labels,
+    _load_env_file,
     _load_github_token,
     _normalize_pkg_name,
     _open_issue_count,
@@ -4402,6 +4404,27 @@ class TestLoadGithubTokenDotenvFallback:
         with patch.dict("sys.modules", {"dotenv": None}):
             assert _load_github_token({}) == "dotenv-token"
 
+    def test_load_env_file_fallback_parser(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("OTHER_VAR", raising=False)
+        monkeypatch.delenv("PLAIN_VAR", raising=False)
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "\n"
+            "# a comment line\n"
+            "SOME_MALFORMED_LINE\n"
+            'SWE_GITHUB_TOKEN="quoted-token"\n'
+            "OTHER_VAR='single-quoted'\n"
+            "PLAIN_VAR=plain-token\n",
+            encoding="utf-8",
+        )
+        with patch.dict("sys.modules", {"dotenv": None}):
+            _load_env_file(env_file)
+        assert os.environ["SWE_GITHUB_TOKEN"] == "quoted-token"
+        assert os.environ["OTHER_VAR"] == "single-quoted"
+        assert os.environ["PLAIN_VAR"] == "plain-token"
+        assert "SOME_MALFORMED_LINE" not in os.environ
+
 
 # ─── run_c_pr_status review branches ────────────────────────────────────────
 
@@ -4490,7 +4513,6 @@ class TestRunCPrStatusReviews:
         ctx = _make_tick_context(target, slug="owner/repo")
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
-        real_run = subprocess.run
 
         def _mock_run(*args, **kwargs):
             cmd = args[0] if args else kwargs.get("args")
@@ -4892,7 +4914,7 @@ class TestComputeReviewGeneration:
         self._write_session(target)
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="err")
-            gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+            gen, prev, _exceeded = _compute_review_generation(target, {}, "main")
         assert gen == 1
         assert prev is None
 
@@ -4901,7 +4923,7 @@ class TestComputeReviewGeneration:
         self._write_session(target)
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run",
                    side_effect=subprocess.TimeoutExpired(cmd="git", timeout=10)):
-            gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+            gen, prev, _exceeded = _compute_review_generation(target, {}, "main")
         assert gen == 1
         assert prev is None
 
@@ -4911,7 +4933,7 @@ class TestComputeReviewGeneration:
         (target / ".SWE" / "issues" / "review-abc12345.md").write_text(
             "---\nstatus: done\ntype: review\ncreated_at: 2025-06-01T00:00:00+00:00\n---\n# Review\n"
         )
-        gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+        gen, prev, _exceeded = _compute_review_generation(target, {}, "main")
         assert gen == 2
         assert prev == "abc12345"
 
