@@ -27,8 +27,5 @@
 - Pipeline now stops chaining when a custom action returns `data: {"async": true}`, matching `queue_agent` behavior; previously async custom actions would incorrectly chain to the next stage.
 - `ActionHandlerConfig.from_dict` now treats an empty `params: {}` dict as present (not missing), so other top-level keys are no longer incorrectly merged into `params`.
 
-### Changed
-- `configs/swe_pipeline.json` now defines `processing` markers for the A2-fix-agent, A6-fix-agent, C-code, and C-review stages, aligning the example config with the async processing-marker behavior.
-
 ### Security
 - Addressed bandit findings: added nosec annotations for intentional subprocess/shell usage, resolved git binary via shutil.which, and validated HTTP URL schemes.
