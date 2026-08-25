@@ -284,17 +284,41 @@ def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
     )
 
     # Build prompt with report content + commit/delete/completion instructions
-    prompt = build_fix_prompt(
-        report_content=report_content,
-        report_name=report_name,
-        target=context.target,
-        extra_instructions=params.get("extra_instructions", ""),
-    )
-
-    # Append commit hint, delete instructions, and completion marker instructions
+    repo_name = context.target
+    target_dir = context.target_dir
+    extra_instructions = params.get("extra_instructions", "")
+    verify_commands = params.get("verify_commands", [])
     invalidate_paths = params.get("invalidate_paths", [])
     completion_marker = params.get("completion_marker", "")
     commit_message = params.get("commit_message", "fix: resolve diagnostic issues")
+
+    prompt = f"""You are working on repository: {repo_name}
+
+A diagnostic report ({report_name}) has identified issues that need fixing.
+
+## First: plan with the Progress tool
+
+Before you start making changes, use the **Progress** tool to record your task list — e.g. 'understand the report', 'plan the fixes', 'apply fixes', 'run verification', 'commit changes', 'delete latest.md files'. Keep it updated as you go: mark each task 'in_progress' when you start it and 'completed' when done, so your progress is tracked across turns.
+
+## Report Contents
+
+{report_content}
+"""
+    if extra_instructions:
+        prompt += f"\n## Additional Instructions\n\n{extra_instructions}\n"
+
+    prompt += f"""
+## Task
+
+Use the OpenCode tool to delegate the actual editing work. The repo_name to pass to OpenCode is '{repo_name}'. Phrase the OpenCode prompt as a self-contained goal that addresses every issue listed in the report below, preferring minimal diffs and preserving intentional side-effecting calls.
+
+After OpenCode finishes, verify the result with RunCommand. IMPORTANT: you MUST `cd` into the repo first or pytest will collect zero tests.
+"""
+    if verify_commands:
+        prompt += "Run exactly:\n"
+        for cmd in verify_commands:
+            prompt += f"  cd {target_dir} && {cmd}\n"
+    prompt += "\n"
 
     prompt += f"""
 ## Git Workflow
@@ -302,7 +326,7 @@ def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
 You are on branch `{PHASE_A_BRANCH}`. After making your changes:
 
 1. Commit your changes:
-   cd {context.target_dir} && git add -A && \\
+   cd {target_dir} && git add -A && \\
    git -c user.name='{PHASE_A_GIT_AUTHOR_NAME}' \\
    -c user.email='{PHASE_A_GIT_AUTHOR_EMAIL}' \\
    commit -m "{commit_message}"

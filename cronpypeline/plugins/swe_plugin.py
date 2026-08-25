@@ -2094,7 +2094,34 @@ def run_a5_bandit(action: ActionSpec, context: TickContext) -> ActionResult:
     target_config = context.target_config
     command = (target_config.get("security_cmd") or "").strip()
     if not command:
-        command = f"{_venv_binary(context.target_dir, 'bandit')} -r ."
+        target = context.target if (context.target_dir / context.target).is_dir() else "."
+        command = f"{_venv_binary(context.target_dir, 'bandit')} -r {target} -f txt"
+
+    action = ActionSpec(
+        type=action.type,
+        params={**action.params, "command": command},
+        timeout_seconds=action.timeout_seconds,
+        produces=action.produces,
+    )
+    return run_diagnostic(action, context)
+
+
+def run_a6_vulture(action: ActionSpec, context: TickContext) -> ActionResult:
+    """Custom action: run vulture with venv-aware command resolution.
+
+    Resolution order: ``deadcode_cmd`` in target_config → ``.venv/bin/vulture`` → ``vulture``.
+
+    :param action: Action spec.
+    :param context: Tick context.
+    :returns: ActionResult from run_diagnostic.
+    """
+    from cronpypeline.plugins.swe_diagnostics import run_diagnostic
+
+    target_config = context.target_config
+    command = (target_config.get("deadcode_cmd") or "").strip()
+    if not command:
+        target = context.target if (context.target_dir / context.target).is_dir() else "."
+        command = f"{_venv_binary(context.target_dir, 'vulture')} {target}"
 
     action = ActionSpec(
         type=action.type,
@@ -2119,7 +2146,8 @@ def run_a8_radon(action: ActionSpec, context: TickContext) -> ActionResult:
     target_config = context.target_config
     command = (target_config.get("complexity_cmd") or "").strip()
     if not command:
-        command = f"{_venv_binary(context.target_dir, 'radon')} cc . -s -a"
+        target = context.target if (context.target_dir / context.target).is_dir() else "."
+        command = f"{_venv_binary(context.target_dir, 'radon')} cc {target} -s -a"
 
     action = ActionSpec(
         type=action.type,

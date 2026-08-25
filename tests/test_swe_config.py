@@ -51,10 +51,11 @@ class TestSWEPipelineConfig:
         for stage in diagnostic_stages:
             assert stage.action.type.value == "custom"
             callable_name = stage.action.params.get("callable", "")
-            # A5/A7/A8/A9 use venv-aware wrappers that call run_diagnostic internally
+            # A5/A6/A7/A8/A9 use venv-aware wrappers that call run_diagnostic internally
             assert (
                 "run_diagnostic" in callable_name
                 or "run_a5_bandit" in callable_name
+                or "run_a6_vulture" in callable_name
                 or "run_a7_coverage" in callable_name
                 or "run_a8_radon" in callable_name
                 or "run_a9_dep_audit" in callable_name

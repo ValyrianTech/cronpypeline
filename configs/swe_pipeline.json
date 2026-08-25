@@ -85,7 +85,8 @@
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_pytest_output",
           "report_title": "Test Infrastructure Check",
           "report_name": "test-infra_{timestamp}.md"
-        }
+        },
+        "timeout_seconds": 900
       },
       "markers": {
         "completion": {
@@ -115,7 +116,8 @@
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_ruff_output",
           "report_title": "Lint Check",
           "report_name": "lint_{timestamp}.md"
-        }
+        },
+        "timeout_seconds": 600
       },
       "markers": {
         "completion": {
@@ -160,7 +162,8 @@
           "agent": "FixLintingAgent",
           "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/lint/latest.md"],
           "completion_marker": ".SWE/markers/a2_fix_complete.marker",
-          "commit_message": "chore(lint): fix remaining ruff errors"
+          "commit_message": "chore(lint): fix remaining ruff errors",
+          "verify_commands": [".venv/bin/ruff check .", ".venv/bin/pytest -q"]
         }
       },
       "markers": {
@@ -197,7 +200,8 @@
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_interrogate_output",
           "report_title": "Docstring Coverage",
           "report_name": "docstrings_{timestamp}.md"
-        }
+        },
+        "timeout_seconds": 600
       },
       "markers": {
         "completion": {
@@ -223,7 +227,8 @@
           "agent": "DocStringAgent",
           "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/lint/latest.md", ".SWE/reports/docstrings/latest.md"],
           "completion_marker": ".SWE/markers/a3_fix_complete.marker",
-          "commit_message": "docs: add missing docstrings"
+          "commit_message": "docs: add missing docstrings",
+          "verify_commands": [".venv/bin/interrogate -v .", ".venv/bin/pytest -q"]
         }
       },
       "markers": {
@@ -260,7 +265,8 @@
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_mypy_output",
           "report_title": "Type Check",
           "report_name": "typecheck_{timestamp}.md"
-        }
+        },
+        "timeout_seconds": 600
       },
       "markers": {
         "completion": {
@@ -286,7 +292,8 @@
           "agent": "TypeHintAgent",
           "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/lint/latest.md", ".SWE/reports/docstrings/latest.md", ".SWE/reports/typecheck/latest.md"],
           "completion_marker": ".SWE/markers/a4_fix_complete.marker",
-          "commit_message": "chore(types): add type annotations and fix mypy errors"
+          "commit_message": "chore(types): add type annotations and fix mypy errors",
+          "verify_commands": [".venv/bin/mypy --ignore-missing-imports .", ".venv/bin/pytest -q"]
         }
       },
       "markers": {
@@ -318,7 +325,7 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_plugin.run_a5_bandit",
-          "command": "bandit -r .",
+          "command": "{security_cmd}",
           "report_dir": ".SWE/reports/security",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_bandit_output",
           "report_title": "Security Audit",
@@ -349,7 +356,9 @@
           "agent": "SecurityFixAgent",
           "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/lint/latest.md", ".SWE/reports/security/latest.md"],
           "completion_marker": ".SWE/markers/a5_fix_complete.marker",
-          "commit_message": "chore(security): address bandit findings"
+          "commit_message": "chore(security): address bandit findings",
+          "verify_commands": [".venv/bin/bandit -r . -f txt", ".venv/bin/pytest -q"],
+          "extra_instructions": "Requirements:\n- Fix each security issue identified by bandit.\n- Use secure coding practices (e.g. avoid hardcoded secrets, use parameterized queries, use safe deserialization).\n- Do NOT change code logic beyond what's needed for the fix.\n- If a finding is a false positive, add a `# nosec` comment with a brief justification."
         }
       },
       "markers": {
@@ -377,7 +386,7 @@
       "action": {
         "type": "custom",
         "params": {
-          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+          "callable": "cronpypeline.plugins.swe_plugin.run_a6_vulture",
           "command": "{deadcode_cmd}",
           "report_dir": ".SWE/reports/deadcode",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_vulture_output",
@@ -441,7 +450,8 @@
           "agent": "TestCoverageAgent",
           "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/coverage/latest.md"],
           "completion_marker": ".SWE/markers/a7_fix_complete.marker",
-          "commit_message": "test: add coverage for uncovered code"
+          "commit_message": "test: add coverage for uncovered code",
+          "verify_commands": [".venv/bin/pytest -q"]
         }
       },
       "markers": {
@@ -473,7 +483,7 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_plugin.run_a8_radon",
-          "command": "radon cc . -s -a",
+          "command": "{complexity_cmd}",
           "report_dir": ".SWE/reports/complexity",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_radon_output",
           "parser_kwargs": {"threshold": "C"},
