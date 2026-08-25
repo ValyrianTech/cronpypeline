@@ -5,6 +5,8 @@ import os
 import time
 from pathlib import Path
 
+import pytest
+
 from cronpypeline.markers import (
     MarkerSpec,
     MarkerType,
@@ -410,3 +412,49 @@ class TestFormatTemplate:
         from cronpypeline.markers import _format_template
         # Invalid format spec causes ValueError
         assert _format_template("{:bad}", {}) == "{:bad}"
+
+
+class TestPathTraversalProtection:
+    """Tests for path traversal protection in MarkerSpec.resolve_path."""
+
+    def test_resolve_path_rejects_dotdot_in_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="../../etc")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            m.resolve_path(tmp_path)
+
+    def test_resolve_path_rejects_dotdot_in_name(self, tmp_path):
+        m = MarkerSpec(name="../done.marker", type=MarkerType.FILE, directory=".")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            m.resolve_path(tmp_path)
+
+    def test_resolve_path_accepts_normal_paths(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="reports")
+        resolved = m.resolve_path(tmp_path)
+        assert resolved == tmp_path / "reports" / "done.marker"
+
+    def test_resolve_path_accepts_dot_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        resolved = m.resolve_path(tmp_path)
+        assert resolved == tmp_path / "done.marker"
+
+    def test_create_marker_rejects_dotdot_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="../../etc")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            create_marker(m, tmp_path)
+        assert not (tmp_path.parent.parent / "etc" / "done.marker").exists()
+        assert list(tmp_path.iterdir()) == []
+
+    def test_read_marker_rejects_dotdot_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="../../etc")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            read_marker(m, tmp_path)
+
+    def test_delete_marker_rejects_dotdot_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="../../etc")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            delete_marker(m, tmp_path)
+
+    def test_marker_exists_rejects_dotdot_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="../../etc")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            marker_exists(m, tmp_path)

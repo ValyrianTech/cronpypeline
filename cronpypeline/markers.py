@@ -81,6 +81,9 @@ class MarkerSpec:
         ctx = context or {}
         name = _format_template(self.name, ctx)
         directory = _format_template(self.directory, ctx)
+        # Reject path traversal: no '..' segments allowed in directory or name
+        if ".." in Path(directory).parts or ".." in Path(name).parts:
+            raise ValueError(f"Marker path contains '..': {directory}/{name}")
         return base_dir / directory / name
 
     def resolve_target(self, context: dict[str, Any] | None = None) -> str | None:
