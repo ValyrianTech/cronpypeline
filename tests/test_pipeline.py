@@ -4075,3 +4075,58 @@ def my_action(action, context):
             assert mod.counter["runs"] == 1
         finally:
             self._cleanup_custom_module(sys_mod, tmp_path, "nonchain_async_reexec_mod")
+
+    def test_chain_async_custom_action_stops_chaining_with_chain_true(self, tmp_path):
+        """Async custom action with chain=True stops further chaining."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        sys_mod = self._write_custom_module(tmp_path, "chain_async_stop_mod", """
+from cronpypeline.actions import ActionResult
+
+def my_action(action, context):
+    return ActionResult(success=True, data={"async": True})
+""")
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Step 1",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "command", "params": {"command": "echo a"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "A1",
+                        "name": "Async Chained Step",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "custom", "params": {"callable": "chain_async_stop_mod.my_action"}},
+                        "markers": {"completion": {"type": "file", "name": "b.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "A2",
+                        "name": "Should Not Run",
+                        "trigger": {"type": "file_missing", "path": "c.md"},
+                        "action": {"type": "command", "params": {"command": "echo c"}},
+                        "markers": {"completion": {"type": "file", "name": "c.md"}},
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert result.stage_id == "A1"
+            assert "A1" in result.chained_stages
+            assert "A2" not in result.chained_stages
+            assert (target_dir / "a.md").exists()
+            assert not (target_dir / "b.md").exists()
+            assert not (target_dir / "c.md").exists()
+        finally:
+            self._cleanup_custom_module(sys_mod, tmp_path, "chain_async_stop_mod")

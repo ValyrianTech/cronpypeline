@@ -1,6 +1,7 @@
 """Tests for SWE diagnostic report action handler and parsers."""
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
@@ -613,3 +614,29 @@ def bad_parser(output):
         assert result.success is True
         report_path = Path(result.data["report_path"])
         assert report_path.name == "fixed_name.md"
+
+
+class TestRunDiagnosticTimeoutSeconds:
+    """run_diagnostic should honour action.timeout_seconds as the timeout."""
+
+    def test_timeout_seconds_is_used(self, tmp_path):
+        report_dir = tmp_path / ".SWE" / "reports" / "lint"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "echo 'hello'",
+                "report_dir": str(report_dir),
+            },
+            timeout_seconds=5,
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="hello", stderr="")
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is True
+        assert mock_run.call_args.kwargs["timeout"] == 5

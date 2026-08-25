@@ -200,6 +200,50 @@ class TestQueueFixAgent:
         result = queue_fix_agent(action, ctx)
         assert result.success is False
 
+    def test_extra_instructions_added_to_prompt(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+                "extra_instructions": "Do it carefully.",
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = queue_fix_agent(action, ctx)
+        assert result.success is True
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        assert "## Additional Instructions" in entry["prompt"]
+        assert "Do it carefully." in entry["prompt"]
+
+    def test_verify_commands_added_to_prompt(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+                "verify_commands": ["pytest -q", "ruff check ."],
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = queue_fix_agent(action, ctx)
+        assert result.success is True
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        assert "Run exactly:" in entry["prompt"]
+        assert "cd" in entry["prompt"]
+        assert "pytest -q" in entry["prompt"]
+        assert "ruff check ." in entry["prompt"]
+
 
 class TestQueueCoderAgent:
     """Tests for queue_coder_agent custom action callable."""
