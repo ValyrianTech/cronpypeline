@@ -1934,7 +1934,7 @@ def run_c_coverage_issue(action: ActionSpec, context: TickContext) -> ActionResu
             # Extract the stdout section from the markdown report
             stdout_match = re.search(r"## stdout\n```\n(.*?)```", report_text, re.DOTALL)
             stdout_text = stdout_match.group(1) if stdout_match else report_text
-            files = []
+            files: list[dict[str, Any]] = []
             for fm in re.finditer(
                 r"^(\S+\.py)\s+(\d+)\s+(\d+)\s+(\d+)%(?:\s+(.+))?$",
                 stdout_text, re.MULTILINE,
