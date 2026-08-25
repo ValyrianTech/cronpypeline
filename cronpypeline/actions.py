@@ -82,6 +82,12 @@ class ActionResult:
             self.data = {}
 
 
+def _redact_url(url: str) -> str:
+    """Remove userinfo and query params from a URL for safe logging."""
+    parsed = urllib.parse.urlparse(url)
+    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc.split("@")[-1], parsed.path, "", "", ""))
+
+
 def format_template(template: str, variables: dict[str, Any]) -> str:
     """Format a template string with variable substitution.
 
@@ -311,7 +317,7 @@ class HttpRequestActionHandler(ActionHandler):
                     success=success,
                     stdout=body_str,
                     exit_code=status,
-                    data={"status_code": status, "url": url, "method": method},
+                    data={"status_code": status, "url": _redact_url(url), "method": method},
                 )
         except urllib.error.HTTPError as e:
             body_str = ""
@@ -324,7 +330,7 @@ class HttpRequestActionHandler(ActionHandler):
                 stdout=body_str,
                 stderr=f"HTTP {e.code}: {e.reason}",
                 exit_code=e.code,
-                data={"status_code": e.code, "url": url, "method": method},
+                data={"status_code": e.code, "url": _redact_url(url), "method": method},
             )
         except urllib.error.URLError as e:
             if isinstance(e.reason, socket.timeout):

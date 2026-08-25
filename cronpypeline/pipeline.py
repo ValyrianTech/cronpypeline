@@ -10,6 +10,7 @@ Each tick:
 """
 
 import json
+import traceback
 from dataclasses import dataclass, replace
 from dataclasses import field as dc_field
 from enum import Enum
@@ -75,7 +76,18 @@ class TickResult:
         :rtype: str
         """
         stage = self.stage_id or "-"
-        return f"{self.target} | {stage} -> {self.status.value} | {self.message}"
+        base = f"{self.target} | {stage} -> {self.status.value} | {self.message}"
+        if self.stderr:
+            return f"{base}\n{self.stderr}"
+        return base
+
+
+class PipelineTickError(Exception):
+    """Raised when _tick_single fails for a specific target, carrying the target name."""
+    def __init__(self, target: str, original: Exception) -> None:
+        self.target = target
+        self.original = original
+        super().__init__(f"{type(original).__name__}: {original}")
 
 
 def _instantiate_action_handler(handler_type: str, params: dict[str, Any]) -> ActionHandler:
@@ -202,6 +214,22 @@ class Pipeline:
 
         try:
             return self._tick_inner(targets, target_config_map, dry_run, verbose)
+        except PipelineTickError as e:
+            return TickResult(
+                target=e.target,
+                stage_id=None,
+                status=TickResultStatus.ACTION_FAILED,
+                message=f"Unhandled {type(e.original).__name__}: {e.original}",
+                stderr=traceback.format_exc(),
+            )
+        except Exception as e:  # noqa: BLE001
+            return TickResult(
+                target=target or "*",
+                stage_id=None,
+                status=TickResultStatus.ACTION_FAILED,
+                message=f"Unhandled {type(e).__name__}: {e}",
+                stderr=traceback.format_exc(),
+            )
         finally:
             self.lock.release()
 
@@ -232,9 +260,18 @@ class Pipeline:
         try:
             results = []
             for t in targets:
-                result = self._tick_single(t, target_config_map.get(t, {}), dry_run, verbose)
-                if result.status != TickResultStatus.NO_WORK:
-                    results.append(result)
+                try:
+                    result = self._tick_single(t, target_config_map.get(t, {}), dry_run, verbose)
+                    if result.status != TickResultStatus.NO_WORK:
+                        results.append(result)
+                except Exception as e:  # noqa: BLE001
+                    results.append(TickResult(
+                        target=t,
+                        stage_id=None,
+                        status=TickResultStatus.ACTION_FAILED,
+                        message=f"Unhandled {type(e).__name__}: {e}",
+                        stderr=traceback.format_exc(),
+                    ))
             return results
         finally:
             self.lock.release()
@@ -301,7 +338,10 @@ class Pipeline:
         else:
             target = targets[0]
 
-        return self._tick_single(target, target_config_map.get(target, {}), dry_run, verbose)
+        try:
+            return self._tick_single(target, target_config_map.get(target, {}), dry_run, verbose)
+        except Exception as e:  # noqa: BLE001
+            raise PipelineTickError(target, e) from e
 
     def _tick_single(
         self,

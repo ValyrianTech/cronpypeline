@@ -11,6 +11,7 @@ from cronpypeline.actions import (
     HttpRequestActionHandler,
     SubprocessActionHandler,
     TickContext,
+    _redact_url,
     execute_action,
     format_template,
 )
@@ -821,6 +822,67 @@ class TestExecuteActionErrors:
                 execute_action(action, ctx)
         finally:
             _HANDLERS[AT.COMMAND] = saved
+
+
+class TestRedactUrl:
+    """Tests for the _redact_url URL redaction helper."""
+
+    def test_removes_query_params(self):
+        assert _redact_url("https://example.com/api?api_key=secret&token=abc") == "https://example.com/api"
+
+    def test_removes_userinfo(self):
+        assert _redact_url("https://user:pass@example.com/api") == "https://example.com/api"
+
+    def test_removes_both_userinfo_and_query(self):
+        assert _redact_url("https://user:pass@example.com/api?key=secret") == "https://example.com/api"
+
+    def test_keeps_path_and_scheme(self):
+        assert _redact_url("http://example.com/path/to/resource") == "http://example.com/path/to/resource"
+
+    def test_no_credentials_unchanged(self):
+        assert _redact_url("https://example.com/plain") == "https://example.com/plain"
+
+
+class TestHttpRequestActionHandlerRedaction:
+    """Tests for URL redaction in HTTP request handler result data."""
+
+    def test_success_result_redacts_url(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "https://user:pass@localhost:12345/api?api_key=secret", "method": "GET"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"ok": true}'
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert result.data["url"] == "https://localhost:12345/api"
+
+    def test_http_error_result_redacts_url(self, tmp_path):
+        from urllib.error import HTTPError
+
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "https://example.com/api?api_key=secret&token=abc", "method": "GET"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        error = HTTPError("https://example.com/api", 500, "Internal Server Error", {}, None)
+
+        with patch("urllib.request.urlopen", side_effect=error):
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.data["url"] == "https://example.com/api"
 
 
 class TestActionResult:

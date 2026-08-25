@@ -5,6 +5,8 @@ import os
 import time
 from pathlib import Path
 
+import pytest
+
 from cronpypeline.markers import (
     MarkerSpec,
     MarkerType,
@@ -370,16 +372,8 @@ class TestMarkerAgeSecondsEdgeCases:
         m = MarkerSpec(name="test.marker", type=MarkerType.FILE, directory=".")
         create_marker(m, tmp_path)
 
-        original_stat = Path.stat
-
-        def stat_side_effect(self, *args, **kwargs):
-            # First call (from path.exists()) succeeds, second call raises
-            if not hasattr(stat_side_effect, "_called"):
-                stat_side_effect._called = True
-                return original_stat(self, *args, **kwargs)
-            raise OSError("permission denied")
-
-        with patch("pathlib.Path.stat", stat_side_effect):
+        with patch("pathlib.Path.stat", side_effect=OSError("permission denied")), \
+             patch("pathlib.Path.exists", return_value=True):
             assert marker_age_seconds(m, tmp_path) is None
 
 
@@ -410,3 +404,89 @@ class TestFormatTemplate:
         from cronpypeline.markers import _format_template
         # Invalid format spec causes ValueError
         assert _format_template("{:bad}", {}) == "{:bad}"
+
+
+class TestPathTraversalProtection:
+    """Tests for path traversal protection in MarkerSpec.resolve_path."""
+
+    def test_resolve_path_rejects_dotdot_in_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="../../etc")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            m.resolve_path(tmp_path)
+
+    def test_resolve_path_rejects_dotdot_in_name(self, tmp_path):
+        m = MarkerSpec(name="../done.marker", type=MarkerType.FILE, directory=".")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            m.resolve_path(tmp_path)
+
+    def test_resolve_path_accepts_normal_paths(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="reports")
+        resolved = m.resolve_path(tmp_path)
+        assert resolved == tmp_path / "reports" / "done.marker"
+
+    def test_resolve_path_accepts_dot_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        resolved = m.resolve_path(tmp_path)
+        assert resolved == tmp_path / "done.marker"
+
+    def test_create_marker_rejects_dotdot_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="../../etc")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            create_marker(m, tmp_path)
+        assert not (tmp_path.parent.parent / "etc" / "done.marker").exists()
+        assert list(tmp_path.iterdir()) == []
+
+    def test_read_marker_rejects_dotdot_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="../../etc")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            read_marker(m, tmp_path)
+
+    def test_delete_marker_rejects_dotdot_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="../../etc")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            delete_marker(m, tmp_path)
+
+    def test_marker_exists_rejects_dotdot_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="../../etc")
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
+            marker_exists(m, tmp_path)
+
+    def test_resolve_path_rejects_absolute_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="/etc")
+        with pytest.raises(ValueError, match="must be relative"):
+            m.resolve_path(tmp_path)
+
+    def test_resolve_path_rejects_absolute_name(self, tmp_path):
+        m = MarkerSpec(name="/etc/passwd", type=MarkerType.FILE, directory=".")
+        with pytest.raises(ValueError, match="must be relative"):
+            m.resolve_path(tmp_path)
+
+    def test_create_marker_rejects_absolute_directory(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="/etc")
+        with pytest.raises(ValueError, match="must be relative"):
+            create_marker(m, tmp_path)
+        assert not Path("/etc/done.marker").exists()
+        assert list(tmp_path.iterdir()) == []
+
+    def test_read_marker_rejects_absolute_path(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="/etc")
+        with pytest.raises(ValueError, match="must be relative"):
+            read_marker(m, tmp_path)
+
+    def test_delete_marker_rejects_absolute_path(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="/etc")
+        with pytest.raises(ValueError, match="must be relative"):
+            delete_marker(m, tmp_path)
+
+    def test_marker_exists_rejects_absolute_path(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="/etc")
+        with pytest.raises(ValueError, match="must be relative"):
+            marker_exists(m, tmp_path)
+
+    def test_resolve_path_rejects_symlink_escape(self, tmp_path):
+        outside_dir = tmp_path.parent / "outside_dir"
+        outside_dir.mkdir()
+        (tmp_path / "link").symlink_to(outside_dir, target_is_directory=True)
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="link")
+        with pytest.raises(ValueError, match="escapes base directory"):
+            m.resolve_path(tmp_path)

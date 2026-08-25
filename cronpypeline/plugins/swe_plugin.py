@@ -691,9 +691,7 @@ def _load_env_file(path: Path) -> None:
         key, _, val = line.partition("=")
         key = key.strip()
         val = val.strip()
-        if val.startswith('"') and val.endswith('"'):
-            val = val[1:-1]
-        elif val.startswith("'") and val.endswith("'"):
+        if val.startswith('"') and val.endswith('"') or val.startswith("'") and val.endswith("'"):
             val = val[1:-1]
         if key and key not in os.environ:
             os.environ[key] = val

@@ -81,6 +81,17 @@ class MarkerSpec:
         ctx = context or {}
         name = _format_template(self.name, ctx)
         directory = _format_template(self.directory, ctx)
+
+        # Reject path traversal: no '..' segments and no absolute paths
+        if ".." in Path(directory).parts or ".." in Path(name).parts:
+            raise ValueError(f"Marker path contains '..': {directory}/{name}")
+        if Path(directory).is_absolute() or Path(name).is_absolute():
+            raise ValueError(f"Marker path must be relative: {directory}/{name}")
+
+        resolved = (base_dir / directory / name).resolve()
+        base_resolved = base_dir.resolve()
+        if not resolved.is_relative_to(base_resolved):
+            raise ValueError(f"Marker path escapes base directory: {directory}/{name}")
         return base_dir / directory / name
 
     def resolve_target(self, context: dict[str, Any] | None = None) -> str | None:
