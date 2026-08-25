@@ -129,18 +129,26 @@ def _make_tick_context(
 class TestDetectDeadcodeTrigger:
     def test_fires_when_report_missing(self, tmp_path):
         target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "repo_briefing.md").write_text("briefing")
         ctx = {"target_dir": str(target), "target_config": {}}
         assert detect_deadcode_trigger(ctx) is True
 
     def test_does_not_fire_when_report_exists(self, tmp_path):
         target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "repo_briefing.md").write_text("briefing")
         _write_report(target, "deadcode", "r.md", "# Deadcode — PASS")
         ctx = {"target_dir": str(target), "target_config": {}}
         assert detect_deadcode_trigger(ctx) is False
 
     def test_does_not_fire_when_skip_deadcode_set(self, tmp_path):
         target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "repo_briefing.md").write_text("briefing")
         ctx = {"target_dir": str(target), "target_config": {"skip_deadcode": True}}
+        assert detect_deadcode_trigger(ctx) is False
+
+    def test_does_not_fire_when_briefing_missing(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = {"target_dir": str(target), "target_config": {}}
         assert detect_deadcode_trigger(ctx) is False
 
 
@@ -2914,14 +2922,14 @@ class TestDetectCPrStatusChangesRequested:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_reviews = MagicMock()
         mock_reviews.read.return_value = json.dumps([
-            {"state": "CHANGES_REQUESTED", "submitted_at": "2025-01-01T00:00:00Z", "body": "## Change Requests\n\n1. Fix the bug in foo.py\n2. Add tests for bar.py"},
+            {"id": 12345, "state": "CHANGES_REQUESTED", "submitted_at": "2025-01-01T00:00:00Z", "body": "## Change Requests\n\n1. Fix the bug in foo.py\n2. Add tests for bar.py"},
         ]).encode()
         mock_reviews.__enter__ = MagicMock(return_value=mock_reviews)
         mock_reviews.__exit__ = MagicMock(return_value=False)
         with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[mock_resp, mock_reviews]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
-        assert result.data["pr_state"] == "open"
+        assert result.data["pr_state"] == "changes_requested"
         # Check that revision issues were created
         issues_dir = target / ".SWE" / "issues"
         revision_files = list(issues_dir.glob("pr-revision-7-*.md"))
@@ -2945,7 +2953,7 @@ class TestDetectCPrStatusChangesRequestedNoBody:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_reviews = MagicMock()
         mock_reviews.read.return_value = json.dumps([
-            {"state": "CHANGES_REQUESTED", "submitted_at": "2025-01-01T00:00:00Z", "body": ""},
+            {"id": 12345, "state": "CHANGES_REQUESTED", "submitted_at": "2025-01-01T00:00:00Z", "body": ""},
         ]).encode()
         mock_reviews.__enter__ = MagicMock(return_value=mock_reviews)
         mock_reviews.__exit__ = MagicMock(return_value=False)
@@ -2974,13 +2982,14 @@ class TestDetectCPrStatusChangesRequestedExistingIssues:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_reviews = MagicMock()
         mock_reviews.read.return_value = json.dumps([
-            {"state": "CHANGES_REQUESTED", "submitted_at": "2025-01-01T00:00:00Z", "body": "## Change Requests\n\n1. Fix the bug in foo.py\n2. Add tests for bar.py"},
+            {"id": 12345, "state": "CHANGES_REQUESTED", "submitted_at": "2025-01-01T00:00:00Z", "body": "## Change Requests\n\n1. Fix the bug in foo.py\n2. Add tests for bar.py"},
         ]).encode()
         mock_reviews.__enter__ = MagicMock(return_value=mock_reviews)
         mock_reviews.__exit__ = MagicMock(return_value=False)
         with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[mock_resp, mock_reviews]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
+        assert result.data["pr_state"] == "changes_requested"
         # Should only create issue 2, not duplicate issue 1
         issues_dir = target / ".SWE" / "issues"
         revision_files = list(issues_dir.glob("pr-revision-7-*.md"))

@@ -33,7 +33,7 @@ Key paths it uses:
 Exit code 0 = all repos match, 1 = differences found.
 
 ## Current step
-Step 3: Fix behavioral issues found in comparison (in progress).
+Step 3: Fix behavioral issues found in comparison (complete).
 
 ### Step 3 — Critical issues fixed
 
@@ -54,8 +54,10 @@ A3-docstrings config stage with `report_title: "Docstring Coverage"`.
 report format), with fallback to original `N error(s)` / `N auto-fixable`
 patterns for backward compatibility.
 
-### Step 3 — Remaining issues (high → low)
+### Step 3 — All issues fixed
 See behavioral comparison below for full details.
+All critical, high, medium, and low severity issues have been resolved.
+1073 tests pass with no regressions.
 
 ### Step 2 checklist (completed)
 
@@ -263,135 +265,105 @@ with fallback to original patterns for backward compatibility.
 
 ### High severity issues
 
-#### 4. A9 missing issue creation for vulnerabilities
-The original A9 (`detect_a9_dep_audit`) creates issue files in `.SWE/issues/`
-for each vulnerability found via `_create_dep_audit_issues`. The JSON A9 stage
-only runs `run_diagnostic` — no issue files are created. Dep-audit issues
-won't enter the Phase C fix queue.
+#### 4. A9 missing issue creation for vulnerabilities (FIXED)
+Added `run_a9_dep_audit` wrapper in `swe_plugin.py` that calls `run_diagnostic`
+then parses pip-audit output for individual vulnerabilities and creates one
+issue per vulnerability (excluding SWE tooling packages via `SWE_TOOLING_PACKAGES`).
+Added helpers: `_parse_pip_audit_vulnerabilities`, `_normalize_pkg_name`,
+`_slugify`. Updated JSON config to use the new callable.
 
-#### 5. Fix agents positioned after all diagnostics
-Original STAGE_DETECTORS interleaves fix agents with diagnostics:
-  A2-lint → A2-autofix → A2-fix-agent → A3-docstrings → A3-fix-agent → ...
-JSON config has all diagnostics first, then all fix agents:
-  A1 → A2 → A2-autofix → A3 → A4 → A5 → A6 → A7 → A8 → A9 → A2-fix → ...
-Impact: in the original, if A2 lint fails, the fix agent fires immediately
-before A3 runs. In the JSON, all diagnostics A1–A9 run first, then fixes
-happen.
+#### 5. Fix agents positioned after all diagnostics (FIXED)
+Reordered stages in `swe_pipeline.json` to interleave fix agents with
+diagnostics, matching the original pipeline's STAGE_DETECTORS order:
+A1 → A2 → A2-autofix → A2-fix-agent → A3 → A3-fix-agent → A4 → A4-fix-agent →
+A5 → A5-fix-agent → A6 → A7 → A7-fix-agent → A8 → A9.
 
-#### 6. Chaining doesn't re-evaluate from top
-Original `main()` re-evaluates from the top of STAGE_DETECTORS after each
-mechanical stage completes. So after A2-autofix, it checks A0 (skip), A1
-(skip), A2 (skip), A2-autofix (skip), A2-fix-agent (maybe fire).
-JSON config `"chain": true` moves to the next stage in the array. After
-A2-autofix chains, the next stage is A3-docstrings. A2-fix-agent is much
-later and won't be checked during the chain.
-Impact: fix agents can interrupt the diagnostic chain in the original but
-can't in the JSON.
+#### 6. Chaining doesn't re-evaluate from top (FIXED)
+Modified `_try_chain` in `pipeline.py` to re-evaluate from the top of the
+stage list after each chained mechanical stage, matching the original
+pipeline's behavior. Also updated `_tick_single_inner` to pass
+target_config and active_stages to `_try_chain`.
 
-#### 7. C-pr-status missing dedup, push, approved, cycle limit
-The cronpypeline `run_c_pr_status` (swe_plugin.py:1633-1762) is missing
-several pieces of logic vs the original (run_swe_pipeline.py:5196-5400):
-- No `last_review_id` dedup: always files revision issues for the most
-  recent CHANGES_REQUESTED review every tick → duplicate issues
-- No "push when all revision issues done" logic: revision fixes won't be
-  pushed to update the PR
-- No "approved" state handling: ignores APPROVED reviews
-- No cycle limit before filing: files issues without checking
-  pr_cycles >= max_cycles (cycle limit is only in detect_c_pr_review)
-- No COMMENTED-as-CHANGES_REQUESTED fallback: original treats COMMENTED
-  reviews with "changes needed" language as CHANGES_REQUESTED
+#### 7. C-pr-status missing dedup, push, approved, cycle limit (FIXED)
+Rewrote `run_c_pr_status` in `swe_plugin.py` to add all missing logic:
+- `last_review_id` dedup via marker file to prevent duplicate revision issues
+- Push integration branch when all revision issues are done
+- APPROVED review handling (marks PR as approved, completes session)
+- Cycle limit check before filing (`pr_cycles >= max_pr_review_cycles`)
+- COMMENTED-as-CHANGES_REQUESTED fallback (checks review body for
+  "changes needed" language)
+Updated tests to match new pr_state values and add `id` fields to mock reviews.
 
-#### 8. C-review-issue missing GitHub session logic
-The original `detect_c_review_issue` (run_swe_pipeline.py:4242-4330) has
-special logic for GitHub-driven sessions:
-- Counts only reviews since session start (`since_dt` parameter)
-- First session review is always delta (generation 2) with default branch
-  SHA as baseline
-- `_count_done_review_issues` and `_find_previous_review_sha` support
-  `since_dt` filtering
-The cronpypeline version (swe_plugin.py:1907-1995) always uses normal mode
-logic — no session-aware filtering, no delta-first-review behavior.
-Impact: in GitHub session mode, the cronpypeline version will count ALL
-prior reviews (including from previous pipeline runs), potentially hitting
-the max_review_generations cap prematurely. First session review will be
-full-tree instead of delta.
+#### 8. C-review-issue missing GitHub session logic (FIXED)
+Added `_compute_review_generation` helper in `swe_plugin.py` that handles
+GitHub session logic: when a session is active, scopes review counting and
+previous SHA lookup to reviews created since session start (`since_dt`).
+First session review is delta-based (gen 2) against default branch SHA.
+Added `since_dt` parameter to `_count_done_review_issues` and
+`_find_previous_review_sha`. Added `created_at` to `_write_pipeline_issue`
+frontmatter. Added `_ordinal_suffix` helper for progressive guidance.
 
-#### 9. C-pr-status and C-pr-review restricted to github mode
-The JSON config restricts:
-- C-pr-status to `"modes": ["github"]` (swe_pipeline.json:529)
-- C-pr-review to `"modes": ["github"]` (swe_pipeline.json:673)
-The original does NOT restrict these stages to GitHub session mode — they
-fire whenever a PR has been published, regardless of session state.
-Impact: PRs published via the self-improvement loop (non-GitHub mode) won't
-be polled for status or reviewed. The `sync_session_mode` pre-tick hook sets
-mode to "default" when no session is active, blocking these stages.
+#### 9. C-pr-status and C-pr-review restricted to github mode (FIXED)
+Removed `"modes": ["github"]` from C-pr-status and C-pr-review stages in
+`swe_pipeline.json`. Updated `test_github_stages_have_github_mode` test to
+expect only one stage with github mode (C-session-terminal).
 
 ### Medium severity issues
 
-#### 10. Missing completed-session skip
-The original `main()` (run_swe_pipeline.py:5708-5712) skips repos with
-completed GitHub sessions entirely:
-  if is_github_session_completed(repo_dir): continue
-The cronpypeline version doesn't have this check. The `sync_session_mode`
-pre-tick hook only syncs the mode file but doesn't skip processing.
-Completed sessions will continue to be processed instead of idling.
+#### 10. Missing completed-session skip (FIXED)
+Updated `sync_session_mode` pre-tick hook in `swe_plugin.py` to return
+`False` when the GitHub session is completed, skipping the tick entirely.
+This matches the original pipeline's `is_github_session_completed` check.
 
-#### 11. Missing briefing gate in JSON triggers
-The original's diagnostic triggers (A1–A9) all check
-`if not (repo_dir / BRIEFING_RELPATH).exists(): return None`. The JSON config
-uses `file_missing` triggers that don't check for briefing existence.
-Impact: diagnostics could run on a repo without a briefing file. In practice
-minor since A0 consumes the tick first, but during processing state the gate
-is missing.
+#### 11. Missing briefing gate in JSON triggers (FIXED)
+Wrapped all A1–A5, A7–A9 diagnostic triggers in AND conditions with
+`file_exists` for `.SWE/repo_briefing.md` in `swe_pipeline.json`.
+Added briefing check to `detect_deadcode_trigger` (A6) in `swe_plugin.py`.
+Updated tests to create `repo_briefing.md` in test fixtures.
 
-#### 12. Hardcoded commands ignore repo config for A5/A8/A9
-The original uses repo-specific commands with venv-aware fallbacks:
-- A5: `repo.get('security_cmd')` → `_venv_bandit()` → `bandit -r {target}`
-- A8: `repo.get('complexity_cmd')` → `_venv_radon()` → `radon cc {target} -s -a`
-- A9: `repo.get('dep_audit_cmd')` → `_venv_pip_audit()` → `pip-audit`
-The JSON config hardcodes:
-- A5: `"bandit -r ."` (no `{security_cmd}` template)
-- A8: `"radon cc . -s -a"` (no `{complexity_cmd}` template)
-- A9: `"pip-audit"` (no `{dep_audit_cmd}` template)
-Impact: repos with custom commands in their config will have them ignored.
-Also, hardcoded commands assume tools are in PATH, not in the repo's .venv/bin/.
+#### 12. Hardcoded commands ignore repo config for A5/A8/A9 (FIXED)
+Added venv-aware wrapper functions in `swe_plugin.py`:
+- `run_a5_bandit`: resolves `security_cmd` → `.venv/bin/bandit` → `bandit`
+- `run_a8_radon`: resolves `complexity_cmd` → `.venv/bin/radon` → `radon`
+- `run_a9_dep_audit`: resolves `dep_audit_cmd` → `.venv/bin/pip-audit` → `pip-audit`
+Added `_venv_binary` helper that checks `.venv/bin/` and `.venv/Scripts/`.
+Updated JSON config to use the new callables.
 
-#### 13. A7 coverage threshold hardcoded
-The JSON A7 stage has `"parser_kwargs": {"threshold": 80.0}`. The original
-uses `float(repo.get('coverage_threshold', 80))` — reading from repo config.
-If a repo has a custom `coverage_threshold`, the JSON won't use it.
+#### 13. A7 coverage threshold hardcoded (FIXED)
+Added `run_a7_coverage` wrapper in `swe_plugin.py` that reads
+`coverage_threshold` from target_config (default 80.0) and overrides
+`parser_kwargs.threshold` accordingly. Updated JSON config to use the new
+callable.
 
-#### 14. Uniform 300s timeout (A7 needs 600s)
-The original uses different timeouts per stage (A7 coverage: 600s, others:
-120-300s). `run_diagnostic` (swe_diagnostics.py:270) uses a uniform 300s
-timeout for all stages. A7 could timeout on large repos.
+#### 14. Uniform 300s timeout (A7 needs 600s) (FIXED)
+Updated `run_diagnostic` in `swe_diagnostics.py` to respect `timeout` param
+and `action.timeout_seconds`, defaulting to 300s. Set `timeout_seconds: 600`
+for A7-coverage stage in `swe_pipeline.json`.
 
-#### 15. Missing `.env` file token fallback
-The original `_load_github_token` has a 4-step resolution: per-repo config →
-SWE_GITHUB_TOKEN env → GITHUB_TOKEN env → .env file via python-dotenv.
-The cronpypeline version (swe_plugin.py:633-648) is missing the .env file
-fallback (step 4). If the token is only in the .env file, the cronpypeline
-version won't find it.
+#### 15. Missing `.env` file token fallback (FIXED)
+Added `.env` file fallback to `_load_github_token` in `swe_plugin.py`.
+Checks workspace parent dir and CWD for `.env` file, loads via
+python-dotenv (if installed) as a 4th resolution step after env vars.
 
 ### Low severity issues
 
-#### 16. C-review-issue body missing progressive guidance
-The original review issue body includes progressive guidance for generation
->= 2 ("Many issues have already been identified and fixed...") and >= 3
-("File **only bugs**..."). The cronpypeline version (swe_plugin.py:1982-1990)
-has a simpler body without this tightening guidance.
+#### 16. C-review-issue body missing progressive guidance (FIXED)
+Added progressive guidance to `run_c_review_issue` in `swe_plugin.py`:
+gen ≥ 2 gets "Many issues have already been identified and fixed..." context,
+gen ≥ 3 gets "File **only bugs** — do not file refactors or enhancements."
+Uses `_ordinal_suffix` helper for generation numbering.
 
-#### 17. C-coverage issue body missing per-file gaps
-The original coverage issue body includes a `## Coverage gaps` section
+#### 17. C-coverage issue body missing per-file gaps (FIXED)
+Updated `run_c_coverage_issue` in `swe_plugin.py` to parse the A7 report's
+stdout section for per-file coverage data. Adds a `## Coverage gaps` section
 listing each file below threshold with coverage %, missed lines, and missing
-line numbers. The cronpypeline version (swe_plugin.py:1829-1838) only
-mentions the overall percentage without per-file detail.
+line numbers, sorted by coverage ascending.
 
-#### 18. C-pr-publish missing SHA drift update
-The original `detect_c_pr_publish` (run_swe_pipeline.py:4624-4635) updates
-the SHA in `pr_published.json` if it has drifted from a manual push. The
-cronpypeline version (swe_plugin.py:2164-2172) just checks pr_number exists
-and returns False — no SHA drift update.
+#### 18. C-pr-publish missing SHA drift update (FIXED)
+Updated `detect_c_pr_publish` in `swe_plugin.py` to update the SHA in
+`pr_published.json` when it has drifted from a manual push, matching the
+original pipeline's behavior. The marker is updated in-place before
+returning False.
 
 #### 19. A0 adds explicit retry/timeout not in original
 The JSON A0 stage has explicit `processing`/`give_up` markers,
@@ -407,7 +379,7 @@ that the original doesn't have. This is an enhancement, not a bug.
 - C-issue-fix trigger and action logic (delegates to run_issue_fix.py)
 - C-session-terminal trigger and action logic
 - C-doc-sync trigger and action logic
-- C-pr-publish trigger and action logic (except SHA drift)
-- C-pr-review trigger and action logic (except modes restriction)
+- C-pr-publish trigger and action logic
+- C-pr-review trigger and action logic
 - A6-fix-agent correctly omitted from both versions
 - B2/B3 placeholders correctly omitted from both versions

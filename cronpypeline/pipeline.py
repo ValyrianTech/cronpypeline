@@ -553,7 +553,7 @@ class Pipeline:
         # Handle chaining
         chained: list[str] = []
         if stage.chain and stage.action.type != ActionType.QUEUE_AGENT:
-            chained_result = self._try_chain(target, target_dir, dry_run, verbose, stage)
+            chained_result = self._try_chain(target, target_dir, target_config, active_stages, dry_run, verbose, stage)
             if chained_result:
                 final_stage_id, chained, failed_stage_id, failed_result = chained_result
                 if failed_stage_id is not None:
@@ -589,41 +589,52 @@ class Pipeline:
         self,
         target: str,
         target_dir: Path,
+        target_config: dict[str, Any],
+        active_stages: list[Stage],
         dry_run: bool,
         verbose: bool,
         completed_stage: Stage,
     ) -> tuple[str, list[str], str | None, Any | None] | None:
         """Attempt to chain to the next stage in the same tick.
 
+        Re-evaluates from the top of the stage list after each mechanical stage
+        completes, matching the original pipeline's behavior of calling
+        plan_next_action() in a loop. Skips stages whose trigger doesn't fire
+        (continues to next stage) and stops when a non-mechanical stage fires.
+
         :param target: Target name.
         :param target_dir: Target directory path.
+        :param target_config: Per-target configuration dict.
+        :param active_stages: Mode-filtered list of active stages.
         :param dry_run: Whether this is a dry run.
         :param verbose: Whether verbose output is enabled.
         :param completed_stage: The stage that just completed.
         :returns: Tuple of (final_stage_id, list_of_chained_stage_ids,
             failed_stage_id, failed_result), or None if nothing chained.
         """
-        stages = self.config.stages
-        completed_idx = next(
-            (i for i, s in enumerate(stages) if s.id == completed_stage.id), -1
-        )
-
         chained: list[str] = []
         current_stage = completed_stage
+        executed_ids: set[str] = {completed_stage.id}
 
-        for i in range(completed_idx + 1, len(stages)):
-            next_stage = stages[i]
-            if not next_stage.enabled:
-                continue
+        _MAX_CHAIN = 100  # safety cap
+        for _ in range(_MAX_CHAIN):
+            # Re-evaluate from the top of the stage list
+            next_stage: Stage | None = None
+            for stage in active_stages:
+                if stage.id in executed_ids:
+                    continue
+                trigger_context = {
+                    "target": target,
+                    "target_dir": str(target_dir),
+                    "workspace_dir": str(self.workspace_dir),
+                    "target_config": target_config,
+                }
+                if not evaluate_trigger(stage.trigger, target_dir, context=trigger_context):
+                    continue
+                next_stage = stage
+                break
 
-            # Check if trigger fires
-            trigger_context = {
-                "target": target,
-                "target_dir": str(target_dir),
-                "workspace_dir": str(self.workspace_dir),
-                "target_config": {},
-            }
-            if not evaluate_trigger(next_stage.trigger, target_dir, context=trigger_context):
+            if next_stage is None:
                 break
 
             # Only chain mechanical (non-queue_agent) actions
@@ -635,6 +646,7 @@ class Pipeline:
                 workspace_dir=self.workspace_dir,
                 dry_run=dry_run,
                 verbose=verbose,
+                target_config=target_config,
             )
             result = execute_action(next_stage.action, ctx)
 
@@ -645,22 +657,23 @@ class Pipeline:
                         workspace_dir=self.workspace_dir,
                         dry_run=dry_run,
                         verbose=verbose,
-                        target_config={},
+                        target_config=target_config,
                     )
                     fail_result = execute_action(next_stage.on_fail, fail_ctx)
                     if not fail_result.success:
-                        # Surface the on_fail failure to the caller
                         on_fail_err = fail_result.stderr or fail_result.stdout
                         result.stderr = (result.stderr + "\n[on_fail] " + on_fail_err).strip() if on_fail_err else result.stderr
                 return (current_stage.id, chained, next_stage.id, result)
 
+            marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
+
             # Create produced markers
             for marker_spec in next_stage.action.produces:
-                create_marker(marker_spec, target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
+                create_marker(marker_spec, target_dir, context=marker_ctx)
 
             # Create completion marker
             if "completion" in next_stage.markers and not result.data.get("async", False):
-                create_marker(next_stage.markers["completion"], target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
+                create_marker(next_stage.markers["completion"], target_dir, context=marker_ctx)
 
             # Create processing marker for async chained stages
             if result.data.get("async", False) and "processing" in next_stage.markers:
@@ -669,17 +682,22 @@ class Pipeline:
                     "retry_count": 0,
                     **result.data,
                 })
-                create_marker(processing_spec, target_dir, context=_build_marker_context(target, target_dir, self.workspace_dir, {}))
+                create_marker(processing_spec, target_dir, context=marker_ctx)
 
             # Invalidate markers from other stages
-            chain_marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, {})
             for inv_spec in next_stage.invalidates:
-                delete_marker(inv_spec, target_dir, context=chain_marker_ctx)
+                delete_marker(inv_spec, target_dir, context=marker_ctx)
 
             chained.append(next_stage.id)
+            executed_ids.add(next_stage.id)
             current_stage = next_stage
 
+            # Stop chaining if this stage doesn't allow further chaining
             if not next_stage.chain:
+                break
+
+            # Stop if the action was async (agent queued)
+            if result.data.get("async", False):
                 break
 
         if chained:

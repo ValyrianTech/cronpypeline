@@ -70,8 +70,11 @@
       "id": "A1-test-infra",
       "name": "Run pytest infrastructure tests",
       "trigger": {
-        "type": "file_missing",
-        "path": ".SWE/reports/test-infra/latest.md"
+        "type": "and",
+        "conditions": [
+          {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
+          {"type": "file_missing", "path": ".SWE/reports/test-infra/latest.md"}
+        ]
       },
       "action": {
         "type": "custom",
@@ -97,8 +100,11 @@
       "id": "A2-lint",
       "name": "Run ruff linter",
       "trigger": {
-        "type": "file_missing",
-        "path": ".SWE/reports/lint/latest.md"
+        "type": "and",
+        "conditions": [
+          {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
+          {"type": "file_missing", "path": ".SWE/reports/lint/latest.md"}
+        ]
       },
       "action": {
         "type": "custom",
@@ -140,197 +146,6 @@
       "chain": true
     },
     {
-      "id": "A3-docstrings",
-      "name": "Run interrogate docstring coverage check",
-      "trigger": {
-        "type": "file_missing",
-        "path": ".SWE/reports/docstrings/latest.md"
-      },
-      "action": {
-        "type": "custom",
-        "params": {
-          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "{docstring_cmd}",
-          "report_dir": ".SWE/reports/docstrings",
-          "parser": "cronpypeline.plugins.swe_diagnostics.parse_interrogate_output",
-          "report_title": "Docstring Coverage",
-          "report_name": "docstrings_{timestamp}.md"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "symlink",
-          "name": "latest.md",
-          "directory": ".SWE/reports/docstrings"
-        }
-      },
-      "chain": true
-    },
-    {
-      "id": "A4-mypy",
-      "name": "Run mypy type checker",
-      "trigger": {
-        "type": "file_missing",
-        "path": ".SWE/reports/typecheck/latest.md"
-      },
-      "action": {
-        "type": "custom",
-        "params": {
-          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "{typecheck_cmd}",
-          "report_dir": ".SWE/reports/typecheck",
-          "parser": "cronpypeline.plugins.swe_diagnostics.parse_mypy_output",
-          "report_title": "Type Check",
-          "report_name": "typecheck_{timestamp}.md"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "symlink",
-          "name": "latest.md",
-          "directory": ".SWE/reports/typecheck"
-        }
-      },
-      "chain": true
-    },
-    {
-      "id": "A5-bandit",
-      "name": "Run bandit security scanner",
-      "trigger": {
-        "type": "file_missing",
-        "path": ".SWE/reports/security/latest.md"
-      },
-      "action": {
-        "type": "custom",
-        "params": {
-          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "bandit -r .",
-          "report_dir": ".SWE/reports/security",
-          "parser": "cronpypeline.plugins.swe_diagnostics.parse_bandit_output",
-          "report_title": "Security Audit",
-          "report_name": "security_{timestamp}.md"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "symlink",
-          "name": "latest.md",
-          "directory": ".SWE/reports/security"
-        }
-      },
-      "chain": true
-    },
-    {
-      "id": "A6-vulture",
-      "name": "Run vulture dead code detector",
-      "trigger": {
-        "type": "custom",
-        "callable": "cronpypeline.plugins.swe_plugin.detect_deadcode_trigger"
-      },
-      "action": {
-        "type": "custom",
-        "params": {
-          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "{deadcode_cmd}",
-          "report_dir": ".SWE/reports/deadcode",
-          "parser": "cronpypeline.plugins.swe_diagnostics.parse_vulture_output",
-          "report_title": "Dead Code",
-          "report_name": "deadcode_{timestamp}.md"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "symlink",
-          "name": "latest.md",
-          "directory": ".SWE/reports/deadcode"
-        }
-      },
-      "chain": true
-    },
-    {
-      "id": "A7-coverage",
-      "name": "Run pytest with coverage",
-      "trigger": {
-        "type": "file_missing",
-        "path": ".SWE/reports/coverage/latest.md"
-      },
-      "action": {
-        "type": "custom",
-        "params": {
-          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "{coverage_cmd}",
-          "report_dir": ".SWE/reports/coverage",
-          "parser": "cronpypeline.plugins.swe_diagnostics.parse_coverage_output",
-          "parser_kwargs": {"threshold": 80.0},
-          "report_title": "Test Coverage",
-          "report_name": "coverage_{timestamp}.md"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "symlink",
-          "name": "latest.md",
-          "directory": ".SWE/reports/coverage"
-        }
-      },
-      "chain": true
-    },
-    {
-      "id": "A8-radon",
-      "name": "Run radon complexity analysis",
-      "trigger": {
-        "type": "file_missing",
-        "path": ".SWE/reports/complexity/latest.md"
-      },
-      "action": {
-        "type": "custom",
-        "params": {
-          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "radon cc . -s -a",
-          "report_dir": ".SWE/reports/complexity",
-          "parser": "cronpypeline.plugins.swe_diagnostics.parse_radon_output",
-          "parser_kwargs": {"threshold": "C"},
-          "report_title": "Complexity",
-          "report_name": "complexity_{timestamp}.md"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "symlink",
-          "name": "latest.md",
-          "directory": ".SWE/reports/complexity"
-        }
-      },
-      "chain": true
-    },
-    {
-      "id": "A9-pip-audit",
-      "name": "Run pip-audit dependency scanner",
-      "trigger": {
-        "type": "file_missing",
-        "path": ".SWE/reports/dep-audit/latest.md"
-      },
-      "action": {
-        "type": "custom",
-        "params": {
-          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
-          "command": "pip-audit",
-          "report_dir": ".SWE/reports/dep-audit",
-          "parser": "cronpypeline.plugins.swe_diagnostics.parse_pip_audit_output",
-          "report_title": "Dependency Audit",
-          "report_name": "dep-audit_{timestamp}.md"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "symlink",
-          "name": "latest.md",
-          "directory": ".SWE/reports/dep-audit"
-        }
-      },
-      "chain": true
-    },
-    {
       "id": "A2-fix-agent",
       "name": "Queue lint fix agent",
       "trigger": {
@@ -362,6 +177,36 @@
       },
       "max_retries": 3,
       "timeout_minutes": 30
+    },
+    {
+      "id": "A3-docstrings",
+      "name": "Run interrogate docstring coverage check",
+      "trigger": {
+        "type": "and",
+        "conditions": [
+          {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
+          {"type": "file_missing", "path": ".SWE/reports/docstrings/latest.md"}
+        ]
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+          "command": "{docstring_cmd}",
+          "report_dir": ".SWE/reports/docstrings",
+          "parser": "cronpypeline.plugins.swe_diagnostics.parse_interrogate_output",
+          "report_title": "Docstring Coverage",
+          "report_name": "docstrings_{timestamp}.md"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "symlink",
+          "name": "latest.md",
+          "directory": ".SWE/reports/docstrings"
+        }
+      },
+      "chain": true
     },
     {
       "id": "A3-fix-agent",
@@ -397,6 +242,36 @@
       "timeout_minutes": 30
     },
     {
+      "id": "A4-mypy",
+      "name": "Run mypy type checker",
+      "trigger": {
+        "type": "and",
+        "conditions": [
+          {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
+          {"type": "file_missing", "path": ".SWE/reports/typecheck/latest.md"}
+        ]
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+          "command": "{typecheck_cmd}",
+          "report_dir": ".SWE/reports/typecheck",
+          "parser": "cronpypeline.plugins.swe_diagnostics.parse_mypy_output",
+          "report_title": "Type Check",
+          "report_name": "typecheck_{timestamp}.md"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "symlink",
+          "name": "latest.md",
+          "directory": ".SWE/reports/typecheck"
+        }
+      },
+      "chain": true
+    },
+    {
       "id": "A4-fix-agent",
       "name": "Queue type hint fix agent",
       "trigger": {
@@ -428,6 +303,36 @@
       },
       "max_retries": 3,
       "timeout_minutes": 30
+    },
+    {
+      "id": "A5-bandit",
+      "name": "Run bandit security scanner",
+      "trigger": {
+        "type": "and",
+        "conditions": [
+          {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
+          {"type": "file_missing", "path": ".SWE/reports/security/latest.md"}
+        ]
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_a5_bandit",
+          "command": "bandit -r .",
+          "report_dir": ".SWE/reports/security",
+          "parser": "cronpypeline.plugins.swe_diagnostics.parse_bandit_output",
+          "report_title": "Security Audit",
+          "report_name": "security_{timestamp}.md"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "symlink",
+          "name": "latest.md",
+          "directory": ".SWE/reports/security"
+        }
+      },
+      "chain": true
     },
     {
       "id": "A5-fix-agent",
@@ -463,6 +368,65 @@
       "timeout_minutes": 30
     },
     {
+      "id": "A6-vulture",
+      "name": "Run vulture dead code detector",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_deadcode_trigger"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+          "command": "{deadcode_cmd}",
+          "report_dir": ".SWE/reports/deadcode",
+          "parser": "cronpypeline.plugins.swe_diagnostics.parse_vulture_output",
+          "report_title": "Dead Code",
+          "report_name": "deadcode_{timestamp}.md"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "symlink",
+          "name": "latest.md",
+          "directory": ".SWE/reports/deadcode"
+        }
+      },
+      "chain": true
+    },
+    {
+      "id": "A7-coverage",
+      "name": "Run pytest with coverage",
+      "trigger": {
+        "type": "and",
+        "conditions": [
+          {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
+          {"type": "file_missing", "path": ".SWE/reports/coverage/latest.md"}
+        ]
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_a7_coverage",
+          "command": "{coverage_cmd}",
+          "report_dir": ".SWE/reports/coverage",
+          "parser": "cronpypeline.plugins.swe_diagnostics.parse_coverage_output",
+          "parser_kwargs": {"threshold": 80.0},
+          "report_title": "Test Coverage",
+          "report_name": "coverage_{timestamp}.md"
+        },
+        "timeout_seconds": 600
+      },
+      "markers": {
+        "completion": {
+          "type": "symlink",
+          "name": "latest.md",
+          "directory": ".SWE/reports/coverage"
+        }
+      },
+      "chain": true
+    },
+    {
       "id": "A7-fix-agent",
       "name": "Queue test coverage fix agent",
       "trigger": {
@@ -494,6 +458,67 @@
       },
       "max_retries": 3,
       "timeout_minutes": 30
+    },
+    {
+      "id": "A8-radon",
+      "name": "Run radon complexity analysis",
+      "trigger": {
+        "type": "and",
+        "conditions": [
+          {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
+          {"type": "file_missing", "path": ".SWE/reports/complexity/latest.md"}
+        ]
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_a8_radon",
+          "command": "radon cc . -s -a",
+          "report_dir": ".SWE/reports/complexity",
+          "parser": "cronpypeline.plugins.swe_diagnostics.parse_radon_output",
+          "parser_kwargs": {"threshold": "C"},
+          "report_title": "Complexity",
+          "report_name": "complexity_{timestamp}.md"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "symlink",
+          "name": "latest.md",
+          "directory": ".SWE/reports/complexity"
+        }
+      },
+      "chain": true
+    },
+    {
+      "id": "A9-pip-audit",
+      "name": "Run pip-audit dependency scanner",
+      "trigger": {
+        "type": "and",
+        "conditions": [
+          {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
+          {"type": "file_missing", "path": ".SWE/reports/dep-audit/latest.md"}
+        ]
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_a9_dep_audit",
+          "command": "pip-audit",
+          "report_dir": ".SWE/reports/dep-audit",
+          "parser": "cronpypeline.plugins.swe_diagnostics.parse_pip_audit_output",
+          "report_title": "Dependency Audit",
+          "report_name": "dep-audit_{timestamp}.md"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "symlink",
+          "name": "latest.md",
+          "directory": ".SWE/reports/dep-audit"
+        }
+      },
+      "chain": true
     },
     {
       "id": "B1-fetch-issues",
@@ -535,8 +560,7 @@
         "params": {
           "callable": "cronpypeline.plugins.swe_plugin.run_c_pr_status"
         }
-      },
-      "modes": ["github"]
+      }
     },
     {
       "id": "C-issue-fix",
@@ -679,8 +703,7 @@
         }
       },
       "max_retries": 3,
-      "timeout_minutes": 30,
-      "modes": ["github"]
+      "timeout_minutes": 30
     }
   ]
 }

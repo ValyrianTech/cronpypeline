@@ -63,6 +63,8 @@ def detect_deadcode_trigger(context: dict[str, Any]) -> bool:
     if target_config.get("skip_deadcode"):
         return False
     target_dir = Path(context.get("target_dir", "."))
+    if not (target_dir / ".SWE" / "repo_briefing.md").exists():
+        return False
     return not (target_dir / ".SWE" / "reports" / "deadcode" / "latest.md").exists()
 
 
@@ -636,7 +638,8 @@ def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
 def _load_github_token(target_config: dict[str, Any]) -> str | None:
     """Load a GitHub token from target_config or environment.
 
-    Resolution order: per-repo ``github_token`` → ``SWE_GITHUB_TOKEN`` → ``GITHUB_TOKEN``.
+    Resolution order: per-repo ``github_token`` → ``SWE_GITHUB_TOKEN`` →
+    ``GITHUB_TOKEN`` → ``.env`` file (via python-dotenv, if installed).
 
     :param target_config: Per-target config dict.
     :returns: Token string, or None.
@@ -648,6 +651,21 @@ def _load_github_token(target_config: dict[str, Any]) -> str | None:
         val = os.environ.get(key, "")
         if val:
             return val
+    # Fallback: load .env file (check workspace parent dirs and CWD)
+    for env_file in (
+        SWE_WORKSPACE_DIR.parent.parent / ".env",
+        Path.cwd() / ".env",
+    ):
+        if env_file.exists():
+            try:
+                from dotenv import load_dotenv
+                load_dotenv(env_file, override=False)
+                for key in ("SWE_GITHUB_TOKEN", "GITHUB_TOKEN"):
+                    val = os.environ.get(key, "")
+                    if val:
+                        return val
+            except ImportError:
+                break
     return None
 
 
@@ -1264,6 +1282,7 @@ def _write_pipeline_issue(
         "type": issue_type,
         "repo": repo_name,
         "labels": labels or ["pipeline"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     if extra:
         for key, value in extra:
@@ -1689,7 +1708,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                 json.dumps(session, indent=2), encoding="utf-8")
         return ActionResult(success=True, data={"pr_state": "rejected"})
 
-    # Still open — check for changes-requested reviews
+    # Still open — check for changes-requested / approved reviews
     reviews_url = f"https://api.github.com/repos/{owner}/{gh_repo_name}/pulls/{pr_number}/reviews"
     try:
         req2 = Request(reviews_url, headers=headers, method="GET")
@@ -1698,47 +1717,140 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     except (HTTPError, URLError, OSError):
         reviews = []
 
-    # Find the most recent CHANGES_REQUESTED review
-    changes_requested = [
-        r for r in reviews
-        if r.get("state") == "CHANGES_REQUESTED"
-    ]
+    latest_approve = None
+    latest_changes = None
+    latest_comment = None
+    for rev in reviews:
+        state = rev.get("state", "")
+        if state == "APPROVED":
+            latest_approve = rev
+        elif state == "CHANGES_REQUESTED":
+            latest_changes = rev
+        elif state == "COMMENTED":
+            latest_comment = rev
 
-    if changes_requested:
-        latest_cr = max(changes_requested, key=lambda r: r.get("submitted_at", ""))
-        # File revision issues for each change request
-        from cronpypeline.plugins.swe_prompts import _parse_change_requests
-        requests_list = _parse_change_requests(latest_cr.get("body", ""))
-        if requests_list:
-            prefix = f"pr-revision-{pr_number}-"
-            issues_dir = target_dir / SWE_SUBDIR / "issues"
-            existing_max = 0
-            if issues_dir.is_dir():
-                for path in issues_dir.glob(f"{prefix}*.md"):
-                    try:
-                        num = int(path.stem[len(prefix):])
-                        existing_max = max(existing_max, num)
-                    except ValueError:
-                        pass
-            for i, req_text in enumerate(requests_list, start=existing_max + 1):
-                issue_id = f"{prefix}{i}"
-                if not _find_issue_by_id(target_dir, issue_id):
-                    title = req_text if len(req_text) <= 120 else req_text[:117] + "..."
-                    body = (
-                        f"# PR #{pr_number} — Change Request {i}\n\n"
-                        f"A reviewer requested changes on PR #{pr_number}. "
-                        f"Address this request and push an update.\n\n"
-                        f"## Request\n\n{req_text}\n"
-                    )
-                    _write_pipeline_issue(
-                        target_dir, context.target, issue_id, "revision",
-                        title, body, ["revision", "pr-review"],
-                    )
+    # Defensive fallback: treat COMMENTED review as CHANGES_REQUESTED when
+    # its body recommends changes.
+    if latest_changes is None and latest_comment is not None:
+        body = latest_comment.get("body", "")
+        if re.search(
+            r"(?:changes?\s*(?:needed|required)\s*before\s*merg|"
+            r"request\s*changes?\b)",
+            body, re.IGNORECASE,
+        ):
+            latest_changes = latest_comment
 
-        # Update cycle count
-        pr_data["pr_review_cycles"] = pr_data.get("pr_review_cycles", 0) + 1
-        pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
+    pr_state = pr_data.get("pr_state", "open")
+    pr_cycles = pr_data.get("pr_review_cycles", 0)
+    max_cycles = target_config.get("max_pr_review_cycles", MAX_PR_REVIEW_CYCLES)
 
+    # --- Changes requested ---
+    if latest_changes is not None:
+        review_id = latest_changes.get("id")
+        already_handled = pr_data.get("last_review_id")
+
+        # New review we haven't seen yet → file revision issues
+        if already_handled != review_id:
+            # Cycle limit — stop filing issues, idle for human review
+            if max_cycles > 0 and pr_cycles >= max_cycles:
+                _update_marker("changes_requested",
+                               last_review_id=review_id,
+                               filed_issues=[],
+                               pr_review_cycles=pr_cycles)
+                return ActionResult(success=True, data={"pr_state": "changes_requested"})
+
+            pr_cycles += 1
+            body = latest_changes.get("body", "")
+            from cronpypeline.plugins.swe_prompts import _parse_change_requests
+            requests_list = _parse_change_requests(body)
+            if not requests_list:
+                requests_list = [body.strip()] if body.strip() else []
+
+            filed_issues: list[str] = []
+            if requests_list:
+                prefix = f"pr-revision-{pr_number}-"
+                issues_dir = target_dir / SWE_SUBDIR / "issues"
+                existing_max = 0
+                if issues_dir.is_dir():
+                    for path in issues_dir.glob(f"{prefix}*.md"):
+                        try:
+                            num = int(path.stem[len(prefix):])
+                            existing_max = max(existing_max, num)
+                        except ValueError:
+                            pass
+                for i, req_text in enumerate(requests_list, start=existing_max + 1):
+                    issue_id = f"{prefix}{i}"
+                    if not _find_issue_by_id(target_dir, issue_id):
+                        title = req_text if len(req_text) <= 120 else req_text[:117] + "..."
+                        issue_body = (
+                            f"# PR #{pr_number} — Change Request {i}\n\n"
+                            f"A reviewer requested changes on PR #{pr_number}. "
+                            f"Address this request and push an update.\n\n"
+                            f"## Request\n\n{req_text}\n"
+                        )
+                        _write_pipeline_issue(
+                            target_dir, context.target, issue_id, "revision",
+                            title, issue_body, ["revision", "pr-review"],
+                        )
+                    filed_issues.append(issue_id)
+
+            _update_marker("changes_requested",
+                           last_review_id=review_id,
+                           filed_issues=filed_issues,
+                           pr_review_cycles=pr_cycles)
+            return ActionResult(success=True, data={"pr_state": "changes_requested"})
+
+        # Already handled — check if all filed issues are done → push
+        if pr_state == "changes_requested":
+            if max_cycles > 0 and pr_cycles >= max_cycles:
+                # Cycle limit reached — idle, do not push
+                return ActionResult(success=True, data={"pr_state": "open"})
+
+            all_done = True
+            for issue_id in pr_data.get("filed_issues", []):
+                issue_path = target_dir / SWE_SUBDIR / "issues" / f"{issue_id}.md"
+                if issue_path.exists():
+                    head = issue_path.read_text(encoding="utf-8")[:500]
+                    sm = re.search(r"(?m)^status:\s*(\S+)", head)
+                    if (sm.group(1) if sm else "") not in ("done", "discarded"):
+                        all_done = False
+                        break
+                else:
+                    all_done = False
+                    break
+
+            if all_done:
+                default_branch = target_config.get("default_branch") or "main"
+                sha = integration_head_sha(target_dir, default_branch)
+                if sha:
+                    push_result = subprocess.run(
+                        ["git", "-C", str(target_dir), "push", "origin", INTEGRATION_BRANCH],
+                        capture_output=True, text=True, timeout=120, check=False,
+                    )  # nosec B603 - git push with fixed args
+                    if push_result.returncode == 0:
+                        _update_marker("open", last_review_id=review_id, filed_issues=[])
+                        # Delete review markers so C-pr-review re-triggers
+                        for marker_name in ("pr_reviewed.json", "pr_review_queued.json"):
+                            marker_path = target_dir / SWE_SUBDIR / marker_name
+                            try:
+                                marker_path.unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                        return ActionResult(success=True, data={"pr_state": "open"})
+                    else:
+                        return ActionResult(success=False, stderr=f"Push failed: {push_result.stderr}")
+
+        # Already handled, still working on fixes
+        return ActionResult(success=True, data={"pr_state": "open"})
+
+    # --- Approved ---
+    if latest_approve is not None:
+        review_id = latest_approve.get("id")
+        if pr_data.get("last_review_id") != review_id:
+            _update_marker("approved", last_review_id=review_id)
+            return ActionResult(success=True, data={"pr_state": "approved"})
+
+    # Nothing actionable
     return ActionResult(success=True, data={"pr_state": "open"})
 
 
@@ -1808,12 +1920,45 @@ def run_c_coverage_issue(action: ActionSpec, context: TickContext) -> ActionResu
     issue_id = f"coverage-{sha[:8]}"
     pct = _a7_coverage_pct(target_dir) or 0.0
 
+    # Parse per-file coverage gaps from the A7 report
+    report = _resolve_latest_report(target_dir, "coverage")
+    gap_lines = "- See the coverage report for per-file detail."
+    if report is not None:
+        try:
+            report_text = report.read_text(encoding="utf-8")
+            # Extract the stdout section from the markdown report
+            stdout_match = re.search(r"## stdout\n```\n(.*?)```", report_text, re.DOTALL)
+            stdout_text = stdout_match.group(1) if stdout_match else report_text
+            files = []
+            for fm in re.finditer(
+                r"^(\S+\.py)\s+(\d+)\s+(\d+)\s+(\d+)%(?:\s+(.+))?$",
+                stdout_text, re.MULTILINE,
+            ):
+                if fm.group(1) == "TOTAL":
+                    continue
+                files.append({
+                    "file": fm.group(1),
+                    "stmts": int(fm.group(2)),
+                    "miss": int(fm.group(3)),
+                    "cover": int(fm.group(4)),
+                    "missing": fm.group(5).strip() if fm.group(5) else "",
+                })
+            below = [f for f in files if f["cover"] < COVERAGE_TARGET]
+            if below:
+                gap_lines = "\n".join(
+                    f"- `{f['file']}` — {f['cover']}% ({f['miss']} missed): {f['missing']}"
+                    for f in sorted(below, key=lambda x: x["cover"])
+                )
+        except OSError:
+            pass
+
     title = f"Increase test coverage to {COVERAGE_TARGET:.0f}% (currently {pct:.0f}%)"
     body = (
         f"Overall coverage for `{repo_name}` is **{pct:.0f}%**, below the "
         f"pipeline target of {COVERAGE_TARGET:.0f}%. Add tests so every "
         f"reachable line/branch is covered. Genuinely unreachable lines may "
         f"be marked with `# pragma: no cover` with a short justification.\n\n"
+        f"## Coverage gaps\n\n{gap_lines}\n\n"
         f"## Source\n\n"
         f"Generated by SWE pipeline (Phase C coverage check). "
         f"See `.SWE/reports/coverage/latest.md`.\n"
@@ -1825,13 +1970,279 @@ def run_c_coverage_issue(action: ActionSpec, context: TickContext) -> ActionResu
     return ActionResult(success=True, data={"issue_id": issue_id})
 
 
+# ─── A9: Dependency audit with issue creation ────────────────────────────────
+
+
+SWE_TOOLING_PACKAGES = frozenset({
+    "pip", "ruff", "interrogate", "mypy", "bandit", "vulture",
+    "pip-audit", "pytest-cov", "radon",
+    "py", "mypy-extensions", "pbr", "stevedore", "mando",
+    "pip-api", "pip-requirements-parser", "cyclonedx-python-lib",
+    "boolean-py", "license-expression", "packageurl-python",
+    "coverage",
+})
+
+
+def _normalize_pkg_name(name: str) -> str:
+    """Normalize a distribution name for comparison (PEP 503-ish)."""
+    return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+
+def _slugify(text: str) -> str:
+    """Lowercase, collapse non-alphanumerics to single hyphens, strip ends."""
+    return re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower()).strip("-")
+
+
+def _parse_pip_audit_vulnerabilities(output: str) -> list[dict[str, Any]]:
+    """Extract individual vulnerability rows from pip-audit's text table.
+
+    :param output: Raw stdout from pip-audit.
+    :returns: List of dicts with keys: name, version, id, fix_versions.
+    """
+    vulns: list[dict[str, Any]] = []
+    lines = output.splitlines()
+
+    header_idx = None
+    for i, line in enumerate(lines):
+        if re.search(r"\bName\b", line) and re.search(r"\bVersion\b", line) \
+                and re.search(r"\bID\b", line):
+            header_idx = i
+            break
+    if header_idx is None:
+        return vulns
+
+    start = header_idx + 2 if (header_idx + 1) < len(lines) else len(lines)
+    for line in lines[start:]:
+        if not line.strip():
+            break
+        if re.search(r"Found\s+\d+\s+known\s+vulnerabilit", line) \
+                or "No known vulnerabilities found" in line \
+                or line.startswith("WARNING") or line.startswith("INFO"):
+            break
+        if set(line.strip()) <= {"-", " "}:
+            continue
+        tokens = line.split()
+        if len(tokens) < 3:
+            continue
+        name, version, vuln_id = tokens[0], tokens[1], tokens[2]
+        fix_raw = " ".join(tokens[3:]) if len(tokens) > 3 else ""
+        fix_versions = [v for v in re.split(r"[,\s]+", fix_raw) if v]
+        vulns.append({
+            "name": name,
+            "version": version,
+            "id": vuln_id,
+            "fix_versions": fix_versions,
+        })
+    return vulns
+
+
+def _venv_binary(target_dir: Path, name: str) -> str:
+    """Resolve a binary path, checking .venv/bin and .venv/Scripts first.
+
+    :param target_dir: Target repo directory.
+    :param name: Binary name (e.g. 'bandit', 'radon', 'pip-audit').
+    :returns: Path string — venv binary if found, else bare name.
+    """
+    for c in (target_dir / ".venv" / "bin" / name,
+              target_dir / ".venv" / "Scripts" / f"{name}.exe"):
+        if c.exists():
+            return str(c)
+    return name
+
+
+def run_a7_coverage(action: ActionSpec, context: TickContext) -> ActionResult:
+    """Custom action: run coverage with target-config threshold and 600s timeout.
+
+    Reads ``coverage_threshold`` from target_config (default 80.0) and
+    overrides the parser_kwargs threshold accordingly. Uses a 600s timeout
+    instead of the default 300s, matching the original pipeline.
+
+    :param action: Action spec.
+    :param context: Tick context.
+    :returns: ActionResult from run_diagnostic.
+    """
+    from cronpypeline.plugins.swe_diagnostics import run_diagnostic
+
+    target_config = context.target_config
+    threshold = float(target_config.get("coverage_threshold", 80.0))
+
+    params = {**action.params}
+    parser_kwargs = dict(params.get("parser_kwargs", {}))
+    parser_kwargs["threshold"] = threshold
+    params["parser_kwargs"] = parser_kwargs
+
+    action = ActionSpec(
+        type=action.type,
+        params=params,
+        timeout_seconds=action.timeout_seconds,
+        produces=action.produces,
+    )
+    return run_diagnostic(action, context)
+
+
+def run_a5_bandit(action: ActionSpec, context: TickContext) -> ActionResult:
+    """Custom action: run bandit with venv-aware command resolution.
+
+    Resolution order: ``security_cmd`` in target_config → ``.venv/bin/bandit`` → ``bandit``.
+
+    :param action: Action spec.
+    :param context: Tick context.
+    :returns: ActionResult from run_diagnostic.
+    """
+    from cronpypeline.plugins.swe_diagnostics import run_diagnostic
+
+    target_config = context.target_config
+    command = (target_config.get("security_cmd") or "").strip()
+    if not command:
+        command = f"{_venv_binary(context.target_dir, 'bandit')} -r ."
+
+    action = ActionSpec(
+        type=action.type,
+        params={**action.params, "command": command},
+        timeout_seconds=action.timeout_seconds,
+        produces=action.produces,
+    )
+    return run_diagnostic(action, context)
+
+
+def run_a8_radon(action: ActionSpec, context: TickContext) -> ActionResult:
+    """Custom action: run radon with venv-aware command resolution.
+
+    Resolution order: ``complexity_cmd`` in target_config → ``.venv/bin/radon`` → ``radon``.
+
+    :param action: Action spec.
+    :param context: Tick context.
+    :returns: ActionResult from run_diagnostic.
+    """
+    from cronpypeline.plugins.swe_diagnostics import run_diagnostic
+
+    target_config = context.target_config
+    command = (target_config.get("complexity_cmd") or "").strip()
+    if not command:
+        command = f"{_venv_binary(context.target_dir, 'radon')} cc . -s -a"
+
+    action = ActionSpec(
+        type=action.type,
+        params={**action.params, "command": command},
+        timeout_seconds=action.timeout_seconds,
+        produces=action.produces,
+    )
+    return run_diagnostic(action, context)
+
+
+def run_a9_dep_audit(action: ActionSpec, context: TickContext) -> ActionResult:
+    """Custom action: run pip-audit and create issues for vulnerabilities.
+
+    Wraps the standard run_diagnostic, then parses the pip-audit output
+    table and creates one issue per vulnerability (excluding SWE tooling
+    packages).
+
+    :param action: Action spec with command, report_dir, parser, etc.
+    :param context: Tick context.
+    :returns: ActionResult with report path and issues_created count.
+    """
+    from cronpypeline.plugins.swe_diagnostics import run_diagnostic
+
+    target_config = context.target_config
+    command = (target_config.get("dep_audit_cmd") or "").strip()
+    if not command:
+        command = _venv_binary(context.target_dir, "pip-audit")
+    action = ActionSpec(
+        type=action.type,
+        params={**action.params, "command": command},
+        timeout_seconds=action.timeout_seconds,
+        produces=action.produces,
+    )
+
+    result = run_diagnostic(action, context)
+    if not result.success or context.dry_run:
+        return result
+
+    stdout = result.stdout or ""
+    parsed = result.data.get("parsed", {}) if result.data else {}
+    status = parsed.get("status", "UNKNOWN")
+
+    if status != "FAIL":
+        return result
+
+    target_dir = context.target_dir
+    repo_name = context.target
+    vulnerabilities = _parse_pip_audit_vulnerabilities(stdout)
+    report_path = result.data.get("report_path", "") if result.data else ""
+
+    issues_created = 0
+    for vuln in vulnerabilities:
+        name = vuln["name"]
+        version = vuln["version"]
+        vuln_id = vuln["id"]
+        fix_versions = vuln.get("fix_versions") or []
+
+        if _normalize_pkg_name(name) in SWE_TOOLING_PACKAGES:
+            continue
+
+        issue_id = f"dep-audit-{_slugify(name)}-{_slugify(vuln_id)}"
+        if _find_issue_by_id(target_dir, issue_id) is not None:
+            continue
+
+        title = f"Vulnerable dependency: {name} {version} ({vuln_id})"
+
+        if fix_versions:
+            fix_sentence = (
+                "Upgrade to one of the fixed versions: "
+                + ", ".join(f"`{v}`" for v in fix_versions) + "."
+            )
+        else:
+            fix_sentence = (
+                "No fixed version is listed by the advisory yet — "
+                "consider pinning away from the affected package, "
+                "removing it, or tracking upstream for a fix."
+            )
+
+        body = (
+            f"# {title}\n\n"
+            f"The dependency audit (`pip-audit`) flagged a known vulnerability "
+            f"in an installed dependency of `{repo_name}`.\n\n"
+            f"## Details\n\n"
+            f"- **Package:** `{name}`\n"
+            f"- **Installed version:** `{version}`\n"
+            f"- **Advisory ID:** `{vuln_id}`\n"
+            f"- **Fix versions:** "
+            f'{", ".join(f"`{v}`" for v in fix_versions) if fix_versions else "_none listed_"}\n\n'
+            f"## Remediation\n\n"
+            f"{fix_sentence}\n\n"
+            f"## Source\n\n"
+            f"Generated by SWE pipeline stage A9 (dependency audit). "
+            f"See the full report at `{report_path}`.\n"
+        )
+
+        _write_pipeline_issue(
+            target_dir, repo_name, issue_id, "security",
+            title, body, ["security", "dependencies"],
+            extra=[
+                ("package", name),
+                ("version", version),
+                ("vulnerability_id", vuln_id),
+                ("fix_versions", fix_versions),
+            ],
+        )
+        issues_created += 1
+
+    if result.data:
+        result.data["issues_created"] = issues_created
+    return result
+
+
 # ─── C-review: Create review issue ──────────────────────────────────────────
 
 
-def _count_done_review_issues(target_dir: Path) -> int:
+def _count_done_review_issues(
+    target_dir: Path,
+    since_dt: datetime | None = None,
+) -> int:
     """Count done review meta-issues.
 
     :param target_dir: Target repo directory.
+    :param since_dt: If given, only count reviews with created_at >= since_dt.
     :returns: Count of done review issues.
     """
     count = 0
@@ -1851,17 +2262,34 @@ def _count_done_review_issues(target_dir: Path) -> int:
         tm = re.search(r"(?m)^type:\s*(\S+)", head)
         if not tm or tm.group(1) != "review":
             continue
+        if since_dt is not None:
+            cm = re.search(r"(?m)^created_at:\s*(.+)", head)
+            if cm:
+                try:
+                    created = datetime.fromisoformat(cm.group(1).strip())
+                    if created < since_dt:
+                        continue
+                except ValueError:
+                    pass
         count += 1
     return count
 
 
-def _find_previous_review_sha(target_dir: Path) -> str | None:
+def _find_previous_review_sha(
+    target_dir: Path,
+    since_dt: datetime | None = None,
+) -> str | None:
     """Extract the SHA from the most recent done review issue.
 
     :param target_dir: Target repo directory.
+    :param since_dt: If given, only consider reviews with created_at >= since_dt,
+        and pick the most recent by created_at.
     :returns: 8-char SHA prefix, or None.
     """
     best_path: Path | None = None
+    best_created: datetime | None = None
+    if since_dt is not None:
+        best_created = datetime.min.replace(tzinfo=timezone.utc)
     issues_dir = target_dir / SWE_SUBDIR / "issues"
     if not issues_dir.is_dir():
         return None
@@ -1878,12 +2306,86 @@ def _find_previous_review_sha(target_dir: Path) -> str | None:
         tm = re.search(r"(?m)^type:\s*(\S+)", head)
         if not tm or tm.group(1) != "review":
             continue
-        best_path = path
+        if since_dt is not None:
+            cm = re.search(r"(?m)^created_at:\s*(.+)", head)
+            if cm:
+                try:
+                    created = datetime.fromisoformat(cm.group(1).strip())
+                    if created < since_dt or (best_created is not None and created <= best_created):
+                        continue
+                    best_created = created
+                    best_path = path
+                except ValueError:
+                    continue
+            else:
+                continue
+        else:
+            best_path = path
     if best_path:
         m = re.search(r"review-([0-9a-f]{8})$", best_path.stem)
         if m:
             return m.group(1)
     return None
+
+
+def _ordinal_suffix(n: int) -> str:
+    """Return the ordinal suffix for an integer (1st, 2nd, 3rd, 4th, …)."""
+    if 11 <= (n % 100) <= 13:
+        return "th"
+    return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+
+
+def _compute_review_generation(
+    target_dir: Path,
+    target_config: dict[str, Any],
+    default_branch: str,
+) -> tuple[int, str | None, bool]:
+    """Compute review generation, prev_sha, and max-gens-exceeded flag.
+
+    Handles GitHub session logic: when a session is active, reviews are
+    scoped to those created since the session started, and the first
+    session review is delta-based (gen 2) against the default branch.
+
+    :param target_dir: Target repo directory.
+    :param target_config: Per-target config dict.
+    :param default_branch: Default branch name.
+    :returns: (review_gen, prev_sha, max_gens_exceeded).
+    """
+    max_gens = target_config.get("max_review_generations", MAX_REVIEW_GENERATIONS)
+    github_session = _read_github_session(target_dir)
+
+    if github_session is not None and github_session.get("active"):
+        session_start = github_session.get("started_at", "")
+        try:
+            session_start_dt = datetime.fromisoformat(session_start)
+        except (ValueError, TypeError):
+            session_start_dt = None
+        done_reviews = _count_done_review_issues(target_dir, since_dt=session_start_dt)
+        review_gen = done_reviews + 1
+        if review_gen < 2:
+            review_gen = 2
+        if max_gens > 0 and review_gen > max_gens:
+            return (review_gen, None, True)
+        if done_reviews == 0:
+            try:
+                prev_result = subprocess.run(
+                    ["git", "-C", str(target_dir), "rev-parse", default_branch],
+                    capture_output=True, text=True, timeout=10,
+                )
+                prev_sha = prev_result.stdout.strip() if prev_result.returncode == 0 else None
+            except Exception:
+                prev_sha = None
+            if not prev_sha:
+                review_gen = 1
+        else:
+            prev_sha = _find_previous_review_sha(target_dir, since_dt=session_start_dt)
+    else:
+        review_gen = _count_done_review_issues(target_dir) + 1
+        if max_gens > 0 and review_gen > max_gens:
+            return (review_gen, None, True)
+        prev_sha = _find_previous_review_sha(target_dir)
+
+    return (review_gen, prev_sha, False)
 
 
 def detect_c_review_issue(context: dict[str, Any]) -> bool:
@@ -1919,10 +2421,10 @@ def detect_c_review_issue(context: dict[str, Any]) -> bool:
         except OSError:
             pass
 
-    # Generation cap
-    review_gen = _count_done_review_issues(target_dir) + 1
-    max_gens = target_config.get("max_review_generations", MAX_REVIEW_GENERATIONS)
-    return not (max_gens > 0 and review_gen > max_gens)
+    _review_gen, _prev_sha, max_gens_exceeded = _compute_review_generation(
+        target_dir, target_config, default_branch,
+    )
+    return not max_gens_exceeded
 
 
 def run_c_review_issue(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -1944,8 +2446,11 @@ def run_c_review_issue(action: ActionSpec, context: TickContext) -> ActionResult
         return ActionResult(success=False, stderr="Failed to determine integration head SHA")
     issue_id = f"review-{sha[:8]}"
 
-    review_gen = _count_done_review_issues(target_dir) + 1
-    prev_sha = _find_previous_review_sha(target_dir)
+    review_gen, prev_sha, max_gens_exceeded = _compute_review_generation(
+        target_dir, target_config, default_branch,
+    )
+    if max_gens_exceeded:
+        return ActionResult(success=False, stderr="Max review generations reached")
 
     extra: list[tuple[str, Any]] = [("review_generation", review_gen)]
     if prev_sha:
@@ -1960,6 +2465,22 @@ def run_c_review_issue(action: ActionSpec, context: TickContext) -> ActionResult
             f"has changed."
         )
 
+    guidance = ""
+    if review_gen >= 2:
+        guidance += (
+            f"\n\n## Review Context\n\n"
+            f"This is the **{review_gen}{_ordinal_suffix(review_gen)}**"
+            f" full review of this codebase. Many issues have already been "
+            f"identified and fixed through previous reviews. Only file issues "
+            f"that affect correctness, reliability, security, or user-facing "
+            f"behavior. If the codebase is in good shape, it is appropriate "
+            f"to file nothing."
+        )
+    if review_gen >= 3:
+        guidance += (
+            " File **only bugs** — do not file refactors or enhancements."
+        )
+
     title = f"Code review of {repo_name} @ {sha[:8]}"
     body = (
         f"## Review Scope\n\n{scope}\n\n"
@@ -1968,6 +2489,7 @@ def run_c_review_issue(action: ActionSpec, context: TickContext) -> ActionResult
         f"Use the CodeReviewAgent to perform a thorough review.\n\n"
         f"## Source\n\n"
         f"Generated by SWE pipeline (Phase C review check).\n"
+        f"{guidance}"
     )
     _write_pipeline_issue(
         target_dir, repo_name, issue_id, "review", title, body,
@@ -2150,6 +2672,12 @@ def detect_c_pr_publish(context: dict[str, Any]) -> bool:
         try:
             pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
             if pr_data.get("pr_number"):
+                # PR already exists — update SHA in marker if it drifted
+                # (e.g. a manual push after the original PR was opened)
+                if pr_data.get("sha") != sha:
+                    pr_data["sha"] = sha
+                    pr_marker.write_text(
+                        json.dumps(pr_data, indent=2), encoding="utf-8")
                 return False
         except (OSError, json.JSONDecodeError):
             pass
@@ -2393,6 +2921,9 @@ def sync_session_mode(context: dict[str, Any], mode_file: str | None = None) -> 
             session_data = json.loads(session_file.read_text())
             if session_data.get("active") is True:
                 mode = "github"
+            # Skip tick entirely if the session is completed
+            if session_data.get("completed") is True:
+                return False
         except (json.JSONDecodeError, OSError):
             pass
 

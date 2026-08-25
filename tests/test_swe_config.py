@@ -50,7 +50,15 @@ class TestSWEPipelineConfig:
         assert len(diagnostic_stages) >= 7  # A1-A9 minus fix agents
         for stage in diagnostic_stages:
             assert stage.action.type.value == "custom"
-            assert "run_diagnostic" in stage.action.params.get("callable", "")
+            callable_name = stage.action.params.get("callable", "")
+            # A5/A7/A8/A9 use venv-aware wrappers that call run_diagnostic internally
+            assert (
+                "run_diagnostic" in callable_name
+                or "run_a5_bandit" in callable_name
+                or "run_a7_coverage" in callable_name
+                or "run_a8_radon" in callable_name
+                or "run_a9_dep_audit" in callable_name
+            )
 
     def test_fix_agent_stages_use_queue_fix_agent(self):
         config = PipelineConfig.from_file(self.CONFIG_PATH)
@@ -72,7 +80,9 @@ class TestSWEPipelineConfig:
     def test_github_stages_have_github_mode(self):
         config = PipelineConfig.from_file(self.CONFIG_PATH)
         github_stages = [s for s in config.stages if "github" in s.modes]
-        assert len(github_stages) >= 3  # B1, C-publish, C-pr-status, etc.
+        assert len(github_stages) >= 1  # C-session-terminal
+        # C-pr-status and C-pr-review are NOT mode-restricted — the original
+        # pipeline fires them whenever a PR exists, regardless of session mode.
 
     def test_fix_agent_stages_have_invalidates(self):
         config = PipelineConfig.from_file(self.CONFIG_PATH)

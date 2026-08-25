@@ -289,6 +289,11 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
             variables[k] = v
     command = format_template(command, variables)
 
+    # Resolve timeout: action param → timeout_seconds → default 300s
+    timeout = params.get("timeout", 300)
+    if action.timeout_seconds is not None:
+        timeout = action.timeout_seconds
+
     # Run command
     try:
         proc = subprocess.run(
@@ -297,7 +302,7 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
             cwd=str(context.target_dir),
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=timeout,
             check=False,
         )
         stdout = proc.stdout
