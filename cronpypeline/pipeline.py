@@ -232,9 +232,17 @@ class Pipeline:
         try:
             results = []
             for t in targets:
-                result = self._tick_single(t, target_config_map.get(t, {}), dry_run, verbose)
-                if result.status != TickResultStatus.NO_WORK:
-                    results.append(result)
+                try:
+                    result = self._tick_single(t, target_config_map.get(t, {}), dry_run, verbose)
+                    if result.status != TickResultStatus.NO_WORK:
+                        results.append(result)
+                except Exception as e:  # noqa: BLE001
+                    results.append(TickResult(
+                        target=t,
+                        stage_id=None,
+                        status=TickResultStatus.ACTION_FAILED,
+                        message=f"Unhandled exception: {e}",
+                    ))
             return results
         finally:
             self.lock.release()
