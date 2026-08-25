@@ -535,6 +535,10 @@ class Pipeline:
         ):
             create_marker(stage.markers["completion"], target_dir, context=marker_ctx)
 
+        # Clear rejection marker on success
+        if "rejection" in stage.markers and result.success:
+            delete_marker(stage.markers["rejection"], target_dir, context=marker_ctx)
+
         # Create processing marker for async custom actions (non-chained)
         if (
             stage.action.type == ActionType.CUSTOM

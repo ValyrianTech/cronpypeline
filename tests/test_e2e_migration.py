@@ -358,9 +358,6 @@ class TestVNNMultiTickSimulation:
         # revision stage invalidates rejected-article.md
         assert not (story_dir / "rejected-article.md").exists()
 
-        # Revision successful — clear the rejection marker
-        (story_dir / ".rejection").unlink()
-
         # Tick 4: publishing fires again (article.md exists, published.json missing)
         r4 = pipeline.tick(target="story-1")
         assert r4.status == TickResultStatus.ACTION_EXECUTED

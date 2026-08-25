@@ -929,8 +929,8 @@ class TestRejectionCounter:
         # The trigger is file_missing done.md, which is missing, so it should execute
         assert result.status == TickResultStatus.ACTION_EXECUTED
 
-    def test_rejection_below_max_preserves_and_increments_count(self, tmp_path):
-        """Rejection below max should preserve and increment the rejection count."""
+    def test_rejection_cleared_on_success(self, tmp_path):
+        """Rejection marker should be cleared when the stage succeeds."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
@@ -957,16 +957,16 @@ class TestRejectionCounter:
         })
         pipeline = Pipeline(config)
         result = pipeline.tick(target="my-repo")
-        # Stage should execute (re-processed)
+        # Stage should execute (re-processed) and succeed
         assert result.status == TickResultStatus.ACTION_EXECUTED
-        # Rejection marker should still exist with incremented count
+        # Rejection marker should be cleared on success
         rej_path = workspace / "my-repo" / ".rejection"
-        assert rej_path.exists()
-        rej_data = _json.loads(rej_path.read_text())
-        assert rej_data["rejection_count"] == 2
+        assert not rej_path.exists()
+        # Completion marker should exist
+        assert (workspace / "my-repo" / "done.md").exists()
 
     def test_rejection_count_accumulates_to_give_up(self, tmp_path):
-        """Rejection count should accumulate across cycles until the stage gives up."""
+        """Rejection count should accumulate across rejection cycles until the stage gives up."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
@@ -996,19 +996,20 @@ class TestRejectionCounter:
         })
         pipeline = Pipeline(config)
 
-        # Tick 1: count 1 -> 2, stage re-processed
+        # Tick 1: count 1 -> stage re-processed and succeeds, rejection marker cleared
         result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert _json.loads(rej_path.read_text())["rejection_count"] == 2
+        # Rejection marker should be cleared on success
+        assert not rej_path.exists()
 
         # Simulate a new rejection written by the agent (clear completion, rewrite count)
         done_path.unlink()
         rej_path.write_text(_json.dumps({"rejection_count": 2}))
 
-        # Tick 2: count 2 -> 3, stage re-processed
+        # Tick 2: count 2 -> stage re-processed and succeeds, rejection marker cleared
         result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert _json.loads(rej_path.read_text())["rejection_count"] == 3
+        assert not rej_path.exists()
 
         # Simulate a new rejection written by the agent (clear completion, rewrite count)
         done_path.unlink()
