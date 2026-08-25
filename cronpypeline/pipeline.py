@@ -79,6 +79,14 @@ class TickResult:
         return f"{self.target} | {stage} -> {self.status.value} | {self.message}"
 
 
+class PipelineTickError(Exception):
+    """Raised when _tick_single fails for a specific target, carrying the target name."""
+    def __init__(self, target: str, original: Exception) -> None:
+        self.target = target
+        self.original = original
+        super().__init__(f"{type(original).__name__}: {original}")
+
+
 def _instantiate_action_handler(handler_type: str, params: dict[str, Any]) -> ActionHandler:
     """Factory: instantiate an action handler from config type + params.
 
@@ -203,6 +211,14 @@ class Pipeline:
 
         try:
             return self._tick_inner(targets, target_config_map, dry_run, verbose)
+        except PipelineTickError as e:
+            return TickResult(
+                target=e.target,
+                stage_id=None,
+                status=TickResultStatus.ACTION_FAILED,
+                message=f"Unhandled {type(e.original).__name__}: {e.original}",
+                stderr=traceback.format_exc(),
+            )
         except Exception as e:  # noqa: BLE001
             return TickResult(
                 target=target or "*",
@@ -319,7 +335,10 @@ class Pipeline:
         else:
             target = targets[0]
 
-        return self._tick_single(target, target_config_map.get(target, {}), dry_run, verbose)
+        try:
+            return self._tick_single(target, target_config_map.get(target, {}), dry_run, verbose)
+        except Exception as e:  # noqa: BLE001
+            raise PipelineTickError(target, e) from e
 
     def _tick_single(
         self,
