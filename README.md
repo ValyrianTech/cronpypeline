@@ -397,6 +397,8 @@ The filesystem is the source of truth — no database, no in-memory state:
 | `json` | JSON file with fields | `name`, `directory`, `content` |
 | `symlink` | Symlink to latest report | `name`, `directory`, `target` |
 
+Marker paths must be relative and cannot contain `..` segments or absolute paths; `MarkerSpec.resolve_path` rejects path traversal (`..` segments), absolute paths, and any path that resolves outside the workspace/base directory (raising a `ValueError`).
+
 ### Target specs
 
 | Type | Description | Fields |
@@ -430,6 +432,8 @@ With `repos.json`:
 ```
 
 ## Failure handling
+
+Unhandled exceptions during a tick are caught and reported as an `ACTION_FAILED` `TickResult` with the correct target name, `stage_id=None`, and the traceback captured in `stderr`.
 
 ### Timeouts
 
@@ -682,6 +686,8 @@ Makes HTTP requests using `urllib` from the stdlib. Supports `GET`, `POST`, `PAT
 }
 ```
 
+The URL reported in the result data (`result.data['url']`) is redacted — userinfo (credentials) and query parameters are removed — to avoid leaking sensitive information.
+
 **Auth token resolution** (in order):
 1. `auth_token` — direct value (supports template variables)
 2. `auth_token_env` — environment variable name (checked in `context.env` then `os.environ`)
@@ -846,6 +852,8 @@ results = pipeline.tick_all(dry_run=False, verbose=False)
 status = pipeline.status(targets=["my-repo"])
 ```
 
+`tick_all()` continues processing remaining targets even if one raises an exception. Exceptions are captured as `ACTION_FAILED` `TickResult`s (one per failing target) with the traceback in the `stderr` field, so a single failure does not stop the rest of the batch.
+
 ### TickResult
 
 ```python
@@ -869,6 +877,8 @@ result.stderr       # command error output
 result.chained_stages  # ["A1", "A2"] if chaining occurred
 result.failed_chained_stages  # ["A2"] chained stage IDs whose actions failed
 ```
+
+The string representation of a `TickResult` (`str(result)`) includes the `stderr` output when present, so captured tracebacks are shown to the user.
 
 ### Full public API
 
