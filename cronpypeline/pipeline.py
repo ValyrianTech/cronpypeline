@@ -552,10 +552,9 @@ class Pipeline:
             and not result.data.get("async", False)
         ):
             create_marker(stage.markers["completion"], target_dir, context=marker_ctx)
-
-        # Clear rejection marker on success
-        if "rejection" in stage.markers and result.success:
-            delete_marker(stage.markers["rejection"], target_dir, context=marker_ctx)
+            # Clear rejection marker only when the work is actually completed
+            if "rejection" in stage.markers:
+                delete_marker(stage.markers["rejection"], target_dir, context=marker_ctx)
 
         # Create processing marker for async custom actions (non-chained)
         if (
@@ -703,10 +702,9 @@ class Pipeline:
             # Create completion marker
             if "completion" in next_stage.markers and not result.data.get("async", False):
                 create_marker(next_stage.markers["completion"], target_dir, context=marker_ctx)
-
-            # Clear rejection marker on success
-            if "rejection" in next_stage.markers:
-                delete_marker(next_stage.markers["rejection"], target_dir, context=marker_ctx)
+                # Clear rejection marker only when the work is actually completed
+                if "rejection" in next_stage.markers:
+                    delete_marker(next_stage.markers["rejection"], target_dir, context=marker_ctx)
 
             # Create processing marker for async chained stages
             if result.data.get("async", False) and "processing" in next_stage.markers:

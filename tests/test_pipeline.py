@@ -1096,6 +1096,176 @@ class TestRejectionCounter:
         assert result.status == TickResultStatus.ACTION_EXECUTED
         assert not rej_path.exists()
 
+    def test_queue_agent_rejection_marker_not_cleared_on_queue(self, tmp_path):
+        """A QUEUE_AGENT stage's rejection marker must not be cleared on queue."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        import json as _json
+        rej_path = target_dir / ".rejection"
+        rej_path.write_text(_json.dumps({"rejection_count": 1}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Review",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "ReviewAgent", "prompt": "Review"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+                        "give_up": {"type": "file", "name": ".gave_up"},
+                    },
+                    "max_rejections": 5,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
+        from cronpypeline.config import ActionType
+
+        class MockQueueHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(success=True, stdout="queued")
+            def check_complete(self, action, context):
+                return False
+
+        handler = MockQueueHandler()
+        register_handler(ActionType.QUEUE_AGENT, handler)
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert handler.check_complete(None, None) is False
+        assert rej_path.exists()
+        assert not (target_dir / "done.md").exists()
+        assert not (target_dir / ".gave_up").exists()
+        assert (target_dir / ".processing").exists()
+
+    def test_queue_agent_rejection_count_accumulates_to_give_up(self, tmp_path):
+        """For a QUEUE_AGENT stage, rejection count should accumulate across
+        rejection cycles (marker is never cleared on queue) until give-up."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        import json as _json
+        rej_path = target_dir / ".rejection"
+        rej_path.write_text(_json.dumps({"rejection_count": 1}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Review",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "ReviewAgent", "prompt": "Review"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+                        "give_up": {"type": "file", "name": ".gave_up"},
+                    },
+                    "max_rejections": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
+        from cronpypeline.config import ActionType
+
+        class MockQueueHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(success=True, stdout="queued")
+            def check_complete(self, action, context):
+                return False
+
+        handler = MockQueueHandler()
+        register_handler(ActionType.QUEUE_AGENT, handler)
+
+        # Tick 1: count 1 -> below max, incremented to 2, agent re-queued.
+        # Rejection marker is NOT cleared.
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert handler.check_complete(None, None) is False
+        assert rej_path.exists()
+        assert _json.loads(rej_path.read_text())["rejection_count"] == 2
+
+        # Simulate agent finishing its run (and rejecting again).
+        (target_dir / ".processing").unlink()
+
+        # Tick 2: count 2 -> below max, incremented to 3, agent re-queued.
+        # Rejection marker is still NOT cleared.
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert rej_path.exists()
+        assert _json.loads(rej_path.read_text())["rejection_count"] == 3
+
+        # Simulate agent finishing its run (and rejecting again).
+        (target_dir / ".processing").unlink()
+
+        # Tick 3: count 3 >= max 3 -> give up.
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.GAVE_UP
+        assert (target_dir / ".gave_up").exists()
+        assert not rej_path.exists()
+
+    def test_async_custom_action_rejection_marker_not_cleared_on_queue(self, tmp_path):
+        """An async custom action's rejection marker must not be cleared on queue."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        import json as _json
+        rej_path = target_dir / ".rejection"
+        rej_path.write_text(_json.dumps({"rejection_count": 1}))
+
+        (tmp_path / "async_rejection_mod.py").write_text(
+            "from cronpypeline.actions import ActionResult\n"
+            "def my_action(action, context):\n"
+            "    return ActionResult(success=True, data={'async': True})\n"
+        )
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Async Custom Step",
+                        "trigger": {"type": "file_missing", "path": "done.md"},
+                        "action": {"type": "custom", "params": {"callable": "async_rejection_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "done.md"},
+                            "rejection": {"type": "json", "name": ".rejection", "content": {}},
+                        },
+                        "max_rejections": 5,
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert rej_path.exists()
+            assert not (target_dir / "done.md").exists()
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "async_rejection_mod" in sys.modules:
+                del sys.modules["async_rejection_mod"]
+
     def test_no_rejection_marker_normal_behavior(self, tmp_path):
         """Without a rejection marker, stage should behave normally."""
         workspace = tmp_path / "workspace"

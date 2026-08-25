@@ -366,6 +366,9 @@ class TestVNNMultiTickSimulation:
         # Simulate agent completing: published
         (story_dir / "published.json").write_text(json.dumps({"url": "https://example.com"}))
         (story_dir / ".processing").unlink()
+        # The publishing agent completed successfully, so it clears the rejection
+        # marker (rejection tracking resets once the work is actually completed).
+        (story_dir / ".rejection").unlink()
 
         # Tick 5: no work
         r5 = pipeline.tick(target="story-1")
