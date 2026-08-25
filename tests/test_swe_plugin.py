@@ -4390,7 +4390,8 @@ class TestLoadGithubTokenDotenvFallback:
         env_file.write_text("SWE_GITHUB_TOKEN=dotenv-token\n")
         monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
         # dotenv is not installed → ImportError → break → None
-        assert _load_github_token({}) is None
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) is None
 
 
 # ─── run_c_pr_status review branches ────────────────────────────────────────
