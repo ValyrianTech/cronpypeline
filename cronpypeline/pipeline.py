@@ -552,7 +552,11 @@ class Pipeline:
 
         # Handle chaining
         chained: list[str] = []
-        if stage.chain and stage.action.type != ActionType.QUEUE_AGENT:
+        if (
+            stage.chain
+            and stage.action.type != ActionType.QUEUE_AGENT
+            and not result.data.get("async", False)
+        ):
             chained_result = self._try_chain(target, target_dir, target_config, active_stages, dry_run, verbose, stage)
             if chained_result:
                 final_stage_id, chained, failed_stage_id, failed_result = chained_result
