@@ -1284,28 +1284,25 @@ class TestRunCIssueFix:
     def test_success_returns_stdout(self, tmp_path):
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target)
-        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="done", stderr="")
-        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", return_value=mock_result):
+        with patch("cronpypeline.plugins.issue_fix.run_issue_fix_state_machine", return_value=True):
             result = run_c_issue_fix(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
-        assert result.stdout == "done"
 
     def test_failure_returns_stderr(self, tmp_path):
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target)
-        mock_result = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="error")
-        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", return_value=mock_result):
+        with patch("cronpypeline.plugins.issue_fix.run_issue_fix_state_machine", return_value=False):
             result = run_c_issue_fix(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
-        assert "error" in result.stderr
+        assert "returned False" in result.stderr
 
-    def test_timeout_returns_failure(self, tmp_path):
+    def test_exception_returns_failure(self, tmp_path):
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target)
-        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 600)):
+        with patch("cronpypeline.plugins.issue_fix.run_issue_fix_state_machine", side_effect=RuntimeError("boom")):
             result = run_c_issue_fix(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
-        assert "timed out" in result.stderr
+        assert "boom" in result.stderr
 
 
 # ─── _open_issue_count ──────────────────────────────────────────────────────

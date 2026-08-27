@@ -37,7 +37,6 @@ GITHUB_SESSION_FILE = f"{SWE_SUBDIR}/github_session.json"
 SWE_WORKSPACE_DIR = Path("/spellbook_data/Serendipity/swe/workspace")
 TASKS_DIR = SWE_WORKSPACE_DIR / "tasks"
 RANKING_SCRIPT = "/home/wouter/Repos/spellbook/apps/Serendipity/SWE/scripts/run_swe_issue_ranking.py"
-ISSUE_FIX_SCRIPT = "/home/wouter/Repos/spellbook/apps/Serendipity/SWE/scripts/run_issue_fix.py"
 
 GIT_BIN = shutil.which("git") or "git"
 
@@ -1157,35 +1156,33 @@ def detect_c_issue_fix(context: dict[str, Any]) -> bool:
 
 
 def run_c_issue_fix(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: run run_issue_fix.py to drive the SELECT/GATE state machine.
+    """Action: drive the SELECT/GATE state machine for issue fixes.
 
-    The script auto-detects whether to gate an active task or select a new issue.
+    Calls the native ``issue_fix`` module which auto-detects whether to gate
+    an active task or select a new issue.
 
     :param action: Action spec (no special params needed).
     :param context: Tick context with target directory and name.
     :returns: ActionResult indicating success/failure.
     """
-    if context.dry_run:
-        return ActionResult(success=True, dry_run=True)
+    from cronpypeline.plugins.issue_fix import run_issue_fix_state_machine
 
     repo_name = context.target
-    cmd = [sys.executable, ISSUE_FIX_SCRIPT, repo_name]
+    repo_dir = context.target_dir
+    target_config = context.target_config
 
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=600, check=False,
-        )  # nosec B603 - calling known script
-    except subprocess.TimeoutExpired:
-        return ActionResult(success=False, stderr="Issue fix timed out (600s)")
-
-    if result.returncode != 0:
-        return ActionResult(
-            success=False,
-            stderr=f"Issue fix failed: {result.stderr[:2000]}",
-            stdout=result.stdout,
+        ok = run_issue_fix_state_machine(
+            repo_dir, repo_name, target_config, context,
+            dry_run=context.dry_run, verbose=context.verbose,
         )
+    except Exception as exc:
+        return ActionResult(success=False, stderr=f"Issue fix failed: {exc}")
 
-    return ActionResult(success=True, stdout=result.stdout, data={"stage": "c-issue-fix"})
+    if not ok and not context.dry_run:
+        return ActionResult(success=False, stderr="Issue fix state machine returned False")
+
+    return ActionResult(success=True, dry_run=context.dry_run, data={"stage": "c-issue-fix"})
 
 
 # ─── C-phase shared helpers ─────────────────────────────────────────────────
