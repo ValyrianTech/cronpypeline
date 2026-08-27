@@ -305,6 +305,15 @@ class TestSelectOpenIssue:
         r = select_open_issue(t)
         assert r is not None and str(r.id) == "2"
 
+    def test_corrupted_ranking_marker_falls_through(self, tmp_path):
+        t = _make_target_dir(tmp_path)
+        _write_issue(t / ".SWE" / "issues", "1", status="open")
+        markers_dir = t / ".SWE" / "markers"
+        markers_dir.mkdir(parents=True, exist_ok=True)
+        (markers_dir / "review_ranked.json").write_text("not valid json{")
+        r = select_open_issue(t)
+        assert r is not None and str(r.id) == "1"
+
     def test_session_filter(self, tmp_path):
         t = _make_target_dir(tmp_path)
         _write_issue(t / ".SWE" / "issues", "1", status="open", source="manual", created_at="2020-01-01T00:00:00")

@@ -421,6 +421,17 @@ class TestSelectIssue:
         assert success is True
         assert "a" in msg
 
+    def test_corrupted_ranking_marker_falls_through(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue 1")
+        markers_dir = target / ".SWE" / "markers"
+        markers_dir.mkdir(parents=True, exist_ok=True)
+        (markers_dir / "review_ranked.json").write_text("not valid json{")
+        ctx = _make_tick_context(target)
+        success, msg = select_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert success is True
+        assert "i1" in msg
+
 
 # ─── finalize_session ───────────────────────────────────────────────────────
 
