@@ -2397,6 +2397,50 @@ class TestCrossStageTargetLock:
         assert result.status == TickResultStatus.ACTION_EXECUTED
         assert (workspace / "my-repo" / "b.md").exists()
 
+    def test_target_lock_orphaned_processing_marker_cleaned_up(self, tmp_path):
+        """When a queue_agent stage completes externally, the orphaned processing
+        marker should be cleaned up so target_lock doesn't block downstream stages."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        # A0 is complete (a.md exists) BUT processing marker is still on disk
+        # (agent finished and created completion, pipeline hadn't cleaned up yet)
+        (workspace / "my-repo" / "a.md").touch()
+        (workspace / "my-repo" / ".processing_a").write_text('{"retry_count": 0}')
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "target_lock": True,
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Async step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test", "prompt": "do"}},
+                    "markers": {
+                        "processing": {"type": "json", "name": ".processing_a", "content": {}},
+                        "completion": {"type": "file", "name": "a.md"},
+                    },
+                    "timeout_minutes": 30,
+                },
+                {
+                    "id": "B0",
+                    "name": "Sync step",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        # Orphaned processing marker should be cleaned up, B0 should proceed
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (workspace / "my-repo" / "b.md").exists()
+        assert not (workspace / "my-repo" / ".processing_a").exists()
+
 
 class TestModeFile:
     """Tests for pipeline-wide mode switching via mode_file."""

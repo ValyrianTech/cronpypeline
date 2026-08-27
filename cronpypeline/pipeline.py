@@ -448,6 +448,18 @@ class Pipeline:
                 message="No state derived",
             )
 
+        # Clean up orphaned processing markers for completed stages.
+        # When a queue_agent action completes externally (the agent creates
+        # the completion marker), the pipeline-created processing marker is
+        # left behind.  This orphans the target when target_lock is enabled
+        # (has_processing stays True forever).  Delete the stale processing
+        # marker so downstream stages can proceed.
+        marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
+        for ss in target_state.stage_states.values():
+            if ss.is_complete and ss.is_processing and "processing" in ss.stage.markers:
+                delete_marker(ss.stage.markers["processing"], target_dir, context=marker_ctx)
+                ss.is_processing = False
+
         # Check for rejection give-up (rejection_count >= max_rejections)
         for ss in target_state.stage_states.values():
             if ss.is_rejected and ss.stage.max_rejections > 0:
