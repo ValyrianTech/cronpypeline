@@ -490,8 +490,10 @@ class Pipeline:
                         ss.is_rejected = False  # Allow re-processing
 
         # Check for stale processing markers and handle them
+        # Skip stages that are already complete — a leftover processing marker
+        # (e.g. agent finished and produced completion) should not trigger re-queue.
         for ss in target_state.stage_states.values():
-            if ss.is_stale and ss.is_processing:
+            if ss.is_stale and ss.is_processing and not ss.is_complete:
                 return self._handle_stale(ss, target, target_dir, target_config, dry_run, verbose)
 
         # Find first actionable stage whose trigger condition is met
