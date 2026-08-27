@@ -232,7 +232,7 @@ def _parse_coverage_output(output: str) -> dict[str, Any]:
         r"^(\S+\.py)\s+(\d+)\s+(\d+)\s+(\d+)%(?:\s+(.+))?$",
         output, re.MULTILINE,
     ):
-        if fm.group(1) == "TOTAL":
+        if fm.group(1) == "TOTAL":  # pragma: no cover - regex requires .py suffix
             continue
         summary["files"].append({
             "file": fm.group(1),
