@@ -6,7 +6,7 @@ picks them up asynchronously and dispatches them to agents.
 
 import json
 import time
-import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -112,18 +112,9 @@ class ConversationQueueHandler(ActionHandler):
         if is_retry and "runs_left" in self.default_fields:
             entry["runs_left"] = max(0, self.default_fields["runs_left"] - context.retry_count)
 
-        # Add core fields
-        # On retry, reuse the previous entry_id as conversation_id for continuation
-        previous_entry_id = None
-        if is_retry and context.retry_data:
-            previous_entry_id = context.retry_data.get("entry_id")
-
-        if previous_entry_id:
-            entry["id"] = previous_entry_id
-            entry["conversation_id"] = previous_entry_id
-        else:
-            entry["id"] = str(uuid.uuid4())
-
+        # Add core fields — no `id` field; Serendipity assigns its own
+        # conversation IDs internally. conversation_id stays as whatever
+        # default_fields sets (typically "").
         entry["agent"] = agent
         entry[self.prompt_field] = prompt
         entry["target"] = context.target
@@ -160,15 +151,18 @@ class ConversationQueueHandler(ActionHandler):
         # Remove None values
         entry = {k: v for k, v in entry.items() if v is not None}
 
-        # Write to queue
+        # Write to queue — filename based on agent name and timestamp,
+        # matching the format used by the original SWE pipeline runner.
         self.queue_dir.mkdir(parents=True, exist_ok=True)
-        queue_file = self.queue_dir / f"{entry['id']}.json"
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        queue_filename = f"{agent}_{ts}.json"
+        queue_file = self.queue_dir / queue_filename
         queue_file.write_text(json.dumps(entry, indent=2))
 
         return ActionResult(
             success=True,
             stdout=f"Queued agent {agent} for target {context.target}",
-            data={"queue_file": str(queue_file), "entry_id": entry["id"]},
+            data={"queue_file": str(queue_file), "entry_id": queue_filename},
         )
 
     def check_complete(self, action: ActionSpec, context: TickContext) -> bool:

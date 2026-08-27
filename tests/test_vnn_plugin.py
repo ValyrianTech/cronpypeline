@@ -11,8 +11,8 @@ from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
 class TestConversationIdContinuation:
     """Tests for conversation ID continuation on retry (Phase 3.2)."""
 
-    def test_retry_reuses_entry_id_as_conversation_id(self, tmp_path):
-        """On retry, the previous entry_id should be reused as conversation_id."""
+    def test_retry_does_not_override_conversation_id(self, tmp_path):
+        """On retry, conversation_id should stay as the default (empty), not be overridden."""
         queue_dir = tmp_path / "queue"
         handler = ConversationQueueHandler(
             queue_dir=str(queue_dir),
@@ -41,11 +41,11 @@ class TestConversationIdContinuation:
         result = handler.execute(action, ctx)
 
         entry = json.loads(Path(result.data["queue_file"]).read_text())
-        assert entry["conversation_id"] == previous_entry_id
-        assert entry["id"] == previous_entry_id  # id also reused
+        assert entry["conversation_id"] == ""
+        assert "id" not in entry  # no id field — Serendipity assigns its own
 
-    def test_first_attempt_uses_new_uuid(self, tmp_path):
-        """On first attempt (no retry), a new UUID should be generated."""
+    def test_first_attempt_has_no_id_field(self, tmp_path):
+        """On first attempt, no id field is set — Serendipity assigns its own conversation ID."""
         queue_dir = tmp_path / "queue"
         handler = ConversationQueueHandler(
             queue_dir=str(queue_dir),
@@ -62,7 +62,7 @@ class TestConversationIdContinuation:
 
         entry = json.loads(Path(result.data["queue_file"]).read_text())
         assert entry["conversation_id"] == ""
-        assert entry["id"] != ""
+        assert "id" not in entry
 
     def test_retry_without_retry_data_uses_new_uuid(self, tmp_path):
         """On retry but with no retry_data, a new UUID is generated."""
@@ -87,8 +87,9 @@ class TestConversationIdContinuation:
         result = handler.execute(action, ctx)
 
         entry = json.loads(Path(result.data["queue_file"]).read_text())
-        # conversation_id should be empty (default), id should be new UUID
+        # conversation_id should be empty (default), no id field
         assert entry["conversation_id"] == ""
+        assert "id" not in entry
 
     def test_retry_decrements_runs_left(self, tmp_path):
         """On retry, runs_left should be decremented based on retry_count."""
