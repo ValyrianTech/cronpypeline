@@ -245,7 +245,7 @@ def detect_session_complete(context: dict[str, Any]) -> bool:
 
 
 def select_issue(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
-    """Action: select the first open issue and mark it as triaged.
+    """Select the first open issue and mark it as triaged.
 
     Mirrors the old pipeline's ``select_open_issue`` + ``run_select`` logic:
     - Load all issues from .SWE/issues/
@@ -273,7 +273,7 @@ def select_issue(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
 
 
 def finalize_session(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: finalize a completed GitHub session.
+    """Finalize a completed GitHub session.
 
     Mirrors the original ``detect_c_github_session_terminal`` execute logic:
     - Post a comment on the GitHub issue explaining the discard
@@ -381,7 +381,7 @@ def detect_agent_forgot_marker(context: dict[str, Any]) -> bool:
 
 
 def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
-    """Action: clean up git branch after failure.
+    """Clean up git branch after failure.
 
     Runs ``git checkout integration && git branch -D {task_branch}``.
 
@@ -407,7 +407,7 @@ def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, 
 
 
 def reset_issue_status(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
-    """Action: reset issue status to 'open' after failure.
+    """Reset issue status to 'open' after failure.
 
     Updates the issue's frontmatter status field back to 'open'.
 
@@ -548,7 +548,7 @@ def detect_lint_autofix(context: dict[str, Any]) -> bool:
 
 
 def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: run ruff --fix, write report, commit, and invalidate A2 latest.md.
+    """Run ruff --fix, write report, commit, and invalidate A2 latest.md.
 
     Mirrors the original ``detect_a2_autofix`` execute logic:
     - Switches to PHASE_A_BRANCH
@@ -894,7 +894,7 @@ def detect_b1_issue_gathering(context: dict[str, Any]) -> bool:
 
 
 def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: fetch oldest open GitHub issue with configured label and ingest it.
+    """Fetch oldest open GitHub issue with configured label and ingest it.
 
     Mirrors the original ``detect_b1_issue_gathering`` execute logic:
     - Calls GitHub API for open issues with the configured label
@@ -1085,7 +1085,7 @@ def detect_c_review_ranking(context: dict[str, Any]) -> bool:
 
 
 def run_c_review_ranking(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: run the Targaryen Council Hivemind ranking script.
+    """Run the Targaryen Council Hivemind ranking script.
 
     :param action: Action spec with optional ``max_issues`` param.
     :param context: Tick context with target directory and name.
@@ -1156,7 +1156,7 @@ def detect_c_issue_fix(context: dict[str, Any]) -> bool:
 
 
 def run_c_issue_fix(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: drive the SELECT/GATE state machine for issue fixes.
+    """Drive the SELECT/GATE state machine for issue fixes.
 
     Calls the native ``issue_fix`` module which auto-detects whether to gate
     an active task or select a new issue.
@@ -1176,7 +1176,7 @@ def run_c_issue_fix(action: ActionSpec, context: TickContext) -> ActionResult:
             repo_dir, repo_name, target_config, context,
             dry_run=context.dry_run, verbose=context.verbose,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ActionResult(success=False, stderr=f"Issue fix failed: {exc}")
 
     if not ok and not context.dry_run:
@@ -1656,7 +1656,7 @@ def detect_c_pr_status(context: dict[str, Any]) -> bool:
 
 
 def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: poll GitHub PR for merge/reject/changes-requested.
+    """Poll GitHub PR for merge/reject/changes-requested.
 
     :param action: Action spec.
     :param context: Tick context.
@@ -1933,7 +1933,7 @@ def detect_c_coverage_issue(context: dict[str, Any]) -> bool:
 
 
 def run_c_coverage_issue(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: create a coverage issue file.
+    """Create a coverage issue file.
 
     :param action: Action spec.
     :param context: Tick context.
@@ -2083,7 +2083,7 @@ def _venv_binary(target_dir: Path, name: str) -> str:
 
 
 def run_a7_coverage(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Custom action: run coverage with target-config threshold and 600s timeout.
+    """Run coverage with target-config threshold and 600s timeout.
 
     Reads ``coverage_threshold`` from target_config (default 80.0) and
     overrides the parser_kwargs threshold accordingly. Uses a 600s timeout
@@ -2117,7 +2117,7 @@ def run_a7_coverage(action: ActionSpec, context: TickContext) -> ActionResult:
 
 
 def run_a5_bandit(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Custom action: run bandit with venv-aware command resolution.
+    """Run bandit with venv-aware command resolution.
 
     Resolution order: ``security_cmd`` in target_config → ``.venv/bin/bandit`` → ``bandit``.
 
@@ -2143,7 +2143,7 @@ def run_a5_bandit(action: ActionSpec, context: TickContext) -> ActionResult:
 
 
 def run_a6_vulture(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Custom action: run vulture with venv-aware command resolution.
+    """Run vulture with venv-aware command resolution.
 
     Resolution order: ``deadcode_cmd`` in target_config → ``.venv/bin/vulture`` → ``vulture``.
 
@@ -2169,7 +2169,7 @@ def run_a6_vulture(action: ActionSpec, context: TickContext) -> ActionResult:
 
 
 def run_a8_radon(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Custom action: run radon with venv-aware command resolution.
+    """Run radon with venv-aware command resolution.
 
     Resolution order: ``complexity_cmd`` in target_config → ``.venv/bin/radon`` → ``radon``.
 
@@ -2195,7 +2195,7 @@ def run_a8_radon(action: ActionSpec, context: TickContext) -> ActionResult:
 
 
 def run_a9_dep_audit(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Custom action: run pip-audit and create issues for vulnerabilities.
+    """Run pip-audit and create issues for vulnerabilities.
 
     Wraps the standard run_diagnostic, then parses the pip-audit output
     table and creates one issue per vulnerability (excluding SWE tooling
@@ -2491,7 +2491,7 @@ def detect_c_review_issue(context: dict[str, Any]) -> bool:
 
 
 def run_c_review_issue(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: create a review issue file.
+    """Create a review issue file.
 
     :param action: Action spec.
     :param context: Tick context.
@@ -2638,7 +2638,7 @@ def detect_c_doc_sync(context: dict[str, Any]) -> bool:
 
 
 def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: queue DocumentationSyncAgent.
+    """Queue DocumentationSyncAgent.
 
     :param action: Action spec with queue params.
     :param context: Tick context.
@@ -2771,7 +2771,7 @@ def detect_c_pr_publish(context: dict[str, Any]) -> bool:
 
 
 def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: push integration branch and create PR via GitHub API.
+    """Push integration branch and create PR via GitHub API.
 
     :param action: Action spec.
     :param context: Tick context.
@@ -2890,7 +2890,7 @@ def detect_c_pr_review(context: dict[str, Any]) -> bool:
 
 
 def run_c_pr_review(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Action: queue PRReviewAgent for the published PR.
+    """Queue PRReviewAgent for the published PR.
 
     :param action: Action spec with queue params.
     :param context: Tick context.

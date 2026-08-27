@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.actions import TickContext
-from cronpypeline.config import ActionSpec
+from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.issue_store import Issue, load_issues, set_issue_status
 from cronpypeline.plugins.swe_plugin import (
     COVERAGE_TARGET,
@@ -755,7 +755,7 @@ def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str, str]:
     try:
         proc = subprocess.run(  # nosec B602 - commands from trusted pipeline config
             cmd, shell=True, cwd=str(cwd),
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, timeout=timeout, check=False,
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as exc:
@@ -787,7 +787,7 @@ def _queue_agent(agent_name: str, prompt: str, repo_name: str,
     handler = _build_queue_handler({}, context)
 
     queue_action = ActionSpec(
-        type="custom",
+        type=ActionType.CUSTOM,
         params={
             "agent": agent_name,
             "prompt": prompt,
@@ -1011,7 +1011,7 @@ def run_gate(repo_dir: Path, task_dir: Path,
             if baseline_pct is not None:
                 type_detail["baseline_pct"] = baseline_pct
         else:
-            test_code, test_out, test_err = _run(test_cmd, repo_dir, timeout=900)
+            test_code, _test_out, _test_err = _run(test_cmd, repo_dir, timeout=900)
             tests_green = test_code == 0
             type_ok = True
 
@@ -1105,7 +1105,7 @@ def run_issue_fix_state_machine(repo_dir: Path, repo_name: str,
                     result = _git(repo_dir, "log", "--oneline",
                                   f"{INTEGRATION_BRANCH}..{branch}", check=False)
                     has_commits = bool(result.stdout.strip())
-                except Exception:
+                except OSError:
                     pass
             if has_commits:
                 if not dry_run:

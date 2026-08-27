@@ -89,13 +89,18 @@ class PipelineTickError(Exception):
     """Raised when _tick_single fails for a specific target, carrying the target name."""
 
     def __init__(self, target: str, original: Exception) -> None:
+        """Initialize the error with the target name and original exception.
+
+        :param target: Target name that failed.
+        :param original: The original exception that caused the failure.
+        """
         self.target = target
         self.original = original
         super().__init__(f"{type(original).__name__}: {original}")
 
 
 def _instantiate_action_handler(handler_type: str, params: dict[str, Any]) -> ActionHandler:
-    """Factory: instantiate an action handler from config type + params.
+    """Instantiate an action handler from config type + params.
 
     :param handler_type: Handler type identifier (e.g. ``"conversation_queue"``).
     :param params: Handler-specific parameters.

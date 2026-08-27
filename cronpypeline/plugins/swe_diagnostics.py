@@ -253,7 +253,7 @@ def _resolve_parser(parser_path: str) -> Callable[..., dict[str, Any]] | None:
 
 
 def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Custom action: run a diagnostic command, parse output, write report + symlink.
+    """Run a diagnostic command, parse output, write report + symlink.
 
     Expected action.params:
         - command: Shell command to run (supports template variables)

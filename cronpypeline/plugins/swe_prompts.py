@@ -242,7 +242,7 @@ def _build_queue_handler(params: dict[str, Any], context: TickContext) -> Conver
 
 
 def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Custom action: build a fix prompt from a report and queue it.
+    """Build a fix prompt from a report and queue it.
 
     Expected action.params:
         - report_path: Path to the diagnostic report (symlink or direct)
@@ -370,7 +370,7 @@ You are on branch `{PHASE_A_BRANCH}`. After making your changes:
 
 
 def queue_coder_agent(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Custom action: build a coder prompt from an issue and queue it.
+    """Build a coder prompt from an issue and queue it.
 
     Expected action.params:
         - issue_id: ID of the issue to work on
@@ -423,7 +423,7 @@ def queue_coder_agent(action: ActionSpec, context: TickContext) -> ActionResult:
 
 
 def queue_review_agent(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Custom action: build a review prompt and queue it.
+    """Build a review prompt and queue it.
 
     Expected action.params:
         - agent: Agent name to queue

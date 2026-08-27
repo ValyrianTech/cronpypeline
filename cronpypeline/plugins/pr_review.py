@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""post_pr_review — CLI to post a review comment on a GitHub PR.
+r"""post_pr_review — CLI to post a review comment on a GitHub PR.
 
 Agent-facing front door for the PRReviewAgent.  Instead of hand-writing
 GitHub API calls, the agent writes its review body to a temp file and

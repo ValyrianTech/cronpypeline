@@ -1,4 +1,4 @@
-"""Allow running cronpypeline as a module: python -m cronpypeline"""
+"""Allow running cronpypeline as a module: python -m cronpypeline."""
 
 import sys
 
