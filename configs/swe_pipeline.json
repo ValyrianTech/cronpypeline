@@ -16,14 +16,14 @@
   "action_handler": {
     "type": "conversation_queue",
     "params": {
-      "queue_dir": "/opt/serendipity/data/conversation_queue",
+      "queue_dir": "/spellbook_data/Serendipity/conversation_queue",
       "agent_settings_dir": ".SWE/agent_settings",
       "prompt_field": "content",
       "default_fields": {
         "sender": "SWE_PIPELINE",
         "conversation_id": "",
         "folder_name": "SWE",
-        "model_name": "default_model",
+        "model_name": "DeepSeek:deepseek-v4-flash",
         "runs_left": 3
       },
       "flatten_agent_settings": true
