@@ -3,6 +3,7 @@
   "workspace_dir": "/spellbook_data/Serendipity/swe/workspace/repos",
   "lock_file": ".SWE/pipeline.lock",
   "mode_file": ".SWE/mode.json",
+  "target_lock": true,
   "config_file": "/spellbook_data/Serendipity/swe/swe_pipeline_config.json",
   "pre_tick": {
     "callable": "cronpypeline.plugins.swe_plugin.sync_session_mode"
