@@ -1520,10 +1520,8 @@ def _build_pr_review_prompt(
     :returns: Prompt string.
     """
     marker_path = target_dir / SWE_SUBDIR / "pr_reviewed.json"
-    repo_root = "/home/wouter/Repos/spellbook"
     reviewer_cmd_base = (
-        f"cd {repo_root} && {sys.executable} "
-        f"-m apps.Serendipity.SWE.scripts.post_pr_review {repo_name} "
+        f"{sys.executable} -m cronpypeline.plugins.pr_review {repo_name} "
         f"--pr-number {pr_number} --body-file /tmp/pr_review.md"
     )
 
