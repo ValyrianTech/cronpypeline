@@ -255,7 +255,7 @@ def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
         return ActionResult(success=True, dry_run=True)
 
     params = action.params
-    report_path_raw = Path(params.get("report_path", ""))
+    report_path_raw = context.target_dir / params.get("report_path", "")
 
     # Resolve symlink to get the actual report file
     report_path = report_path_raw
