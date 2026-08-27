@@ -29,6 +29,7 @@ from cronpypeline.markers import (
     MarkerType,
     create_marker,
     delete_marker,
+    marker_exists,
     read_marker,
 )
 from cronpypeline.state import PipelineState, StageState
@@ -588,10 +589,17 @@ class Pipeline:
             create_marker(marker_spec, target_dir, context=marker_ctx)
 
         # Create completion marker for sync actions (command, subprocess, custom)
+        # Skip if the marker is a symlink with no target — the action created it
+        # (e.g. run_diagnostic creates the symlink as part of its work).
         if (
             stage.action.type != ActionType.QUEUE_AGENT
             and "completion" in stage.markers
             and not result.data.get("async", False)
+            and not (
+                stage.markers["completion"].type == MarkerType.SYMLINK
+                and stage.markers["completion"].target is None
+                and marker_exists(stage.markers["completion"], target_dir, context=marker_ctx)
+            )
         ):
             create_marker(stage.markers["completion"], target_dir, context=marker_ctx)
             # Clear rejection marker only when the work is actually completed
@@ -742,7 +750,16 @@ class Pipeline:
                 create_marker(marker_spec, target_dir, context=marker_ctx)
 
             # Create completion marker
-            if "completion" in next_stage.markers and not result.data.get("async", False):
+            # Skip if the marker is a symlink with no target — the action created it.
+            if (
+                "completion" in next_stage.markers
+                and not result.data.get("async", False)
+                and not (
+                    next_stage.markers["completion"].type == MarkerType.SYMLINK
+                    and next_stage.markers["completion"].target is None
+                    and marker_exists(next_stage.markers["completion"], target_dir, context=marker_ctx)
+                )
+            ):
                 create_marker(next_stage.markers["completion"], target_dir, context=marker_ctx)
                 # Clear rejection marker only when the work is actually completed
                 if "rejection" in next_stage.markers:

@@ -272,7 +272,7 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
 
     params = action.params
     command = params.get("command", "")
-    report_dir = Path(params.get("report_dir", "."))
+    report_dir = context.target_dir / params.get("report_dir", ".")
     parser_path = params.get("parser", "")
     report_name = params.get("report_name", "report_{timestamp}.md")
     report_title = params.get("report_title", "Diagnostic Report")
