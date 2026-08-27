@@ -1121,7 +1121,7 @@ def run_c_review_ranking(action: ActionSpec, context: TickContext) -> ActionResu
         (markers_dir / f"ranked_{unranked}.marker").write_text("failed", encoding="utf-8")
         return ActionResult(
             success=False,
-            stderr=f"Ranking failed: {result.stderr[:500]}",
+            stderr=f"Ranking failed: {result.stderr[:2000]}",
         )
 
     (markers_dir / f"ranked_{unranked}.marker").write_text("ok", encoding="utf-8")
@@ -1181,7 +1181,7 @@ def run_c_issue_fix(action: ActionSpec, context: TickContext) -> ActionResult:
     if result.returncode != 0:
         return ActionResult(
             success=False,
-            stderr=f"Issue fix failed: {result.stderr[:500]}",
+            stderr=f"Issue fix failed: {result.stderr[:2000]}",
             stdout=result.stdout,
         )
 
