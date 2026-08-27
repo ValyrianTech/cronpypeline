@@ -27,6 +27,7 @@ class StageState:
     :ivar rejection_count: Number of rejections so far (from rejection marker).
     :ivar is_rejected: Whether the rejection marker exists.
     """
+
     stage: Stage
     is_complete: bool = False
     is_processing: bool = False
@@ -89,8 +90,8 @@ class StageState:
     def is_actionable(self) -> bool:
         """Whether this stage can be acted upon (not complete, not processing, not given up).
 
-A rejected stage is actionable unless rejection tracking is enabled (max_rejections > 0).
-"""
+        A rejected stage is actionable unless rejection tracking is enabled (max_rejections > 0).
+        """
         if self.is_complete or self.is_processing or self.is_given_up:
             return False
         # Rejection only blocks if rejection tracking is enabled
@@ -106,6 +107,7 @@ class TargetState:
     :ivar stage_states: Mapping of stage ID to :class:`StageState`.
     :ivar target_lock: Whether cross-stage target locking is enabled.
     """
+
     target: str
     stages: list[Stage]
     stage_states: dict[str, StageState] = dc_field(default_factory=dict)
@@ -156,6 +158,7 @@ class PipelineState:
     :ivar target_states: Mapping of target name to :class:`TargetState`.
     :ivar target_lock: Whether cross-stage target locking is enabled.
     """
+
     workspace_dir: Path
     stages: list[Stage]
     target_states: dict[str, TargetState] = dc_field(default_factory=dict)

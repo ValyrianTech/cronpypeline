@@ -119,6 +119,7 @@ class Issue:
     :ivar created_at: Optional creation timestamp.
     :ivar body: Markdown body text of the issue.
     """
+
     id: Any
     status: str = "open"
     source: str | None = None

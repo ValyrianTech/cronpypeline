@@ -86,8 +86,7 @@ def _ensure_pipeline_excludes(repo_dir: Path, verbose: bool = False) -> None:
             if existing and not existing.endswith("\n"):
                 f.write("\n")
             f.write("# Added by SWE pipeline: never commit pipeline/tooling artifacts\n")
-            for e in missing:
-                f.write(f"{e}\n")
+            f.writelines(f"{e}\n" for e in missing)
         if verbose:
             print(f"  [git] excluded {missing} via .git/info/exclude")
     except OSError as exc:
@@ -117,8 +116,7 @@ def _ensure_tooling_artifacts_untracked(repo_dir: Path, verbose: bool = False) -
         with open(gitignore, "a", encoding="utf-8") as f:
             if gitignore_lines and not gitignore_lines[-1].endswith("\n"):
                 f.write("\n")
-            for pattern in new_ignores:
-                f.write(f"{pattern}\n")
+            f.writelines(f"{pattern}\n" for pattern in new_ignores)
 
     try:
         _git(repo_dir, "rm", "--cached", "--", *tracked_files)

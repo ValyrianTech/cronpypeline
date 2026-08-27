@@ -32,6 +32,7 @@ def _format_template(template: str, context: dict[str, Any]) -> str:
 
 class MarkerType(str, Enum):
     """Supported marker types on the filesystem."""
+
     FILE = "file"
     JSON = "json"
     SYMLINK = "symlink"
@@ -47,6 +48,7 @@ class MarkerSpec:
     :ivar content: For JSON markers — field values to write.
     :ivar target: For symlink markers — target path.
     """
+
     name: str
     type: MarkerType
     directory: str = "."

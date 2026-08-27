@@ -39,6 +39,7 @@ from cronpypeline.triggers import evaluate_trigger, resolve_custom_callable
 
 class TickResultStatus(str, Enum):
     """Status values for a tick result."""
+
     ACTION_EXECUTED = "action_executed"
     ACTION_FAILED = "action_failed"
     NO_WORK = "no_work"
@@ -61,6 +62,7 @@ class TickResult:
     :ivar chained_stages: List of stage IDs chained through in this tick.
     :ivar failed_chained_stages: List of chained stage IDs whose actions failed.
     """
+
     target: str
     stage_id: str | None
     status: TickResultStatus
@@ -85,6 +87,7 @@ class TickResult:
 
 class PipelineTickError(Exception):
     """Raised when _tick_single fails for a specific target, carrying the target name."""
+
     def __init__(self, target: str, original: Exception) -> None:
         self.target = target
         self.original = original
@@ -341,7 +344,7 @@ class Pipeline:
 
         try:
             return self._tick_single(target, target_config_map.get(target, {}), dry_run, verbose)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             raise PipelineTickError(target, e) from e
 
     def _tick_single(

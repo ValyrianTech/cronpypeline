@@ -36,6 +36,7 @@ class TickContext:
     :ivar retry_count: Number of retries so far (0 for first attempt).
     :ivar retry_data: Data from the previous processing marker (for continuation).
     """
+
     target: str
     workspace_dir: Path
     dry_run: bool = False
@@ -65,6 +66,7 @@ class ActionResult:
     :ivar dry_run: Whether this was a dry run.
     :ivar data: Additional result data (e.g. queue_file, entry_id).
     """
+
     success: bool
     stdout: str = ""
     stderr: str = ""

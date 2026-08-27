@@ -24,6 +24,7 @@ class ReportConfig:
     :ivar template: Report template string with ``{timestamp}`` and ``{content}`` placeholders.
     :ivar extension: Default file extension for reports.
     """
+
     template: str = "# Report — {timestamp}\n\n{content}\n"
     extension: str = ".md"
 

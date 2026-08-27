@@ -20,6 +20,7 @@ class Target:
     :ivar name: Target name.
     :ivar config: Per-target configuration dict.
     """
+
     name: str
     config: dict[str, Any] = dc_field(default_factory=dict)
 

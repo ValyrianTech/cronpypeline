@@ -18,6 +18,7 @@ from cronpypeline.markers import MarkerSpec
 
 class TriggerType(str, Enum):
     """Supported trigger condition types for stage activation."""
+
     FILE_MISSING = "file_missing"
     FILE_EXISTS = "file_exists"
     FILE_OLDER_THAN = "file_older_than"
@@ -30,6 +31,7 @@ class TriggerType(str, Enum):
 
 class ActionType(str, Enum):
     """Supported action types for stage execution."""
+
     COMMAND = "command"
     QUEUE_AGENT = "queue_agent"
     SUBPROCESS = "subprocess"
@@ -39,6 +41,7 @@ class ActionType(str, Enum):
 
 class TargetType(str, Enum):
     """Supported target specification types."""
+
     REGISTRY = "registry"
     STATIC = "static"
     SINGLE = "single"
@@ -61,6 +64,7 @@ class TriggerCondition:
     :ivar callable: Dotted path to custom callable for custom triggers.
     :ivar conditions: Sub-conditions for and/or composite triggers.
     """
+
     type: TriggerType
     path: str | None = None
     minutes: int | None = None
@@ -113,6 +117,7 @@ class ActionSpec:
     :ivar timeout_seconds: Execution timeout in seconds.
     :ivar produces: Markers created on success.
     """
+
     type: ActionType
     params: dict[str, Any] = dc_field(default_factory=dict)
     timeout_seconds: int | None = None
@@ -160,6 +165,7 @@ class Stage:
     :ivar modes: Active modes for this stage (empty = always active).
     :ivar max_rejections: Max rejections before give-up (0 = disabled).
     """
+
     id: str
     name: str
     trigger: TriggerCondition
@@ -224,6 +230,7 @@ class TargetSpec:
     :ivar items: Fixed list of target names (static type).
     :ivar name: Single target name (single type).
     """
+
     type: TargetType
     file: str | None = None
     key: str | None = None
@@ -259,6 +266,7 @@ class ActionHandlerConfig:
     :ivar type: Handler type identifier (e.g. ``"conversation_queue"``).
     :ivar params: Handler-specific parameters.
     """
+
     type: str
     params: dict[str, Any] = dc_field(default_factory=dict)
 
@@ -287,6 +295,7 @@ class HookConfig:
 
     :ivar callable: Dotted path to the hook callable (e.g. ``"my_plugin.pre_tick_sync"``).
     """
+
     callable: str
 
     @classmethod
@@ -316,6 +325,7 @@ class PipelineConfig:
     :ivar mode_file: Path to JSON file with ``{"mode": "..."}`` for mode switching.
     :ivar target_lock: Cross-stage lock — blocks all stages for a target while any stage is processing.
     """
+
     name: str
     workspace_dir: str
     stages: list[Stage]

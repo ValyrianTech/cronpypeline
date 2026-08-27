@@ -9,7 +9,6 @@ Provides:
 import re
 import subprocess  # nosec B404 - subprocess is used by design to run diagnostic commands
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from cronpypeline.actions import ActionResult, TickContext, format_template
