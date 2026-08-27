@@ -2103,7 +2103,11 @@ def run_a7_coverage(action: ActionSpec, context: TickContext) -> ActionResult:
     target_config = context.target_config
     threshold = float(target_config.get("coverage_threshold", 80.0))
 
-    params = {**action.params}
+    command = (target_config.get("coverage_cmd") or "").strip()
+    if not command:
+        command = f"{_venv_binary(context.target_dir, 'pytest')} --cov=cronpypeline --cov-report=term-missing"
+
+    params = {**action.params, "command": command}
     parser_kwargs = dict(params.get("parser_kwargs", {}))
     parser_kwargs["threshold"] = threshold
     params["parser_kwargs"] = parser_kwargs

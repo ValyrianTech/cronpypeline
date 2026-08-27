@@ -450,7 +450,7 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_plugin.run_a7_coverage",
-          "command": "{coverage_cmd}",
+          "command": "",
           "report_dir": ".SWE/reports/coverage",
           "parser": "cronpypeline.plugins.swe_diagnostics.parse_coverage_output",
           "parser_kwargs": {"threshold": 80.0},

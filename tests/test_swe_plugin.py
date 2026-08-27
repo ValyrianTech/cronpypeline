@@ -4718,6 +4718,33 @@ class TestRunDiagnosticWrappers:
             run_a7_coverage(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert captured["action"].params["parser_kwargs"]["threshold"] == 75.5
 
+    def test_run_a7_coverage_uses_coverage_cmd(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, coverage_cmd="pytest --cov=foo .")
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            run_a7_coverage(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert captured["action"].params["command"] == "pytest --cov=foo ."
+
+    def test_run_a7_coverage_venv_binary_when_present(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".venv" / "bin").mkdir(parents=True)
+        (target / ".venv" / "bin" / "pytest").write_text("")
+        ctx = _make_tick_context(target)
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            run_a7_coverage(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        venv = str(target / ".venv" / "bin" / "pytest")
+        assert captured["action"].params["command"] == f"{venv} --cov=cronpypeline --cov-report=term-missing"
+
+    def test_run_a7_coverage_falls_back_to_pytest(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            run_a7_coverage(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert captured["action"].params["command"] == "pytest --cov=cronpypeline --cov-report=term-missing"
+
     def test_run_a5_bandit_uses_security_cmd(self, tmp_path):
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target, security_cmd="bandit -r .")
