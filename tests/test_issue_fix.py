@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.plugins.issue_fix import (
     CODING_COMPLETE_MARKER,
@@ -218,7 +216,7 @@ class TestEnsureToolingArtifactsUntracked:
         subprocess.run(["git", "-C", str(tmp_path), "add", ".coverage"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "c"], capture_output=True, check=True)
         _ensure_tooling_artifacts_untracked(tmp_path, verbose=True)
-        tracked = subprocess.run(["git", "-C", str(tmp_path), "ls-files", "--", ".coverage"], capture_output=True, text=True).stdout.strip()
+        tracked = subprocess.run(["git", "-C", str(tmp_path), "ls-files", "--", ".coverage"], capture_output=True, text=True, check=False).stdout.strip()
         assert tracked == ""
 
     def test_git_error(self, tmp_path):
@@ -233,7 +231,7 @@ class TestEnsureIntegrationBranch:
     def test_creates(self, tmp_path):
         _init_git(tmp_path)
         assert ensure_integration_branch(tmp_path, "main", verbose=True) is True
-        assert INTEGRATION_BRANCH in subprocess.run(["git", "-C", str(tmp_path), "branch", "--list"], capture_output=True, text=True).stdout
+        assert INTEGRATION_BRANCH in subprocess.run(["git", "-C", str(tmp_path), "branch", "--list"], capture_output=True, text=True, check=False).stdout
 
     def test_existing(self, tmp_path):
         _init_git(tmp_path)
@@ -461,8 +459,6 @@ class TestEnsureIntegrationBranchEdge:
 
     def test_checkout_fails(self, tmp_path):
         _init_git(tmp_path)
-        original_git = __import__("cronpypeline.plugins.issue_fix", fromlist=["_git"])._git.__wrapped__ if hasattr(
-            __import__("cronpypeline.plugins.issue_fix", fromlist=["_git"])._git, "__wrapped__") else None
         call_count = [0]
         def fake_git(repo, *args, check=True):
             call_count[0] += 1
@@ -543,7 +539,7 @@ class TestCleanupStaleTask:
         target, task_dir = self._setup(tmp_path)
         assert _cleanup_stale_task(target, task_dir, verbose=True) is True
         assert not task_dir.exists()
-        branches = subprocess.run(["git", "-C", str(target), "branch", "--list"], capture_output=True, text=True).stdout
+        branches = subprocess.run(["git", "-C", str(target), "branch", "--list"], capture_output=True, text=True, check=False).stdout
         assert "swe-pipeline/task_task1" not in branches
 
     def test_with_source_issue(self, tmp_path):
@@ -678,7 +674,7 @@ class TestEnsureTaskBranch:
         _init_git(tmp_path)
         assert _ensure_task_branch(tmp_path, "i1", "main", verbose=True) is True
         assert "swe-pipeline/task_i1" in subprocess.run(
-            ["git", "-C", str(tmp_path), "branch", "--list"], capture_output=True, text=True).stdout
+            ["git", "-C", str(tmp_path), "branch", "--list"], capture_output=True, text=True, check=False).stdout
 
     def test_existing(self, tmp_path):
         _init_git(tmp_path)
@@ -720,7 +716,7 @@ class TestRunSelect:
         h = MagicMock(); h.execute.return_value = ActionResult(success=True)
         with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=h):
             assert run_select(t, "repo", {}, _make_tick_context(t), verbose=True) is True
-        td = list((tmp_path / "tasks").rglob(TASK_FILE))[0]
+        td = next(iter((tmp_path / "tasks").rglob(TASK_FILE)))
         task = json.loads(td.read_text())
         assert task["issue_type"] == "bug"
 
@@ -738,7 +734,7 @@ class TestRunSelect:
         h = MagicMock(); h.execute.return_value = ActionResult(success=True)
         with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=h):
             assert run_select(t, "repo", {}, _make_tick_context(t), verbose=True) is True
-        task = json.loads(list((tmp_path / "tasks").rglob(TASK_FILE))[0].read_text())
+        task = json.loads(next(iter((tmp_path / "tasks").rglob(TASK_FILE))).read_text())
         assert task["issue_type"] == "review"
 
     def test_queue_fails(self, tmp_path, monkeypatch):
@@ -749,7 +745,7 @@ class TestRunSelect:
             assert run_select(t, "repo", {}, _make_tick_context(t)) is False
 
     def test_branch_fails(self, tmp_path, monkeypatch):
-        t = self._setup(tmp_path)
+        self._setup(tmp_path)
         # Not a git repo — _ensure_task_branch will fail
         t2 = _make_target_dir(tmp_path / "other")
         (t2 / ".SWE" / "repo_briefing.md").write_text("b")
@@ -771,7 +767,7 @@ class TestRunSelect:
         h = MagicMock(); h.execute.return_value = ActionResult(success=True)
         with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=h):
             run_select(t, "repo", {}, _make_tick_context(t))
-        td = list((tmp_path / "tasks").rglob(TASK_FILE))[0].parent
+        td = next(iter((tmp_path / "tasks").rglob(TASK_FILE))).parent
         assert not (td / GATE_RESULT_FILE).exists()
         assert not (td / CODING_COMPLETE_MARKER).exists()
 
