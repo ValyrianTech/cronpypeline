@@ -8,6 +8,7 @@ from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.issue_store import create_issue, get_issue
 from cronpypeline.plugins.swe_prompts import (
+    _build_queue_handler,
     build_coder_prompt,
     build_fix_prompt,
     build_review_prompt,
@@ -801,3 +802,38 @@ class TestQueueFixAgentBrokenSymlinkOSError:
         with patch.object(Path, "resolve", side_effect=OSError("broken symlink")):
             result = queue_fix_agent(action, ctx)
         assert result.success is True
+
+
+class TestBuildQueueHandler:
+    """Tests for _build_queue_handler fallback logic."""
+
+    def test_uses_pipeline_action_handler_fallback(self, tmp_path):
+        """Covers line 233 — fallback from pipeline.config.action_handler.params."""
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+        mock_pipeline = MagicMock()
+        mock_pipeline.config.action_handler.params = {
+            "queue_dir": str(tmp_path / "fallback_queue"),
+            "prompt_field": "fallback_prompt",
+        }
+        ctx.pipeline = mock_pipeline
+        params = {"queue_dir": str(tmp_path / "override_queue")}
+        handler = _build_queue_handler(params, ctx)
+        assert str(handler.queue_dir) == str(tmp_path / "override_queue")
+        assert handler.prompt_field == "fallback_prompt"
+
+    def test_no_pipeline_uses_empty_fallback(self, tmp_path):
+        """No pipeline set — fallback stays empty, params used directly."""
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+        params = {"queue_dir": str(tmp_path / "q")}
+        handler = _build_queue_handler(params, ctx)
+        assert str(handler.queue_dir) == str(tmp_path / "q")
+
+    def test_pipeline_none_action_handler(self, tmp_path):
+        """Pipeline exists but action_handler is None — fallback stays empty."""
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+        mock_pipeline = MagicMock()
+        mock_pipeline.config.action_handler = None
+        ctx.pipeline = mock_pipeline
+        params = {"queue_dir": str(tmp_path / "q")}
+        handler = _build_queue_handler(params, ctx)
+        assert str(handler.queue_dir) == str(tmp_path / "q")
