@@ -1082,10 +1082,7 @@ def detect_c_review_ranking(context: dict[str, Any]) -> bool:
         return False
 
     open_review = _count_open_review_issues(target_dir)
-    if open_review < 2:
-        return False
-
-    return True
+    return open_review >= 2
 
 
 def run_c_review_ranking(action: ActionSpec, context: TickContext) -> ActionResult:
