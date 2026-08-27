@@ -7,6 +7,9 @@ markdown body with the issue description.
 This module uses a simple built-in frontmatter parser (no external YAML dependency).
 """
 
+import argparse
+import re
+import sys
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
@@ -317,3 +320,98 @@ def finalize_issue_outcome(target_dir: Path | str | None = None, issue_id: Any =
             _write_issue_file(path, issue)
             return True
     return False
+
+
+# ─── CLI ─────────────────────────────────────────────────────────────────────
+
+
+def _slugify(text: str) -> str:
+    """Lowercase, collapse non-alphanumerics to single hyphens, strip ends.
+
+    :param text: Text to slugify.
+    :returns: Slug string suitable for use as an issue id or filename.
+    """
+    return re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower()).strip("-")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for filing issues from agent review findings.
+
+    Usage::
+
+        python3 -m cronpypeline.plugins.issue_store file <repo_name> \\
+            --type <bug|enhancement|refactor> --title "<title>" \\
+            --body-file /tmp/swe_finding.md
+
+    The target directory is assumed to be the current working directory
+    (agents ``cd`` into the repo before running this command).
+
+    :param argv: Optional argument list (defaults to ``sys.argv[1:]``).
+    :returns: Exit code (0 on success, 1 on error).
+    """
+    parser = argparse.ArgumentParser(
+        prog="issue_store",
+        description="SWE issue store CLI — file issues from agent findings.",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    file_parser = subparsers.add_parser("file", help="File a new issue")
+    file_parser.add_argument("repo_name", help="Repository name")
+    file_parser.add_argument(
+        "--type", dest="issue_type",
+        choices=["bug", "enhancement", "refactor"],
+        default="bug",
+        help="Issue type (default: bug)",
+    )
+    file_parser.add_argument("--title", required=True, help="Issue title")
+    file_parser.add_argument(
+        "--body-file", dest="body_file", required=True,
+        help="Path to a file containing the issue body (markdown)",
+    )
+
+    args = parser.parse_args(argv)
+
+    if args.command is None:
+        parser.print_help()
+        return 1
+
+    if args.command == "file":
+        body_path = Path(args.body_file)
+        if not body_path.exists():
+            print(f"error: body file not found: {body_path}", file=sys.stderr)
+            return 1
+        body = body_path.read_text()
+
+        issue_id = _slugify(args.title)
+        if not issue_id:
+            print("error: title produces empty slug", file=sys.stderr)
+            return 1
+
+        target_dir = Path.cwd()
+        existing = get_issue(target_dir, issue_id)
+        if existing is not None:
+            print(f"issue already exists: {issue_id} (status: {existing.status})")
+            return 0
+
+        issue = create_issue(
+            target_dir,
+            issue_data={
+                "id": issue_id,
+                "status": "open",
+                "source": "review",
+                "type": args.issue_type,
+                "attempts": 0,
+                "repo": args.repo_name,
+                "labels": [],
+            },
+            body=body,
+        )
+        print(f"filed issue: {issue.id} ({issue.type}) -> .SWE/issues/{issue.id}.md")
+        return 0
+
+    parser.print_help()
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

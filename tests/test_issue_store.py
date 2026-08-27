@@ -414,3 +414,134 @@ class TestSerializeValueBool:
     def test_serialize_float(self):
         from cronpypeline.plugins.issue_store import _serialize_value
         assert _serialize_value(3.14) == "3.14"
+
+
+class TestSlugify:
+    """Tests for _slugify helper."""
+
+    def test_basic_slug(self):
+        from cronpypeline.plugins.issue_store import _slugify
+        assert _slugify("Missing CLI entry point") == "missing-cli-entry-point"
+
+    def test_special_chars(self):
+        from cronpypeline.plugins.issue_store import _slugify
+        assert _slugify("Fix: `code` bug (urgent!)") == "fix-code-bug-urgent"
+
+    def test_empty_string(self):
+        from cronpypeline.plugins.issue_store import _slugify
+        assert _slugify("") == ""
+
+    def test_only_special_chars(self):
+        from cronpypeline.plugins.issue_store import _slugify
+        assert _slugify("!!!") == ""
+
+
+class TestMainFile:
+    """Tests for the CLI main() 'file' subcommand."""
+
+    def test_file_creates_issue(self, tmp_path, monkeypatch):
+        from cronpypeline.plugins.issue_store import main
+
+        monkeypatch.chdir(tmp_path)
+        body_file = tmp_path / "finding.md"
+        body_file.write_text("## Summary\n\nA bug was found.")
+
+        rc = main(["file", "my-repo", "--type", "bug",
+                   "--title", "Missing CLI entry point",
+                   "--body-file", str(body_file)])
+
+        assert rc == 0
+        issue = get_issue(tmp_path, "missing-cli-entry-point")
+        assert issue is not None
+        assert issue.status == "open"
+        assert issue.source == "review"
+        assert issue.type == "bug"
+        assert issue.repo == "my-repo"
+        assert "A bug was found." in issue.body
+
+    def test_file_default_type_is_bug(self, tmp_path, monkeypatch):
+        from cronpypeline.plugins.issue_store import main
+
+        monkeypatch.chdir(tmp_path)
+        body_file = tmp_path / "finding.md"
+        body_file.write_text("body text")
+
+        rc = main(["file", "my-repo",
+                   "--title", "Some issue",
+                   "--body-file", str(body_file)])
+
+        assert rc == 0
+        issue = get_issue(tmp_path, "some-issue")
+        assert issue is not None
+        assert issue.type == "bug"
+
+    def test_file_enhancement_type(self, tmp_path, monkeypatch):
+        from cronpypeline.plugins.issue_store import main
+
+        monkeypatch.chdir(tmp_path)
+        body_file = tmp_path / "finding.md"
+        body_file.write_text("body text")
+
+        rc = main(["file", "my-repo", "--type", "enhancement",
+                   "--title", "Add feature X",
+                   "--body-file", str(body_file)])
+
+        assert rc == 0
+        issue = get_issue(tmp_path, "add-feature-x")
+        assert issue is not None
+        assert issue.type == "enhancement"
+
+    def test_file_duplicate_returns_zero(self, tmp_path, monkeypatch):
+        from cronpypeline.plugins.issue_store import main
+
+        monkeypatch.chdir(tmp_path)
+        body_file = tmp_path / "finding.md"
+        body_file.write_text("body text")
+
+        rc1 = main(["file", "my-repo", "--title", "Dup issue",
+                    "--body-file", str(body_file)])
+        assert rc1 == 0
+
+        rc2 = main(["file", "my-repo", "--title", "Dup issue",
+                    "--body-file", str(body_file)])
+        assert rc2 == 0
+
+    def test_file_missing_body_file(self, tmp_path, monkeypatch):
+        from cronpypeline.plugins.issue_store import main
+
+        monkeypatch.chdir(tmp_path)
+        rc = main(["file", "my-repo", "--title", "Test",
+                   "--body-file", str(tmp_path / "nonexistent.md")])
+        assert rc == 1
+
+    def test_file_empty_title_slug(self, tmp_path, monkeypatch):
+        from cronpypeline.plugins.issue_store import main
+
+        monkeypatch.chdir(tmp_path)
+        body_file = tmp_path / "finding.md"
+        body_file.write_text("body text")
+
+        rc = main(["file", "my-repo", "--title", "!!!",
+                   "--body-file", str(body_file)])
+        assert rc == 1
+
+    def test_no_command_prints_help(self, tmp_path, monkeypatch, capsys):
+        from cronpypeline.plugins.issue_store import main
+
+        monkeypatch.chdir(tmp_path)
+        rc = main([])
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "issue_store" in captured.out
+
+    def test_file_creates_issues_dir(self, tmp_path, monkeypatch):
+        from cronpypeline.plugins.issue_store import main
+
+        monkeypatch.chdir(tmp_path)
+        body_file = tmp_path / "finding.md"
+        body_file.write_text("body")
+
+        rc = main(["file", "my-repo", "--title", "Test issue",
+                   "--body-file", str(body_file)])
+        assert rc == 0
+        assert (tmp_path / ".SWE" / "issues" / "test-issue.md").exists()
