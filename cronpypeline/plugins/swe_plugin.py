@@ -1167,11 +1167,16 @@ def detect_c_issue_fix(context: dict[str, Any]) -> bool:
     - Open issue exists (C-select)
     - No active GitHub session (Phase C runs in default mode)
 
+    When the issues-per-PR batch is full, only open coverage issues are
+    eligible for selection (verification must complete before PR). Other
+    open issues are left for the next cycle after a fresh clone.
+
     :param context: Trigger context dict with ``target_dir`` and ``target``.
     :returns: True if the issue-fix state machine should run.
     """
     target_dir = Path(context.get("target_dir", "."))
     repo_name = context.get("target", "")
+    target_config = context.get("target_config", {})
 
     session = _read_github_session(target_dir)
     if session is not None and session.get("active"):
@@ -1179,6 +1184,9 @@ def detect_c_issue_fix(context: dict[str, Any]) -> bool:
 
     if _find_active_task(repo_name) is not None:
         return True
+
+    if _batch_is_full(target_dir, target_config):
+        return _has_open_coverage_issues(target_dir)
 
     issues = load_issues(target_dir)
     return any(i.status == "open" for i in issues)
@@ -1223,6 +1231,8 @@ MAX_REVIEW_ISSUES_PER_GENERATION = 3
 MAX_PR_REVIEW_CYCLES = 3
 DOC_SYNC_MARKER = "doc_sync.json"
 DOC_SYNC_QUEUED_MARKER = "doc_sync_queued.json"
+BATCH_MARKER_NAME = "issues_fixed_batch.json"
+DEFAULT_ISSUES_PER_PR = 1
 
 
 def integration_head_sha(target_dir: Path, default_branch: str) -> str | None:
@@ -1269,6 +1279,134 @@ def _open_issue_count(target_dir: Path) -> int:
                 continue
         count += 1
     return count
+
+
+def _batch_marker_path(target_dir: Path) -> Path:
+    """Return the path to the issues-fixed batch marker.
+
+    :param target_dir: Target repo directory.
+    :returns: Path to the batch marker file.
+    """
+    return target_dir / SWE_SUBDIR / "markers" / BATCH_MARKER_NAME
+
+
+def _read_batch_marker(target_dir: Path) -> dict[str, Any] | None:
+    """Read the issues-fixed batch marker, if it exists.
+
+    :param target_dir: Target repo directory.
+    :returns: Batch marker dict, or None if not present.
+    """
+    path = _batch_marker_path(target_dir)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_batch_marker(target_dir: Path, data: dict[str, Any]) -> None:
+    """Write the issues-fixed batch marker.
+
+    :param target_dir: Target repo directory.
+    :param data: Batch marker data to write.
+    """
+    path = _batch_marker_path(target_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _batch_fixed_count(target_dir: Path) -> int:
+    """Return the number of successfully fixed issues in the current batch.
+
+    :param target_dir: Target repo directory.
+    :returns: Fixed count, or 0 if no batch marker exists.
+    """
+    marker = _read_batch_marker(target_dir)
+    if marker is None:
+        return 0
+    return int(marker.get("fixed_count", 0))
+
+
+def _issues_per_pr(target_config: dict[str, Any]) -> int:
+    """Return the per-target issues-per-PR limit.
+
+    :param target_config: Per-target config dict from repos.json.
+    :returns: Maximum number of issues to fix before publishing a PR.
+    """
+    return int(target_config.get("issues_per_pr", DEFAULT_ISSUES_PER_PR))
+
+
+def _batch_is_full(target_dir: Path, target_config: dict[str, Any]) -> bool:
+    """Check if the current batch has reached the issues-per-PR limit.
+
+    :param target_dir: Target repo directory.
+    :param target_config: Per-target config dict from repos.json.
+    :returns: True if the batch is full (fixed_count >= issues_per_pr).
+    """
+    return _batch_fixed_count(target_dir) >= _issues_per_pr(target_config)
+
+
+def _increment_batch_fixed_count(target_dir: Path) -> int:
+    """Increment the batch fixed count and return the new value.
+
+    Creates the batch marker if it doesn't exist.
+
+    :param target_dir: Target repo directory.
+    :returns: The new fixed_count value.
+    """
+    marker = _read_batch_marker(target_dir)
+    if marker is None:
+        marker = {
+            "fixed_count": 0,
+            "batch_started_at": datetime.now(timezone.utc).isoformat(),
+        }
+    fixed_count = int(marker.get("fixed_count", 0)) + 1
+    marker["fixed_count"] = fixed_count
+    _write_batch_marker(target_dir, marker)
+    return fixed_count
+
+
+def _has_open_coverage_issues(target_dir: Path) -> bool:
+    """Check if there are any open issues with type 'coverage'.
+
+    :param target_dir: Target repo directory.
+    :returns: True if at least one open coverage issue exists.
+    """
+    issues_dir = target_dir / SWE_SUBDIR / "issues"
+    if not issues_dir.is_dir():
+        return False
+    for path in sorted(issues_dir.glob("*.md")):
+        try:
+            head = path.read_text(encoding="utf-8")[:800]
+        except OSError:
+            continue
+        if not head.startswith("---"):
+            continue
+        sm = re.search(r"(?m)^status:\s*(\S+)", head)
+        if not sm or sm.group(1) != "open":
+            continue
+        tm = re.search(r"(?m)^type:\s*(\S+)", head)
+        if tm and tm.group(1).strip().lower() == "coverage":
+            return True
+    return False
+
+
+def _should_block_on_open_issues(target_dir: Path,
+                                 target_config: dict[str, Any]) -> bool:
+    """Check whether open issues should block downstream stages.
+
+    When the batch is not full, any open issue blocks (original behavior).
+    When the batch is full, only open coverage issues block (verification
+    must complete before PR); other open issues are left for the next cycle.
+
+    :param target_dir: Target repo directory.
+    :param target_config: Per-target config dict from repos.json.
+    :returns: True if open issues should block the calling stage.
+    """
+    if _batch_is_full(target_dir, target_config):
+        return _has_open_coverage_issues(target_dir)
+    return _open_issue_count(target_dir) > 0
 
 
 def _a1_is_pass(target_dir: Path) -> bool:
@@ -1921,13 +2059,16 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
 def detect_c_coverage_issue(context: dict[str, Any]) -> bool:
     """Trigger: fire when coverage < target and queue is empty.
 
+    When the issues-per-PR batch is full, only open coverage issues block
+    this stage (other open issues are left for the next cycle).
+
     :param context: Trigger context dict.
     :returns: True if a coverage issue should be created.
     """
     target_dir = Path(context.get("target_dir", "."))
     target_config = context.get("target_config", {})
 
-    if _open_issue_count(target_dir) > 0:
+    if _should_block_on_open_issues(target_dir, target_config):
         return False
     if not _a1_is_pass(target_dir):
         return False
@@ -2483,12 +2624,17 @@ def _compute_review_generation(
 def detect_c_review_issue(context: dict[str, Any]) -> bool:
     """Trigger: fire when coverage >= target and queue is empty.
 
+    Does not fire when the issues-per-PR batch is full — review issues are
+    for the next cycle after a fresh clone.
+
     :param context: Trigger context dict.
     :returns: True if a review issue should be created.
     """
     target_dir = Path(context.get("target_dir", "."))
     target_config = context.get("target_config", {})
 
+    if _batch_is_full(target_dir, target_config):
+        return False
     if _open_issue_count(target_dir) > 0:
         return False
     if not _a1_is_pass(target_dir):
@@ -2596,13 +2742,16 @@ def run_c_review_issue(action: ActionSpec, context: TickContext) -> ActionResult
 def detect_c_doc_sync(context: dict[str, Any]) -> bool:
     """Trigger: fire when documentation needs syncing before PR.
 
+    When the issues-per-PR batch is full, only open coverage issues block
+    this stage (other open issues are left for the next cycle).
+
     :param context: Trigger context dict.
     :returns: True if doc sync should be queued.
     """
     target_dir = Path(context.get("target_dir", "."))
     target_config = context.get("target_config", {})
 
-    if _open_issue_count(target_dir) > 0:
+    if _should_block_on_open_issues(target_dir, target_config):
         return False
     if not _a1_is_pass(target_dir):
         return False
@@ -2726,13 +2875,16 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
 def detect_c_pr_publish(context: dict[str, Any]) -> bool:
     """Trigger: fire when pipeline is complete and PR should be published.
 
+    When the issues-per-PR batch is full, only open coverage issues block
+    this stage (other open issues are left for the next cycle).
+
     :param context: Trigger context dict.
     :returns: True if PR should be published.
     """
     target_dir = Path(context.get("target_dir", "."))
     target_config = context.get("target_config", {})
 
-    if _open_issue_count(target_dir) > 0:
+    if _should_block_on_open_issues(target_dir, target_config):
         return False
     if not _a1_is_pass(target_dir):
         return False

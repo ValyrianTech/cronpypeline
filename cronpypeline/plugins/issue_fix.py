@@ -33,6 +33,7 @@ from cronpypeline.plugins.swe_plugin import (
     TASKS_DIR,
     _find_active_task,
     _git,
+    _increment_batch_fixed_count,
     _read_github_session,
 )
 
@@ -585,6 +586,30 @@ def _invalidate_reports(repo_dir: Path,
             pass
 
 
+ALL_REPORT_SUBDIRS = (
+    "test-infra",
+    "lint",
+    "docstrings",
+    "typecheck",
+    "security",
+    "deadcode",
+    "coverage",
+    "complexity",
+    "dep-audit",
+)
+
+
+def _invalidate_all_reports(repo_dir: Path) -> None:
+    """Delete all Phase A report symlinks so the pipeline re-runs every check.
+
+    Called when the issues-per-PR batch is full, ensuring all diagnostics
+    are re-run before the PR is published.
+
+    :param repo_dir: Target repo directory.
+    """
+    _invalidate_reports(repo_dir, subdirs=ALL_REPORT_SUBDIRS)
+
+
 # ─── Prompt builders ─────────────────────────────────────────────────────────
 
 
@@ -904,6 +929,7 @@ def run_select(repo_dir: Path, repo_name: str, target_config: dict[str, Any],
         "test_cmd": test_cmd,
         "dep_audit_cmd": dep_audit_cmd,
         "coverage_cmd": coverage_cmd,
+        "issues_per_pr": target_config.get("issues_per_pr", 1),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     (task_dir / TASK_FILE).write_text(json.dumps(task, indent=2), encoding="utf-8")
@@ -1041,7 +1067,15 @@ def run_gate(repo_dir: Path, task_dir: Path,
         merged = merge_into_integration(repo_dir, branch, verbose=verbose)
         passed = merged
         if merged:
-            _invalidate_reports(repo_dir)
+            if issue_type != "coverage":
+                fixed_count = _increment_batch_fixed_count(repo_dir)
+                issues_per_pr = int(task.get("issues_per_pr", 1))
+                if fixed_count >= issues_per_pr:
+                    _invalidate_all_reports(repo_dir)
+                else:
+                    _invalidate_reports(repo_dir)
+            else:
+                _invalidate_reports(repo_dir)
 
     gate = {
         "task_id": task["task_id"],

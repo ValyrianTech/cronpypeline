@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.plugins.issue_fix import (
+    ALL_REPORT_SUBDIRS,
     CODING_COMPLETE_MARKER,
     GATE_RESULT_FILE,
     MAX_ATTEMPTS,
@@ -29,6 +30,7 @@ from cronpypeline.plugins.issue_fix import (
     _ensure_tooling_artifacts_untracked,
     _finalize_issue_outcome,
     _gate_review,
+    _invalidate_all_reports,
     _invalidate_reports,
     _is_task_stale,
     _iter_task_dirs,
@@ -922,6 +924,22 @@ class TestRunGate:
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "", "")):
             assert run_gate(t, td) is True
 
+    def test_batch_not_full_after_merge(self, tmp_path):
+        """Non-coverage merge with issues_per_pr > 1 uses partial invalidation."""
+        from cronpypeline.plugins.swe_plugin import _batch_fixed_count
+        t = self._setup_git_with_branch(tmp_path)
+        (t / "fix.txt").write_text("f")
+        subprocess.run(["git", "-C", str(t), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(t), "commit", "-m", "f"], capture_output=True, check=True)
+        td = tmp_path / "t"; self._make_task(tmp_path, td, issues_per_pr=3)
+        with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "", "")):
+            assert run_gate(t, td, verbose=True) is True
+        gate = json.loads((td / GATE_RESULT_FILE).read_text())
+        assert gate["passed"] is True and gate["merged"] is True
+        assert _batch_fixed_count(t) == 1
+        marker = json.loads((t / ".SWE" / "markers" / "issues_fixed_batch.json").read_text())
+        assert marker["fixed_count"] == 1
+
 
 # ─── run_issue_fix_state_machine ─────────────────────────────────────────────
 
@@ -1210,3 +1228,34 @@ class TestRunSelectReviewIntegrationFails:
         # Not a git repo, so ensure_integration_branch will fail
         monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
         assert run_select(t, "repo", {}, _make_tick_context(t), verbose=True) is False
+
+
+class TestInvalidateAllReports:
+    def test_all_report_subdirs_contains_expected_names(self):
+        assert "test-infra" in ALL_REPORT_SUBDIRS
+        assert "lint" in ALL_REPORT_SUBDIRS
+        assert "docstrings" in ALL_REPORT_SUBDIRS
+        assert "typecheck" in ALL_REPORT_SUBDIRS
+        assert "security" in ALL_REPORT_SUBDIRS
+        assert "deadcode" in ALL_REPORT_SUBDIRS
+        assert "coverage" in ALL_REPORT_SUBDIRS
+        assert "complexity" in ALL_REPORT_SUBDIRS
+        assert "dep-audit" in ALL_REPORT_SUBDIRS
+
+    def test_invalidates_all_report_symlinks(self, tmp_path):
+        t = _make_target_dir(tmp_path)
+        for sub in ALL_REPORT_SUBDIRS:
+            report_dir = t / ".SWE" / "reports" / sub
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "r.md").write_text("report")
+            latest = report_dir / "latest.md"
+            latest.symlink_to("r.md")
+            assert latest.exists()
+        _invalidate_all_reports(t)
+        for sub in ALL_REPORT_SUBDIRS:
+            latest = t / ".SWE" / "reports" / sub / "latest.md"
+            assert not latest.exists()
+
+    def test_no_error_when_reports_missing(self, tmp_path):
+        t = _make_target_dir(tmp_path)
+        _invalidate_all_reports(t)  # should not raise

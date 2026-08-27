@@ -22,6 +22,9 @@ from cronpypeline.plugins.swe_plugin import (
     INTEGRATION_BRANCH,
     _a1_is_pass,
     _a7_coverage_pct,
+    _batch_fixed_count,
+    _batch_is_full,
+    _batch_marker_path,
     _build_doc_sync_prompt,
     _build_pr_body,
     _build_pr_review_prompt,
@@ -39,16 +42,22 @@ from cronpypeline.plugins.swe_plugin import (
     _git,
     _git_issue_already_ingested,
     _git_issue_type_from_labels,
+    _has_open_coverage_issues,
+    _increment_batch_fixed_count,
+    _issues_per_pr,
     _load_env_file,
     _load_github_token,
     _normalize_pkg_name,
     _open_issue_count,
     _ordinal_suffix,
     _parse_pip_audit_vulnerabilities,
+    _read_batch_marker,
     _read_github_session,
     _resolve_latest_report,
+    _should_block_on_open_issues,
     _slugify,
     _venv_binary,
+    _write_batch_marker,
     _write_pipeline_issue,
     cleanup_git_branch,
     commit_phase_a_change,
@@ -5113,3 +5122,350 @@ class TestParsePipAuditVulnerabilitiesEmptyLine:
             "pkg 1.0 ID-1\n"
         )
         assert _parse_pip_audit_vulnerabilities(output) == []
+
+
+# ─── Batch marker helpers ────────────────────────────────────────────────────
+
+
+def _write_batch(target: Path, fixed_count: int) -> None:
+    """Write a batch marker with the given fixed_count."""
+    _write_batch_marker(target, {"fixed_count": fixed_count, "batch_started_at": "2026-01-01T00:00:00+00:00"})
+
+
+class TestBatchMarkerHelpers:
+    def test_read_batch_marker_returns_none_when_absent(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        assert _read_batch_marker(target) is None
+
+    def test_read_batch_marker_returns_data_when_present(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 2)
+        marker = _read_batch_marker(target)
+        assert marker is not None
+        assert marker["fixed_count"] == 2
+
+    def test_read_batch_marker_returns_none_on_corrupt_json(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        marker_path = _batch_marker_path(target)
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.write_text("not valid json", encoding="utf-8")
+        assert _read_batch_marker(target) is None
+
+    def test_batch_fixed_count_zero_when_no_marker(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        assert _batch_fixed_count(target) == 0
+
+    def test_batch_fixed_count_returns_value(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 3)
+        assert _batch_fixed_count(target) == 3
+
+    def test_issues_per_pr_defaults_to_1(self):
+        assert _issues_per_pr({}) == 1
+
+    def test_issues_per_pr_reads_config(self):
+        assert _issues_per_pr({"issues_per_pr": 5}) == 5
+
+    def test_batch_is_full_false_when_below_limit(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 0)
+        assert _batch_is_full(target, {"issues_per_pr": 2}) is False
+
+    def test_batch_is_full_true_when_at_limit(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 2)
+        assert _batch_is_full(target, {"issues_per_pr": 2}) is True
+
+    def test_batch_is_full_true_when_above_limit(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 3)
+        assert _batch_is_full(target, {"issues_per_pr": 2}) is True
+
+    def test_batch_is_full_true_when_default_1_and_count_1(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 1)
+        assert _batch_is_full(target, {}) is True
+
+    def test_increment_creates_marker_if_absent(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        assert _batch_fixed_count(target) == 0
+        result = _increment_batch_fixed_count(target)
+        assert result == 1
+        assert _batch_fixed_count(target) == 1
+
+    def test_increment_increments_existing(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 2)
+        result = _increment_batch_fixed_count(target)
+        assert result == 3
+        assert _batch_fixed_count(target) == 3
+
+
+class TestHasOpenCoverageIssues:
+    def test_true_when_open_coverage_issue(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "cov1.md"
+        issue_path.write_text("---\nstatus: open\ntype: coverage\n---\n# Coverage\n")
+        assert _has_open_coverage_issues(target) is True
+
+    def test_false_when_no_coverage_issues(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "bug1.md"
+        issue_path.write_text("---\nstatus: open\ntype: bug\n---\n# Bug\n")
+        assert _has_open_coverage_issues(target) is False
+
+    def test_false_when_coverage_issue_not_open(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "cov1.md"
+        issue_path.write_text("---\nstatus: done\ntype: coverage\n---\n# Coverage\n")
+        assert _has_open_coverage_issues(target) is False
+
+    def test_false_when_no_issues_dir(self, tmp_path):
+        target = tmp_path / "repo"
+        assert _has_open_coverage_issues(target) is False
+
+    def test_false_when_issue_has_no_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "plain.md"
+        issue_path.write_text("# Just a heading, no frontmatter\n")
+        assert _has_open_coverage_issues(target) is False
+
+    def test_ignores_unreadable_issue_file(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "cov1.md"
+        issue_path.write_text("---\nstatus: open\ntype: coverage\n---\n# Coverage\n")
+        with patch("pathlib.Path.read_text", side_effect=OSError("permission denied")):
+            assert _has_open_coverage_issues(target) is False
+
+
+class TestShouldBlockOnOpenIssues:
+    def test_blocks_when_batch_not_full_and_open_issues(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue")
+        assert _should_block_on_open_issues(target, {"issues_per_pr": 2}) is True
+
+    def test_does_not_block_when_batch_not_full_and_no_issues(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        assert _should_block_on_open_issues(target, {"issues_per_pr": 2}) is False
+
+    def test_blocks_when_batch_full_and_coverage_issue_open(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 1)
+        issue_path = target / ".SWE" / "issues" / "cov1.md"
+        issue_path.write_text("---\nstatus: open\ntype: coverage\n---\n# Coverage\n")
+        assert _should_block_on_open_issues(target, {"issues_per_pr": 1}) is True
+
+    def test_does_not_block_when_batch_full_and_only_non_coverage_open(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 1)
+        create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue")
+        assert _should_block_on_open_issues(target, {"issues_per_pr": 1}) is False
+
+    def test_does_not_block_when_batch_full_and_no_issues(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 1)
+        assert _should_block_on_open_issues(target, {"issues_per_pr": 1}) is False
+
+
+# ─── Batch-aware trigger tests ───────────────────────────────────────────────
+
+
+class TestDetectCIssueFixBatch:
+    def test_fires_when_batch_full_and_coverage_issue_open(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 1)
+        issue_path = target / ".SWE" / "issues" / "cov1.md"
+        issue_path.write_text("---\nstatus: open\ntype: coverage\n---\n# Coverage\n")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "no-tasks")
+        ctx = {"target_dir": str(target), "target": "repo", "target_config": {"issues_per_pr": 1}}
+        assert detect_c_issue_fix(ctx) is True
+
+    def test_does_not_fire_when_batch_full_and_only_non_coverage_open(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 1)
+        create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "no-tasks")
+        ctx = {"target_dir": str(target), "target": "repo", "target_config": {"issues_per_pr": 1}}
+        assert detect_c_issue_fix(ctx) is False
+
+    def test_fires_when_batch_not_full_and_open_issue(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "no-tasks")
+        ctx = {"target_dir": str(target), "target": "repo", "target_config": {"issues_per_pr": 3}}
+        assert detect_c_issue_fix(ctx) is True
+
+    def test_fires_when_active_task_even_if_batch_full(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _write_batch(target, 1)
+        tasks_dir = tmp_path / "tasks"
+        task_dir = tasks_dir / "2025-01-01" / "task-001"
+        task_dir.mkdir(parents=True)
+        (task_dir / "task.json").write_text(json.dumps({"repo_name": "repo"}))
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
+        ctx = {"target_dir": str(target), "target": "repo", "target_config": {"issues_per_pr": 1}}
+        assert detect_c_issue_fix(ctx) is True
+
+
+class TestDetectCReviewIssueBatch:
+    def _setup_passing_with_coverage(self, target: Path) -> None:
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+
+    def _setup_git(self, target: Path) -> None:
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+
+    def test_does_not_fire_when_batch_full(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_passing_with_coverage(target)
+        self._setup_git(target)
+        _write_batch(target, 1)
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main", "issues_per_pr": 1}}
+        assert detect_c_review_issue(ctx) is False
+
+    def test_fires_when_batch_not_full(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_passing_with_coverage(target)
+        self._setup_git(target)
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main", "issues_per_pr": 3}}
+        assert detect_c_review_issue(ctx) is True
+
+
+class TestDetectCCoverageIssueBatch:
+    def _setup_passing(self, target: Path, pct: float = 80.0) -> None:
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", f"# Coverage — PASS\n\n- **Coverage:** {pct}%\n")
+
+    def _setup_git(self, target: Path) -> None:
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+
+    def test_fires_when_batch_full_and_only_non_coverage_open(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_passing(target, pct=80.0)
+        self._setup_git(target)
+        _write_batch(target, 1)
+        create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main", "issues_per_pr": 1}}
+        assert detect_c_coverage_issue(ctx) is True
+
+    def test_does_not_fire_when_batch_full_and_coverage_issue_open(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_passing(target, pct=80.0)
+        self._setup_git(target)
+        _write_batch(target, 1)
+        issue_path = target / ".SWE" / "issues" / "cov1.md"
+        issue_path.write_text("---\nstatus: open\ntype: coverage\n---\n# Coverage\n")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main", "issues_per_pr": 1}}
+        assert detect_c_coverage_issue(ctx) is False
+
+    def test_does_not_fire_when_batch_not_full_and_open_issues(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_passing(target, pct=80.0)
+        self._setup_git(target)
+        create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main", "issues_per_pr": 3}}
+        assert detect_c_coverage_issue(ctx) is False
+
+
+class TestDetectCDocSyncBatch:
+    def _setup(self, target: Path) -> None:
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+
+    def _setup_git(self, target: Path) -> None:
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+
+    def test_fires_when_batch_full_and_only_non_coverage_open(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        self._setup_git(target)
+        _write_batch(target, 1)
+        create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue")
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr", "issues_per_pr": 1}}
+        assert detect_c_doc_sync(ctx) is True
+
+    def test_does_not_fire_when_batch_full_and_coverage_issue_open(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        self._setup_git(target)
+        _write_batch(target, 1)
+        issue_path = target / ".SWE" / "issues" / "cov1.md"
+        issue_path.write_text("---\nstatus: open\ntype: coverage\n---\n# Coverage\n")
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr", "issues_per_pr": 1}}
+        assert detect_c_doc_sync(ctx) is False
+
+
+class TestDetectCPrPublishBatch:
+    def _setup(self, target: Path, pct: float = 100.0) -> None:
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", f"# Coverage — PASS\n\n- **Coverage:** {pct}%\n")
+
+    def _setup_git(self, target: Path) -> None:
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+
+    def _make_ahead(self, target: Path) -> None:
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+
+    def test_fires_when_batch_full_and_only_non_coverage_open(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        self._setup_git(target)
+        self._make_ahead(target)
+        _write_batch(target, 1)
+        create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue")
+        sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr", "issues_per_pr": 1}}
+        assert detect_c_pr_publish(ctx) is True
+
+    def test_does_not_fire_when_batch_full_and_coverage_issue_open(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        self._setup_git(target)
+        self._make_ahead(target)
+        _write_batch(target, 1)
+        issue_path = target / ".SWE" / "issues" / "cov1.md"
+        issue_path.write_text("---\nstatus: open\ntype: coverage\n---\n# Coverage\n")
+        sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr", "issues_per_pr": 1}}
+        assert detect_c_pr_publish(ctx) is False
