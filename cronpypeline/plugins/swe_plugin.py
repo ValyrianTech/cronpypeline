@@ -87,12 +87,11 @@ def _resolve_latest_report(target_dir: Path, subdir: str) -> Path | None:
 
 
 def detect_lint_fail(context: dict[str, Any]) -> bool:
-    """Trigger: fire when lint report shows errors with no auto-fixable remaining.
+    """Trigger: fire when lint report shows errors that need a fix agent.
 
-    Mirrors the old pipeline's ``detect_a2_fix_agent`` logic:
     - Lint report must exist (latest.md in .SWE/reports/lint/)
     - Error count > 0
-    - Auto-fixable count == 0 (let autofix run first)
+    - Auto-fixable count == 0, OR autofix was already attempted (applied_for marker exists)
     - No existing ``queued_for_{stem}.marker`` in .SWE/markers/
 
     :param context: Trigger context dict with ``target_dir``.
@@ -114,8 +113,12 @@ def detect_lint_fail(context: dict[str, Any]) -> bool:
     if not m_fixable:
         m_fixable = re.search(r'(\d+)\s+auto-fixable', text)
     fixable = int(m_fixable.group(1)) if m_fixable else 0
-    if errors <= 0 or fixable > 0:
+    if errors <= 0:
         return False
+    if fixable > 0:
+        autofix_marker = target_dir / ".SWE" / "reports" / "lint-autofix" / f"applied_for_{report_path.stem}.marker"
+        if not autofix_marker.exists():
+            return False
     marker = target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
     return not marker.exists()
 
@@ -624,14 +627,16 @@ def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(f"autofix applied at {started_at} -> {report_name}\n", encoding="utf-8")
 
-    a2_latest = target_dir / ".SWE" / "reports" / "lint" / "latest.md"
-    try:
-        if a2_latest.exists() or a2_latest.is_symlink():
-            a2_latest.unlink()
-    except OSError:
-        pass
+    if fixed_count > 0:
+        a2_latest = target_dir / ".SWE" / "reports" / "lint" / "latest.md"
+        try:
+            if a2_latest.exists() or a2_latest.is_symlink():
+                a2_latest.unlink()
+        except OSError:
+            pass
+        return ActionResult(success=True, data={"fixed_count": fixed_count})
 
-    return ActionResult(success=True, data={"fixed_count": fixed_count})
+    return ActionResult(success=False, stderr="No fixes applied (remaining fixable errors may require manual intervention)")
 
 
 # ─── GitHub API helpers ─────────────────────────────────────────────────────

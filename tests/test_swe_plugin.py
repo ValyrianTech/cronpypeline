@@ -215,6 +215,15 @@ class TestDetectLintFail:
         ctx = {"target_dir": str(target)}
         assert detect_lint_fail(ctx) is False
 
+    def test_fires_when_fixable_remaining_but_autofix_attempted(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        report_path = _write_report(target, "lint", "r.md", "# Lint — FAIL\n\n- **errors**: 5\n- **fixable**: 3\n")
+        autofix_dir = target / ".SWE" / "reports" / "lint-autofix"
+        autofix_dir.mkdir(parents=True, exist_ok=True)
+        (autofix_dir / f"applied_for_{report_path.stem}.marker").write_text("done")
+        ctx = {"target_dir": str(target)}
+        assert detect_lint_fail(ctx) is True
+
     def test_does_not_fire_when_no_errors(self, tmp_path):
         target = _make_target_dir(tmp_path)
         _write_report(target, "lint", "r.md", "# Lint — PASS\n\n- **errors**: 0\n- **fixable**: 0\n")
@@ -615,7 +624,7 @@ class TestRunLintAutofix:
         result = run_lint_autofix(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
 
-    def test_runs_autofix_and_writes_report(self, tmp_path):
+    def test_runs_autofix_no_fixes_returns_failure(self, tmp_path):
         target = _make_target_dir(tmp_path)
         _write_report(target, "lint", "r.md", "# Lint — FAIL\n\n- **fixable**: 0\n")
         # Init git so ensure_phase_a_branch works
@@ -625,16 +634,15 @@ class TestRunLintAutofix:
         ctx = _make_tick_context(target)
         action = ActionSpec(type=ActionType.CUSTOM, params={"command": "echo 'no fixes'"})
         result = run_lint_autofix(action, ctx)
-        assert result.success is True
-        assert result.data["fixed_count"] == 0  # "no fixes" doesn't match regex
+        assert result.success is False  # fixed_count == 0 → failure
         # Check report was written
         autofix_dir = target / ".SWE" / "reports" / "lint-autofix"
         assert autofix_dir.exists()
         # Check marker was written
         markers = list(autofix_dir.glob("applied_for_*.marker"))
         assert len(markers) == 1
-        # Check A2 latest.md was deleted
-        assert not (target / ".SWE" / "reports" / "lint" / "latest.md").exists()
+        # A2 latest.md should NOT be deleted when no fixes applied
+        assert (target / ".SWE" / "reports" / "lint" / "latest.md").exists()
 
     def test_parses_fixed_count(self, tmp_path):
         target = _make_target_dir(tmp_path)
@@ -3914,7 +3922,7 @@ class TestRunLintAutofixUnlinkOSError:
         latest.mkdir()
         ctx = _make_tick_context(target)
         action = ActionSpec(type=ActionType.CUSTOM, params={"command": "true"})
-        mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="3 fixed", stderr="")
+        mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="Fixed 3 errors.", stderr="")
         real_run = subprocess.run
 
         def _mock_run(*args, **kwargs):
