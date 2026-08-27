@@ -28,7 +28,7 @@ from cronpypeline.plugins.swe_plugin import (
     _close_and_comment_github_issue,
     _compute_review_generation,
     _count_done_review_issues,
-    _count_unranked_review_issues,
+    _count_open_review_issues,
     _detect_report_fail,
     _find_active_task,
     _find_issue_by_id,
@@ -409,10 +409,13 @@ class TestSelectIssue:
         assert success is False
         assert "No open" in msg
 
-    def test_sorts_by_hivemind_score_first(self, tmp_path):
+    def test_selects_ranked_issue_first(self, tmp_path):
         target = _make_target_dir(tmp_path)
         create_issue(target, issue_data={"id": "b", "status": "open"}, body="# B")
-        create_issue(target, issue_data={"id": "a", "status": "open", "hivemind_score": 0.9}, body="# A")
+        create_issue(target, issue_data={"id": "a", "status": "open"}, body="# A")
+        markers_dir = target / ".SWE" / "markers"
+        markers_dir.mkdir(parents=True, exist_ok=True)
+        (markers_dir / "review_ranked.json").write_text(json.dumps({"issue_id": "a"}))
         ctx = _make_tick_context(target)
         success, msg = select_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert success is True
@@ -1088,50 +1091,44 @@ class TestFindActiveTask:
         assert "2025-01-02" in str(result)
 
 
-# ─── _count_unranked_review_issues ──────────────────────────────────────────
+# ─── _count_open_review_issues ──────────────────────────────────────────────
 
 
-class TestCountUnrankedReviewIssues:
+class TestCountOpenReviewIssues:
     def test_returns_zero_when_no_issues_dir(self, tmp_path):
         target = tmp_path / "repo"
-        assert _count_unranked_review_issues(target) == 0
+        assert _count_open_review_issues(target) == 0
 
-    def test_counts_open_review_issues_without_hivemind_score(self, tmp_path):
+    def test_counts_open_review_issues(self, tmp_path):
         target = _make_target_dir(tmp_path)
         issue_path = target / ".SWE" / "issues" / "review-1.md"
         issue_path.write_text("---\nstatus: open\nsource: review\n---\n# Review\n")
-        assert _count_unranked_review_issues(target) == 1
+        assert _count_open_review_issues(target) == 1
 
     def test_does_not_count_non_open_issues(self, tmp_path):
         target = _make_target_dir(tmp_path)
         issue_path = target / ".SWE" / "issues" / "review-1.md"
         issue_path.write_text("---\nstatus: done\nsource: review\n---\n# Review\n")
-        assert _count_unranked_review_issues(target) == 0
+        assert _count_open_review_issues(target) == 0
 
     def test_does_not_count_non_review_sources(self, tmp_path):
         target = _make_target_dir(tmp_path)
         issue_path = target / ".SWE" / "issues" / "github-1.md"
         issue_path.write_text("---\nstatus: open\nsource: github\n---\n# Issue\n")
-        assert _count_unranked_review_issues(target) == 0
-
-    def test_does_not_count_already_ranked(self, tmp_path):
-        target = _make_target_dir(tmp_path)
-        issue_path = target / ".SWE" / "issues" / "review-1.md"
-        issue_path.write_text("---\nstatus: open\nsource: review\nhivemind_score: 0.9\n---\n# Review\n")
-        assert _count_unranked_review_issues(target) == 0
+        assert _count_open_review_issues(target) == 0
 
     def test_skips_non_frontmatter_files(self, tmp_path):
         target = _make_target_dir(tmp_path)
         issue_path = target / ".SWE" / "issues" / "review-1.md"
         issue_path.write_text("no frontmatter")
-        assert _count_unranked_review_issues(target) == 0
+        assert _count_open_review_issues(target) == 0
 
 
 # ─── detect_c_review_ranking ────────────────────────────────────────────────
 
 
 class TestDetectCReviewRanking:
-    def test_fires_when_2plus_unranked_and_no_session(self, tmp_path, monkeypatch):
+    def test_fires_when_2plus_open_review_and_no_session(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         for i in range(2):
             issue_path = target / ".SWE" / "issues" / f"review-{i}.md"
@@ -1164,22 +1161,10 @@ class TestDetectCReviewRanking:
         ctx = {"target_dir": str(target), "target": "repo"}
         assert detect_c_review_ranking(ctx) is False
 
-    def test_does_not_fire_when_less_than_2_unranked(self, tmp_path, monkeypatch):
+    def test_does_not_fire_when_less_than_2_open_review(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         issue_path = target / ".SWE" / "issues" / "review-0.md"
         issue_path.write_text("---\nstatus: open\nsource: review\n---\n# Review\n")
-        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "no-tasks")
-        ctx = {"target_dir": str(target), "target": "repo"}
-        assert detect_c_review_ranking(ctx) is False
-
-    def test_does_not_fire_when_marker_exists(self, tmp_path, monkeypatch):
-        target = _make_target_dir(tmp_path)
-        for i in range(2):
-            issue_path = target / ".SWE" / "issues" / f"review-{i}.md"
-            issue_path.write_text("---\nstatus: open\nsource: review\n---\n# Review\n")
-        markers_dir = target / ".SWE" / "reports" / "review-ranking"
-        markers_dir.mkdir(parents=True, exist_ok=True)
-        (markers_dir / "ranked_2.marker").write_text("ok")
         monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "no-tasks")
         ctx = {"target_dir": str(target), "target": "repo"}
         assert detect_c_review_ranking(ctx) is False
@@ -1191,46 +1176,33 @@ class TestDetectCReviewRanking:
 class TestRunCReviewRanking:
     def test_dry_run_returns_success(self, tmp_path):
         target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "review-0.md"
+        issue_path.write_text("---\nstatus: open\nsource: review\n---\n# Review\n")
         ctx = _make_tick_context(target, dry_run=True)
         result = run_c_review_ranking(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.dry_run is True
 
-    def test_success_writes_marker(self, tmp_path):
+    def test_success_returns_async(self, tmp_path):
         target = _make_target_dir(tmp_path)
-        issue_path = target / ".SWE" / "issues" / "review-0.md"
-        issue_path.write_text("---\nstatus: open\nsource: review\n---\n# Review\n")
+        for i in range(2):
+            issue_path = target / ".SWE" / "issues" / f"review-{i}.md"
+            issue_path.write_text(f"---\nid: review-{i}\nstatus: open\nsource: review\n---\n# Review\n")
         ctx = _make_tick_context(target)
-        mock_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr="")
-        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", return_value=mock_result):
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=True, data={"queue_file": "/tmp/q.json"})
+        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler):
             result = run_c_review_ranking(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
-        marker = target / ".SWE" / "reports" / "review-ranking" / "ranked_1.marker"
-        assert marker.exists()
-        assert marker.read_text() == "ok"
+        assert result.data.get("async") is True
+        assert result.data.get("queue_file") == "/tmp/q.json"
 
-    def test_failure_writes_failed_marker(self, tmp_path):
+    def test_returns_failure_when_no_open_review_issues(self, tmp_path):
         target = _make_target_dir(tmp_path)
-        issue_path = target / ".SWE" / "issues" / "review-0.md"
-        issue_path.write_text("---\nstatus: open\nsource: review\n---\n# Review\n")
         ctx = _make_tick_context(target)
-        mock_result = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="error")
-        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", return_value=mock_result):
-            result = run_c_review_ranking(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        result = run_c_review_ranking(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
-        marker = target / ".SWE" / "reports" / "review-ranking" / "ranked_1.marker"
-        assert marker.read_text() == "failed"
-
-    def test_timeout_writes_marker(self, tmp_path):
-        target = _make_target_dir(tmp_path)
-        issue_path = target / ".SWE" / "issues" / "review-0.md"
-        issue_path.write_text("---\nstatus: open\nsource: review\n---\n# Review\n")
-        ctx = _make_tick_context(target)
-        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 600)):
-            result = run_c_review_ranking(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
-        assert result.success is False
-        marker = target / ".SWE" / "reports" / "review-ranking" / "ranked_1.marker"
-        assert marker.read_text() == "timeout"
+        assert "No open review issues" in result.stderr
 
 
 # ─── detect_c_issue_fix ─────────────────────────────────────────────────────
@@ -4141,14 +4113,14 @@ class TestFindActiveTaskNoTaskJson:
         assert _find_active_task("repo") is None
 
 
-class TestCountUnrankedReviewIssuesDirectory:
+class TestCountOpenReviewIssuesDirectory:
     """Cover lines 995-996: read_text raises when issue path is a directory."""
 
     def test_skips_directory_issue(self, tmp_path):
         target = _make_target_dir(tmp_path)
         issue_path = target / ".SWE" / "issues" / "review-1.md"
         issue_path.mkdir()
-        assert _count_unranked_review_issues(target) == 0
+        assert _count_open_review_issues(target) == 0
 
 
 class TestA7CoveragePctDirectoryReport:

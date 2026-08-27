@@ -579,7 +579,7 @@
     },
     {
       "id": "C-review-ranking",
-      "name": "Rank unranked review-filed issues via Targaryen Council",
+      "name": "Queue IssueTriageAgent to pick most important review issue",
       "trigger": {
         "type": "custom",
         "callable": "cronpypeline.plugins.swe_plugin.detect_c_review_ranking"
@@ -589,7 +589,21 @@
         "params": {
           "callable": "cronpypeline.plugins.swe_plugin.run_c_review_ranking"
         }
-      }
+      },
+      "markers": {
+        "completion": {
+          "type": "json",
+          "name": "review_ranked.json",
+          "directory": ".SWE/markers"
+        },
+        "processing": {
+          "type": "json",
+          "name": ".processing_c_review_ranking",
+          "directory": ".SWE/markers"
+        }
+      },
+      "max_retries": 3,
+      "timeout_minutes": 30
     },
     {
       "id": "C-pr-status",

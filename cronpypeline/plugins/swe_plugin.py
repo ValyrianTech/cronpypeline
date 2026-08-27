@@ -36,7 +36,7 @@ GITHUB_SESSION_FILE = f"{SWE_SUBDIR}/github_session.json"
 
 SWE_WORKSPACE_DIR = Path("/spellbook_data/Serendipity/swe/workspace")
 TASKS_DIR = SWE_WORKSPACE_DIR / "tasks"
-RANKING_SCRIPT = "/home/wouter/Repos/spellbook/apps/Serendipity/SWE/scripts/run_swe_issue_ranking.py"
+REVIEW_RANKING_MARKER = f"{SWE_SUBDIR}/markers/review_ranked.json"
 
 GIT_BIN = shutil.which("git") or "git"
 
@@ -247,11 +247,8 @@ def detect_session_complete(context: dict[str, Any]) -> bool:
 def select_issue(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
     """Select the first open issue and mark it as triaged.
 
-    Mirrors the old pipeline's ``select_open_issue`` + ``run_select`` logic:
-    - Load all issues from .SWE/issues/
-    - Filter for status='open'
-    - Sort by hivemind_score (ranked first), then rank, then filename
-    - Set selected issue status to 'triaged'
+    If a ``review_ranked.json`` marker exists, the issue listed there is
+    selected first. Otherwise the first open issue by filename is selected.
 
     :param action: Action spec (no special params needed).
     :param context: Tick context with target directory.
@@ -262,11 +259,21 @@ def select_issue(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
     open_issues = [i for i in issues if i.status == "open" and i.id is not None]
     if not open_issues:
         return False, "No open issues to select"
-    open_issues.sort(key=lambda i: (
-        0 if i.hivemind_score is not None else 1,
-        i.rank or 0 if i.hivemind_score is not None else 0,
-        str(i.id),
-    ))
+
+    ranking_marker = target_dir / SWE_SUBDIR / "markers" / "review_ranked.json"
+    if ranking_marker.exists():
+        try:
+            data = json.loads(ranking_marker.read_text(encoding="utf-8"))
+            ranked_id = data.get("issue_id")
+            if ranked_id:
+                for issue in open_issues:
+                    if str(issue.id) == str(ranked_id):
+                        set_issue_status(target_dir, issue.id, "triaged")
+                        return True, f"Selected issue {issue.id}"
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    open_issues.sort(key=lambda i: str(i.id))
     selected = open_issues[0]
     set_issue_status(target_dir, selected.id, "triaged")
     return True, f"Selected issue {selected.id}"
@@ -1022,11 +1029,11 @@ def _find_active_task(repo_name: str) -> Path | None:
     return max(candidates)
 
 
-def _count_unranked_review_issues(target_dir: Path) -> int:
-    """Count open review-sourced issues that have no hivemind_score yet.
+def _count_open_review_issues(target_dir: Path) -> int:
+    """Count open review-sourced issues.
 
     :param target_dir: Target repo directory.
-    :returns: Count of unranked review issues.
+    :returns: Count of open review issues.
     """
     count = 0
     issues_dir = target_dir / SWE_SUBDIR / "issues"
@@ -1045,25 +1052,24 @@ def _count_unranked_review_issues(target_dir: Path) -> int:
         sm = re.search(r"(?m)^source:\s*(\S+)", head)
         if not sm or sm.group(1) != "review":
             continue
-        if not re.search(r"(?m)^hivemind_score:", head):
-            count += 1
+        count += 1
     return count
 
 
-# ─── C-review-ranking: Rank unranked review issues ──────────────────────────
+# ─── C-review-ranking: Queue agent to pick most important review issue ───────
 
 
 def detect_c_review_ranking(context: dict[str, Any]) -> bool:
-    """Trigger: fire when there are >=2 unranked review issues to rank.
+    """Trigger: fire when there are >=2 open review issues to triage.
 
-    Mirrors the original ``detect_c_review_ranking`` logic:
+    Conditions:
     - No active GitHub session
     - No active task
-    - >= 2 unranked review issues
-    - No ranked_{count}.marker
+    - >= 2 open review-sourced issues
+    - No review_ranked.json marker (pipeline completion marker handles this)
 
     :param context: Trigger context dict with ``target_dir`` and ``target``.
-    :returns: True if ranking should run.
+    :returns: True if the triage agent should be queued.
     """
     target_dir = Path(context.get("target_dir", "."))
     repo_name = context.get("target", "")
@@ -1075,56 +1081,82 @@ def detect_c_review_ranking(context: dict[str, Any]) -> bool:
     if _find_active_task(repo_name) is not None:
         return False
 
-    unranked = _count_unranked_review_issues(target_dir)
-    if unranked < 2:
+    open_review = _count_open_review_issues(target_dir)
+    if open_review < 2:
         return False
 
-    markers_dir = target_dir / SWE_SUBDIR / "reports" / "review-ranking"
-    marker_file = markers_dir / f"ranked_{unranked}.marker"
-    return not marker_file.exists()
+    return True
 
 
 def run_c_review_ranking(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Run the Targaryen Council Hivemind ranking script.
+    """Queue an agent to review open issues and pick the most important one.
 
-    :param action: Action spec with optional ``max_issues`` param.
+    The agent reads all open review-sourced issues from ``.SWE/issues/``,
+    evaluates their importance, and writes the chosen issue ID to
+    ``.SWE/markers/review_ranked.json`` (the stage's completion marker).
+
+    :param action: Action spec (no special params needed).
     :param context: Tick context with target directory and name.
-    :returns: ActionResult indicating success/failure.
+    :returns: ActionResult indicating success, with ``async`` data for the
+        pipeline to create a processing marker.
     """
     if context.dry_run:
         return ActionResult(success=True, dry_run=True)
 
+    from cronpypeline.plugins.swe_prompts import _build_queue_handler
+
     target_dir = context.target_dir
     repo_name = context.target
-    target_config = context.target_config
 
-    unranked = _count_unranked_review_issues(target_dir)
-    max_issues = target_config.get("max_review_issues_per_generation", 3)
+    issues = load_issues(target_dir)
+    open_review = [
+        i for i in issues
+        if i.status == "open" and i.source == "review" and i.id is not None
+    ]
+    if not open_review:
+        return ActionResult(success=False, stderr="No open review issues to triage")
 
-    cmd = [sys.executable, RANKING_SCRIPT, "--repo", repo_name, "--max-issues", str(max_issues)]
+    issue_list = "\n".join(
+        f"- **{i.id}**: {i.body.splitlines()[0] if i.body.strip() else '(no description)'}"
+        for i in sorted(open_review, key=lambda x: str(x.id))
+    )
 
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=600, check=False,
-        )  # nosec B603 - calling known script
-    except subprocess.TimeoutExpired:
-        markers_dir = target_dir / SWE_SUBDIR / "reports" / "review-ranking"
-        markers_dir.mkdir(parents=True, exist_ok=True)
-        (markers_dir / f"ranked_{unranked}.marker").write_text("timeout", encoding="utf-8")
-        return ActionResult(success=False, stderr="Review ranking timed out (600s)")
+    marker_path = target_dir / SWE_SUBDIR / "markers" / "review_ranked.json"
 
-    markers_dir = target_dir / SWE_SUBDIR / "reports" / "review-ranking"
-    markers_dir.mkdir(parents=True, exist_ok=True)
+    prompt = f"""You are triaging issues for repository: {repo_name}
 
-    if result.returncode != 0:
-        (markers_dir / f"ranked_{unranked}.marker").write_text("failed", encoding="utf-8")
-        return ActionResult(
-            success=False,
-            stderr=f"Ranking failed: {result.stderr[:2000]}",
-        )
+## Open Review Issues
 
-    (markers_dir / f"ranked_{unranked}.marker").write_text("ok", encoding="utf-8")
-    return ActionResult(success=True, data={"unranked_count": unranked})
+The following issues were filed by a code review agent. Read each issue file
+under ``{target_dir / SWE_SUBDIR / 'issues'}/`` for full details.
+
+{issue_list}
+
+## Task
+
+1. Read each issue file listed above (use ReadFile).
+2. Evaluate which issue is the most important to fix first — consider severity,
+   impact, and whether it blocks other work.
+3. Write your choice to ``{marker_path}`` using WriteFile with this exact format:
+
+   {{"issue_id": "<the-issue-id>"}}
+
+   Replace ``<the-issue-id>`` with the id of the issue you picked.
+   Write ONLY the JSON — no extra text.
+"""
+
+    handler = _build_queue_handler({}, context)
+    queue_action = ActionSpec(
+        type=action.type,
+        params={
+            "agent": "IssueTriageAgent",
+            "prompt": prompt,
+        },
+    )
+    result = handler.execute(queue_action, context)
+    if result.success and not result.dry_run:
+        result.data = {**result.data, "async": True}
+    return result
 
 
 # ─── C-issue-fix: SELECT/GATE state machine ─────────────────────────────────

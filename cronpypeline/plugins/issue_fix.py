@@ -266,7 +266,12 @@ def _safe_slug(value: str) -> str:
 
 def select_open_issue(repo_dir: Path, issue_id: str | None = None,
                       verbose: bool = False) -> Issue | None:
-    """Pick the issue to work on: explicit id, else first 'open' one.
+    """Pick the issue to work on: explicit id, else ranked, else first 'open'.
+
+    Priority order:
+    1. Explicit ``issue_id`` param (from task recovery)
+    2. ``review_ranked.json`` marker (set by IssueTriageAgent)
+    3. First open issue by filename
 
     :param repo_dir: Target repo directory.
     :param issue_id: Optional specific issue id to select.
@@ -304,11 +309,19 @@ def select_open_issue(repo_dir: Path, issue_id: str | None = None,
             return session_issues[0]
         return None
 
-    open_issues.sort(key=lambda i: (
-        0 if i.hivemind_score else 1,
-        int(i.rank) if i.hivemind_score and i.rank else 0,
-        i.id or "",
-    ))
+    ranking_marker = repo_dir / SWE_SUBDIR / "markers" / "review_ranked.json"
+    if ranking_marker.exists():
+        try:
+            data = json.loads(ranking_marker.read_text(encoding="utf-8"))
+            ranked_id = data.get("issue_id")
+            if ranked_id:
+                for issue in open_issues:
+                    if str(issue.id) == str(ranked_id):
+                        return issue
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    open_issues.sort(key=lambda i: str(i.id))
     return open_issues[0]
 
 

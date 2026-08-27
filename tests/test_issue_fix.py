@@ -297,12 +297,15 @@ class TestSelectOpenIssue:
         _write_issue(t / ".SWE" / "issues", "1", status="open")
         assert select_open_issue(t, issue_id="9") is None
 
-    def test_sorts_by_hivemind(self, tmp_path):
+    def test_selects_ranked_issue_first(self, tmp_path):
         t = _make_target_dir(tmp_path)
-        _write_issue(t / ".SWE" / "issues", "1", status="open", hivemind_score=0.5, rank=2)
-        _write_issue(t / ".SWE" / "issues", "2", status="open", hivemind_score=0.9, rank=1)
+        _write_issue(t / ".SWE" / "issues", "1", status="open")
+        _write_issue(t / ".SWE" / "issues", "2", status="open")
+        markers_dir = t / ".SWE" / "markers"
+        markers_dir.mkdir(parents=True, exist_ok=True)
+        (markers_dir / "review_ranked.json").write_text(json.dumps({"issue_id": "2"}))
         r = select_open_issue(t)
-        assert str(r.id) == "2"
+        assert r is not None and str(r.id) == "2"
 
     def test_session_filter(self, tmp_path):
         t = _make_target_dir(tmp_path)
