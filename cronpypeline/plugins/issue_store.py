@@ -371,10 +371,6 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.command is None:
-        parser.print_help()
-        return 1
-
     if args.command == "file":
         body_path = Path(args.body_file)
         if not body_path.exists():
@@ -413,5 +409,5 @@ def main(argv: list[str] | None = None) -> int:
     return 1
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
