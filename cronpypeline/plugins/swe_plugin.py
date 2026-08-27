@@ -1274,7 +1274,7 @@ def _a7_coverage_pct(target_dir: Path) -> float | None:
         text = report.read_text(encoding="utf-8")
     except OSError:
         return None
-    m = re.search(r"\*\*Coverage:\*\*\s*([\d.]+)%", text)
+    m = re.search(r"\*\*[Cc]overage:?\*?\*?:?\s*([\d.]+)%?", text)
     return float(m.group(1)) if m else None
 
 

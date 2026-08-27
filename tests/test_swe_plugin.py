@@ -1383,6 +1383,12 @@ class TestA7CoveragePct:
         _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\nNo coverage data\n")
         assert _a7_coverage_pct(target) is None
 
+    def test_returns_pct_from_run_diagnostic_format(self, tmp_path):
+        """Report format from run_diagnostic: lowercase key, no % suffix."""
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "coverage", "r.md", "# Test Coverage — PASS\n\n**Status**: PASS\n\n- **coverage**: 99.0\n- **threshold**: 80.0\n")
+        assert _a7_coverage_pct(target) == 99.0
+
 
 # ─── _find_issue_by_id ──────────────────────────────────────────────────────
 
