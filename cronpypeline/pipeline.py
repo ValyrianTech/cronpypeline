@@ -552,6 +552,7 @@ class Pipeline:
             dry_run=dry_run,
             verbose=verbose,
             target_config=target_config,
+            pipeline=self,
         )
         result = execute_action(stage.action, ctx)
 
@@ -573,6 +574,7 @@ class Pipeline:
                     dry_run=dry_run,
                     verbose=verbose,
                     target_config=target_config,
+                    pipeline=self,
                 )
                 execute_action(stage.on_fail, fail_ctx)
             return TickResult(
@@ -725,6 +727,7 @@ class Pipeline:
                 dry_run=dry_run,
                 verbose=verbose,
                 target_config=target_config,
+                pipeline=self,
             )
             result = execute_action(next_stage.action, ctx)
 
@@ -736,6 +739,7 @@ class Pipeline:
                         dry_run=dry_run,
                         verbose=verbose,
                         target_config=target_config,
+                        pipeline=self,
                     )
                     fail_result = execute_action(next_stage.on_fail, fail_ctx)
                     if not fail_result.success:
@@ -862,6 +866,7 @@ class Pipeline:
             target_config=target_config,
             retry_count=retry_count + 1,
             retry_data=stage_state.processing_data,
+            pipeline=self,
         )
         result = execute_action(stage.action, ctx)
 
@@ -874,6 +879,7 @@ class Pipeline:
                     dry_run=dry_run,
                     verbose=verbose,
                     target_config=target_config,
+                    pipeline=self,
                 )
                 execute_action(stage.on_fail, fail_ctx)
             return TickResult(

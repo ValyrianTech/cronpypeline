@@ -216,18 +216,28 @@ def _get_diff_stats(target_dir: Path) -> str:
 # ─── Queue action callables ─────────────────────────────────────────────────
 
 
-def _build_queue_handler(params: dict[str, Any]) -> ConversationQueueHandler:
-    """Build a ConversationQueueHandler from action params.
+def _build_queue_handler(params: dict[str, Any], context: TickContext) -> ConversationQueueHandler:
+    """Build a ConversationQueueHandler from action params, falling back to pipeline config.
 
-    :param params: Action params dict with queue_dir and optional settings.
+    Stage action params take precedence; missing keys fall back to the pipeline's
+    top-level ``action_handler`` config so that ``queue_dir``, ``prompt_field``,
+    ``default_fields``, etc. don't need to be repeated in every stage.
+
+    :param params: Action params dict with optional queue settings.
+    :param context: Tick context with pipeline reference for fallback.
     :returns: A :class:`ConversationQueueHandler` instance.
     """
+    fallback: dict[str, Any] = {}
+    pipeline = getattr(context, "pipeline", None)
+    if pipeline is not None and pipeline.config.action_handler is not None:
+        fallback = dict(pipeline.config.action_handler.params)
+    merged = {**fallback, **{k: v for k, v in params.items() if v is not None}}
     return ConversationQueueHandler(
-        queue_dir=params.get("queue_dir", ""),
-        agent_settings_dir=params.get("agent_settings_dir"),
-        prompt_field=params.get("prompt_field", "prompt"),
-        default_fields=params.get("default_fields"),
-        flatten_agent_settings=params.get("flatten_agent_settings", False),
+        queue_dir=merged.get("queue_dir", ""),
+        agent_settings_dir=merged.get("agent_settings_dir"),
+        prompt_field=merged.get("prompt_field", "prompt"),
+        default_fields=merged.get("default_fields"),
+        flatten_agent_settings=merged.get("flatten_agent_settings", False),
     )
 
 
@@ -345,7 +355,7 @@ You are on branch `{PHASE_A_BRANCH}`. After making your changes:
 """
 
     # Build a queue action spec and dispatch via ConversationQueueHandler
-    handler = _build_queue_handler(params)
+    handler = _build_queue_handler(params, context)
     queue_action = ActionSpec(
         type=action.type,
         params={
@@ -398,7 +408,7 @@ def queue_coder_agent(action: ActionSpec, context: TickContext) -> ActionResult:
         extra_instructions=params.get("extra_instructions", ""),
     )
 
-    handler = _build_queue_handler(params)
+    handler = _build_queue_handler(params, context)
     queue_action = ActionSpec(
         type=action.type,
         params={
@@ -449,7 +459,7 @@ def queue_review_agent(action: ActionSpec, context: TickContext) -> ActionResult
         extra_instructions=params.get("extra_instructions", ""),
     )
 
-    handler = _build_queue_handler(params)
+    handler = _build_queue_handler(params, context)
     queue_action = ActionSpec(
         type=action.type,
         params={

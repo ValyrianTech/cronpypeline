@@ -2669,7 +2669,7 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
     # Queue via conversation queue handler
     from cronpypeline.plugins.swe_prompts import _build_queue_handler
     params = action.params
-    handler = _build_queue_handler(params)
+    handler = _build_queue_handler(params, context)
     queue_action = ActionSpec(
         type=action.type,
         params={
@@ -2928,7 +2928,7 @@ def run_c_pr_review(action: ActionSpec, context: TickContext) -> ActionResult:
     # Queue via conversation queue handler
     from cronpypeline.plugins.swe_prompts import _build_queue_handler
     params = action.params
-    handler = _build_queue_handler(params)
+    handler = _build_queue_handler(params, context)
     queue_action = ActionSpec(
         type=action.type,
         params={
