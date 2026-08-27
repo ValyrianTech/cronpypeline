@@ -634,9 +634,8 @@ def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
                 a2_latest.unlink()
         except OSError:
             pass
-        return ActionResult(success=True, data={"fixed_count": fixed_count})
 
-    return ActionResult(success=False, stderr="No fixes applied (remaining fixable errors may require manual intervention)")
+    return ActionResult(success=True, data={"fixed_count": fixed_count})
 
 
 # ─── GitHub API helpers ─────────────────────────────────────────────────────

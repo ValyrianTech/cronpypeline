@@ -624,7 +624,7 @@ class TestRunLintAutofix:
         result = run_lint_autofix(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
 
-    def test_runs_autofix_no_fixes_returns_failure(self, tmp_path):
+    def test_runs_autofix_no_fixes_returns_success(self, tmp_path):
         target = _make_target_dir(tmp_path)
         _write_report(target, "lint", "r.md", "# Lint — FAIL\n\n- **fixable**: 0\n")
         # Init git so ensure_phase_a_branch works
@@ -634,7 +634,8 @@ class TestRunLintAutofix:
         ctx = _make_tick_context(target)
         action = ActionSpec(type=ActionType.CUSTOM, params={"command": "echo 'no fixes'"})
         result = run_lint_autofix(action, ctx)
-        assert result.success is False  # fixed_count == 0 → failure
+        assert result.success is True  # no fixes, but not a failure
+        assert result.data["fixed_count"] == 0
         # Check report was written
         autofix_dir = target / ".SWE" / "reports" / "lint-autofix"
         assert autofix_dir.exists()

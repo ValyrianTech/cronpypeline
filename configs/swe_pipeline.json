@@ -142,9 +142,6 @@
           "command": "ruff check --fix ."
         }
       },
-      "invalidates": [
-        {"type": "symlink", "name": "latest.md", "directory": ".SWE/reports/lint"}
-      ],
       "chain": true
     },
     {
