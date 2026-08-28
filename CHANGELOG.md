@@ -45,3 +45,4 @@
 - `run_diagnostic` now validates command config values (e.g. `test_cmd`, `lint_cmd`) and rejects values containing shell metacharacters.
 - `format_template` now raises `ValueError` on substitution failure (missing key, bad format) instead of silently returning the unformatted template; callers return an `ACTION_FAILED` result with the error message.
 - Fixed prompt template escaping in SWE plugin and prompt builders so JSON literals embedded in prompts render correctly after `.format()` substitution.
+- Conversation queue handler now sanitizes agent names (replacing any non-alphanumeric, underscore, dot, or hyphen character with `_`) before using them in queue filenames, and validates the resolved queue file path with `.resolve()`/`is_relative_to()`; queue files that would escape the queue directory now raise a `ValueError`, preventing path traversal attacks.
