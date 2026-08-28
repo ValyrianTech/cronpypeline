@@ -703,6 +703,24 @@ class TestRunLintAutofix:
         assert result.success is False
         assert "Invalid command" in result.stderr
 
+    def test_empty_command_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "lint", "r.md", "# Lint — FAIL\n\n- **fixable**: 0\n")
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"command": ""})
+        result = run_lint_autofix(action, ctx)
+        assert result.success is False
+        assert "Empty command string" in result.stderr
+
+    def test_whitespace_command_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "lint", "r.md", "# Lint — FAIL\n\n- **fixable**: 0\n")
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"command": "   "})
+        result = run_lint_autofix(action, ctx)
+        assert result.success is False
+        assert "Empty command string" in result.stderr
+
     def test_file_not_found_returns_failure(self, tmp_path):
         target = _make_target_dir(tmp_path)
         _write_report(target, "lint", "r.md", "# Lint — FAIL\n\n- **fixable**: 0\n")
