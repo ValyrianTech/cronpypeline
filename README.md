@@ -2,6 +2,29 @@
 
 > A Python library for building cron-friendly, stateful, multi-stage agentic pipelines driven by JSON configuration.
 
+> **⚠️ BREAKING CHANGE — `shell=True` → `shell=False`**
+>
+> Commands in `command`-type actions and `run_diagnostic` commands are now executed
+> **without a shell** (built via `shlex.split()` into an argument list, i.e. `shell=False`)
+> instead of through `shell=True`. This is a **breaking change** for any existing pipeline
+> config that relies on shell features — pipes (`|`), redirections (`>`, `>>`, `<`, `2>&1`),
+> command chaining (`&&`, `;`), command substitution (`$(...)`), globbing, or environment
+> variable expansion.
+>
+> **If your config uses any of these, you must wrap the command in `sh -c '...'`.**
+>
+> Before (worked with `shell=True`, **no longer works**):
+> ```json
+> {"type": "command", "params": {"command": "echo failed > cleanup.txt"}}
+> {"type": "command", "params": {"command": "echo on_fail_failed >&2 && false"}}
+> ```
+>
+> After (wrap in `sh -c '...'`):
+> ```json
+> {"type": "command", "params": {"command": "sh -c 'echo failed > cleanup.txt'"}}
+> {"type": "command", "params": {"command": "sh -c 'echo on_fail_failed >&2 && false'"}}
+> ```
+
 ## Overview
 
 **cronpypeline** extracts the shared patterns from cron-based pipeline orchestration into a reusable, configuration-driven library. Instead of writing thousands of lines of custom orchestrator code for each new pipeline, you define your stages, triggers, actions, and markers in a JSON config file — and the library handles the rest.
@@ -24,7 +47,7 @@
 - **Conversation ID continuation**: On retry, the previous `entry_id` is reused as `conversation_id` so agents continue the same conversation instead of starting fresh.
 - **Serendipity-compatible queue format**: Configurable `prompt_field` (e.g. `content` instead of `prompt`), `default_fields` for static metadata (`sender`, `folder_name`, `model_name`, `runs_left`), and `flatten_agent_settings` for flat agent config merging.
 - **Dynamic marker naming**: Marker names and directories support `{target}`, `{slug}`, and any target config key via template substitution.
-- **Shell-safe command execution**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into commands are shell-quoted with `shlex.quote()`, and commands are executed via an argument list (`shell=False`) rather than a shell, preventing command injection.
+- **Shell-safe command execution**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into commands are shell-quoted with `shlex.quote()`, and commands are executed via an argument list (`shell=False`) rather than a shell, preventing command injection. **This is a breaking change** — existing configs using shell features (pipes, redirections, `&&`, `;`, etc.) in `command`-type actions or `run_diagnostic` commands must be wrapped in `sh -c '...'` (see the migration note at the top of this README).
 - **HTTP requests**: Built-in `http_request` action handler with auth token resolution from config, env vars, or context.
 - **SWE pipeline plugins**: Issue store (YAML frontmatter), diagnostic report handlers with output parsers, prompt builders for fix/coder/review agents, GitHub session adapter.
 - **VNN pipeline plugins**: Story state sync, inconsistent state cleanup, global queue-empty gate, completed compilation checks, story discovery, rejection audit trail.
@@ -392,6 +415,8 @@ The filesystem is the source of truth — no database, no in-memory state:
 
 Template variables substituted into commands (`command`-type actions) are shell-quoted with `shlex.quote()` before substitution, and commands are executed without a shell (via an argument list built with `shlex.split()`, i.e. `shell=False`), preventing command injection when a value (e.g. a target name or path) contains shell metacharacters. If template substitution fails (missing key, bad format, etc.), an error is raised rather than silently falling back to the unformatted template.
 
+> **⚠️ Breaking change:** switching from `shell=True` to `shell=False` means existing `command`-type actions that rely on shell features — pipes, redirections (`>`, `>>`, `<`, `2>&1`), command chaining (`&&`, `;`), command substitution (`$(...)`), globbing, or env-var expansion — will no longer work as-is and **must be wrapped in `sh -c '...'`**. For example, `"command": "echo failed > cleanup.txt"` must become `"command": "sh -c 'echo failed > cleanup.txt'"`.
+
 ### Marker specs
 
 | Type | Description | Fields |
@@ -738,6 +763,8 @@ Diagnostic report action handler and output parsers:
 
 `run_diagnostic` shell-quotes template variables (`target`, `target_dir`, `workspace_dir`, and flattened target config values) with `shlex.quote()` before substituting them into the diagnostic command. Command config values (e.g. `test_cmd`, `lint_cmd`, `typecheck_cmd`, `security_cmd`, `deadcode_cmd`, `build_cmd`, `dep_audit_cmd`, `coverage_cmd`) are validated to reject shell metacharacters, and commands are executed via an argument list (`shell=False`). If template substitution fails (missing key, bad format, etc.), an error result is returned instead of silently running the unformatted command.
 
+> **⚠️ Breaking change:** `run_diagnostic` commands now run with `shell=False`, so any existing diagnostic command that relies on shell features — pipes, redirections, `&&`, `;`, command substitution (`$(...)`), globbing, or env-var expansion — must be wrapped in `sh -c '...'` (e.g. `"command": "pytest -q | tee out.txt"` must become `"command": "sh -c 'pytest -q | tee out.txt'"`).
+
 ```json
 {
   "type": "custom",
@@ -917,6 +944,26 @@ Existing pipelines can be migrated incrementally:
 1. **Phase 1**: Install cronpypeline alongside existing scripts. Create JSON configs that replicate the current detector chains. Run via `--dry-run` to verify parity.
 2. **Phase 2**: Switch crontab entries from the old scripts to `python -m cronpypeline --config ...`.
 3. **Phase 3**: Remove old orchestrator scripts. Custom logic moves to plugin callables.
+
+### Migrating commands that use shell features
+
+Commands are now executed with `shell=False` (via `shlex.split()`), a **breaking change** for configs that rely on shell features. Before migrating an existing config, audit every `command`-type action and every `run_diagnostic` command for shell syntax — pipes (`|`), redirections (`>`, `>>`, `<`, `2>&1`), command chaining (`&&`, `;`), command substitution (`$(...)`), globbing, or environment variable expansion.
+
+If a command uses any of these, wrap it in `sh -c '...'`:
+
+Before (worked with `shell=True`, **no longer works**):
+```json
+{"type": "command", "params": {"command": "echo failed > cleanup.txt"}}
+{"type": "command", "params": {"command": "echo on_fail_failed >&2 && false"}}
+```
+
+After (wrap in `sh -c '...'`):
+```json
+{"type": "command", "params": {"command": "sh -c 'echo failed > cleanup.txt'"}}
+{"type": "command", "params": {"command": "sh -c 'echo on_fail_failed >&2 && false'"}}
+```
+
+Commands without shell features do not need changes — they continue to work as-is.
 
 ## Requirements
 
