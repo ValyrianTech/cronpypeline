@@ -1136,7 +1136,7 @@ under ``{target_dir / SWE_SUBDIR / 'issues'}/`` for full details.
    impact, and whether it blocks other work.
 3. Write your choice to ``{marker_path}`` using WriteFile with this exact format:
 
-   {{{{"issue_id": "<the-issue-id>"}}}}
+   {{"issue_id": "<the-issue-id>"}}
 
    Replace ``<the-issue-id>`` with the id of the issue you picked.
    Write ONLY the JSON — no extra text.
@@ -1682,11 +1682,11 @@ def _build_doc_sync_prompt(
         f"Write the completion marker as your LAST step using the WriteFile "
         f"tool. Write this exact JSON content to:\n"
         f"  {marker_path}\n"
-        f"{{{{\n"
+        f"{{\n"
         f'  "sha": "{sha}",\n'
         f'  "completed_at": "<current ISO timestamp>",\n'
         f'  "changes_made": true\n'
-        f"}}}}\n"
+        f"}}\n"
         f"Replace `<current ISO timestamp>` with the actual current time "
         f"in ISO format (e.g. 2026-06-23T12:00:00Z). If you made no "
         f"documentation changes, set `\"changes_made\": false`.\n\n"
@@ -1816,7 +1816,7 @@ def _build_pr_review_prompt(
         f"After a SUCCESSFUL post (verified by RunCommand output), write a "
         f"completion marker with WriteFile to:\n"
         f"  {marker_path}\n"
-        f'Content: {{{{"pr_number": {pr_number}, "reviewed_at": "<ISO timestamp>"}}}}\n\n'
+        f'Content: {{"pr_number": {pr_number}, "reviewed_at": "<ISO timestamp>"}}\n\n'
         f"Do NOT modify any source code and do NOT commit anything.\n"
     )
 
