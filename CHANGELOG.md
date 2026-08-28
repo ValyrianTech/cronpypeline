@@ -2,21 +2,6 @@
 
 ## [Unreleased]
 
-### Breaking Changes
-- Commands in `command`-type actions and `run_diagnostic` commands are now executed without a shell (`shell=False` via `shlex.split()`) instead of `shell=True`. This is a **breaking change**: any existing pipeline config that uses shell features — pipes (`|`), redirections (`>`, `>>`, `<`, `2>&1`), command chaining (`&&`, `;`), command substitution (`$(...)`), globbing, or environment variable expansion — in a `command`-type action or `run_diagnostic` command will no longer work as-is and **must be updated to wrap the command in `sh -c '...'`**.
-
-  Before (worked with `shell=True`, no longer works):
-  ```json
-  {"type": "command", "params": {"command": "echo failed > cleanup.txt"}}
-  {"type": "command", "params": {"command": "echo on_fail_failed >&2 && false"}}
-  ```
-
-  After (wrap in `sh -c '...'`):
-  ```json
-  {"type": "command", "params": {"command": "sh -c 'echo failed > cleanup.txt'"}}
-  {"type": "command", "params": {"command": "sh -c 'echo on_fail_failed >&2 && false'"}}
-  ```
-
 ### Fixed
 - Chained stage failure now reported in TickResult with ACTION_FAILED status and the failed stage ID.
 - Chained stage on_fail actions are now executed when a chained stage fails (previously silently ignored).

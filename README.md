@@ -2,29 +2,6 @@
 
 > A Python library for building cron-friendly, stateful, multi-stage agentic pipelines driven by JSON configuration.
 
-> **⚠️ BREAKING CHANGE — `shell=True` → `shell=False`**
->
-> Commands in `command`-type actions and `run_diagnostic` commands are now executed
-> **without a shell** (built via `shlex.split()` into an argument list, i.e. `shell=False`)
-> instead of through `shell=True`. This is a **breaking change** for any existing pipeline
-> config that relies on shell features — pipes (`|`), redirections (`>`, `>>`, `<`, `2>&1`),
-> command chaining (`&&`, `;`), command substitution (`$(...)`), globbing, or environment
-> variable expansion.
->
-> **If your config uses any of these, you must wrap the command in `sh -c '...'`.**
->
-> Before (worked with `shell=True`, **no longer works**):
-> ```json
-> {"type": "command", "params": {"command": "echo failed > cleanup.txt"}}
-> {"type": "command", "params": {"command": "echo on_fail_failed >&2 && false"}}
-> ```
->
-> After (wrap in `sh -c '...'`):
-> ```json
-> {"type": "command", "params": {"command": "sh -c 'echo failed > cleanup.txt'"}}
-> {"type": "command", "params": {"command": "sh -c 'echo on_fail_failed >&2 && false'"}}
-> ```
-
 ## Overview
 
 **cronpypeline** extracts the shared patterns from cron-based pipeline orchestration into a reusable, configuration-driven library. Instead of writing thousands of lines of custom orchestrator code for each new pipeline, you define your stages, triggers, actions, and markers in a JSON config file — and the library handles the rest.
@@ -47,7 +24,7 @@
 - **Conversation ID continuation**: On retry, the previous `entry_id` is reused as `conversation_id` so agents continue the same conversation instead of starting fresh.
 - **Serendipity-compatible queue format**: Configurable `prompt_field` (e.g. `content` instead of `prompt`), `default_fields` for static metadata (`sender`, `folder_name`, `model_name`, `runs_left`), and `flatten_agent_settings` for flat agent config merging.
 - **Dynamic marker naming**: Marker names and directories support `{target}`, `{slug}`, and any target config key via template substitution.
-- **Shell-safe command execution**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into commands are shell-quoted with `shlex.quote()`, and commands are executed via an argument list (`shell=False`) rather than a shell, preventing command injection. **This is a breaking change** — existing configs using shell features (pipes, redirections, `&&`, `;`, etc.) in `command`-type actions or `run_diagnostic` commands must be wrapped in `sh -c '...'` (see the migration note at the top of this README).
+- **Shell-safe command execution**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into commands are shell-quoted with `shlex.quote()`, and commands are executed via an argument list (`shell=False`) rather than a shell, preventing command injection.
 - **HTTP requests**: Built-in `http_request` action handler with auth token resolution from config, env vars, or context.
 - **SWE pipeline plugins**: Issue store (YAML frontmatter), diagnostic report handlers with output parsers, prompt builders for fix/coder/review agents, GitHub session adapter.
 - **VNN pipeline plugins**: Story state sync, inconsistent state cleanup, global queue-empty gate, completed compilation checks, story discovery, rejection audit trail.
@@ -414,8 +391,6 @@ The filesystem is the source of truth — no database, no in-memory state:
 - Any flattened target config key (e.g. `{slug}`, `{test_cmd}`, `{coverage_threshold}`) — available when using a registry target spec
 
 Template variables substituted into commands (`command`-type actions) are shell-quoted with `shlex.quote()` before substitution, and commands are executed without a shell (via an argument list built with `shlex.split()`, i.e. `shell=False`), preventing command injection when a value (e.g. a target name or path) contains shell metacharacters. If template substitution fails (missing key, bad format, etc.), an error is raised rather than silently falling back to the unformatted template.
-
-> **⚠️ Breaking change:** switching from `shell=True` to `shell=False` means existing `command`-type actions that rely on shell features — pipes, redirections (`>`, `>>`, `<`, `2>&1`), command chaining (`&&`, `;`), command substitution (`$(...)`), globbing, or env-var expansion — will no longer work as-is and **must be wrapped in `sh -c '...'`**. For example, `"command": "echo failed > cleanup.txt"` must become `"command": "sh -c 'echo failed > cleanup.txt'"`.
 
 ### Marker specs
 
