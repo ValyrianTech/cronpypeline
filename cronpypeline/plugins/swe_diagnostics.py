@@ -20,6 +20,23 @@ from cronpypeline.reporting import (
     write_report,
 )
 
+_SHELL_METACHARS = set(";|&><$`(){}~\n")
+
+
+def _validate_cmd_value(key: str, value: str) -> None:
+    """Validate that a command config value contains no shell metacharacters.
+
+    :param key: Config key name.
+    :param value: Command string to validate.
+    :raises ValueError: If the value contains shell metacharacters.
+    """
+    for ch in value:
+        if ch in _SHELL_METACHARS:
+            raise ValueError(
+                f"Command config value '{key}' contains shell metacharacter {ch!r}: {value!r}"
+            )
+
+
 # ─── Output parsers ─────────────────────────────────────────────────────────
 
 
@@ -291,13 +308,17 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
         "coverage_cmd", "security_cmd", "deadcode_cmd", "build_cmd",
         "dep_audit_cmd",
     })
-    for k, v in context.target_config.items():
-        if k not in variables:
-            if k in _cmd_keys:
-                variables[k] = str(v)
-            else:
-                variables[k] = shlex.quote(str(v))
-    command = format_template(command, variables)
+    try:
+        for k, v in context.target_config.items():
+            if k not in variables:
+                if k in _cmd_keys:
+                    _validate_cmd_value(k, str(v))
+                    variables[k] = str(v)
+                else:
+                    variables[k] = shlex.quote(str(v))
+        command = format_template(command, variables)
+    except ValueError as e:
+        return ActionResult(success=False, stderr=str(e))
 
     # Resolve timeout: action param → timeout_seconds → default 300s
     timeout = params.get("timeout", 300)
@@ -306,9 +327,14 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
 
     # Run command
     try:
+        cmd_args = shlex.split(command)
+    except ValueError as e:
+        return ActionResult(success=False, stderr=f"Invalid command: {e}")
+
+    try:
         proc = subprocess.run(
-            command,
-            shell=True,  # nosec B602 - diagnostic commands come from trusted pipeline config
+            cmd_args,
+            shell=False,
             cwd=str(context.target_dir),
             capture_output=True,
             text=True,

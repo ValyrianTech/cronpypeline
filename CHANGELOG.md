@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+- Commands in `command`-type actions and `run_diagnostic` commands are now executed without a shell (`shell=False` via `shlex.split()`) instead of `shell=True`. This is a **breaking change**: any existing pipeline config that uses shell features — pipes (`|`), redirections (`>`, `>>`, `<`, `2>&1`), command chaining (`&&`, `;`), command substitution (`$(...)`), globbing, or environment variable expansion — in a `command`-type action or `run_diagnostic` command will no longer work as-is and **must be updated to wrap the command in `sh -c '...'`**.
+
+  Before (worked with `shell=True`, no longer works):
+  ```json
+  {"type": "command", "params": {"command": "echo failed > cleanup.txt"}}
+  {"type": "command", "params": {"command": "echo on_fail_failed >&2 && false"}}
+  ```
+
+  After (wrap in `sh -c '...'`):
+  ```json
+  {"type": "command", "params": {"command": "sh -c 'echo failed > cleanup.txt'"}}
+  {"type": "command", "params": {"command": "sh -c 'echo on_fail_failed >&2 && false'"}}
+  ```
+
 ### Fixed
 - Chained stage failure now reported in TickResult with ACTION_FAILED status and the failed stage ID.
 - Chained stage on_fail actions are now executed when a chained stage fails (previously silently ignored).
@@ -30,8 +45,13 @@
 - `tick()` exception handler now reports the actual failing target instead of `*`.
 - `tick_all()` now continues processing remaining targets even if one raises an exception, and captures the traceback in the returned TickResult's stderr field.
 - `MarkerSpec.resolve_path` now rejects path traversal (`..` segments) and absolute paths that escape the workspace.
+- Template substitution failures in `command`-type actions, `conversation_queue`, and `run_diagnostic` now return an `ACTION_FAILED` result with the error message instead of silently using the unformatted template.
 
 ### Security
 - Addressed bandit findings: added nosec annotations for intentional subprocess/shell usage, resolved git binary via shutil.which, and validated HTTP URL schemes.
 - `http_request` action handler now redacts URLs (removes userinfo and query params) in result data to avoid leaking sensitive information.
 - Template-substituted variables (`target`, `target_dir`, `workspace_dir`, and target config values) are now shell-quoted with `shlex.quote()` before substitution into `command`-type actions and `run_diagnostic` commands, preventing command injection when values contain shell metacharacters.
+- `command`-type actions and `run_diagnostic` now execute commands via an argument list (`shell=False` using `shlex.split()`) instead of a shell, preventing shell injection through template-substituted values.
+- `run_diagnostic` now validates command config values (e.g. `test_cmd`, `lint_cmd`) and rejects values containing shell metacharacters.
+- `format_template` now raises `ValueError` on substitution failure (missing key, bad format) instead of silently returning the unformatted template; callers return an `ACTION_FAILED` result with the error message.
+- Fixed prompt template escaping in SWE plugin and prompt builders so JSON literals embedded in prompts render correctly after `.format()` substitution.

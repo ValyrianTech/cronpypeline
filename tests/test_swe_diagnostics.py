@@ -542,10 +542,10 @@ class TestRunDiagnosticEdgeCases:
 
         assert result.success is True
         cmd = mock_run.call_args.args[0]
-        assert cmd == "echo 'hello; echo INJECTED'"
+        assert cmd == ["echo", "hello; echo INJECTED"]
 
-    def test_cmd_config_values_are_not_quoted(self, tmp_path):
-        """_cmd target_config values are full shell commands and must not be quoted."""
+    def test_cmd_config_values_with_metacharacters_are_rejected(self, tmp_path):
+        """_cmd target_config values with shell metacharacters should be rejected."""
         report_dir = tmp_path / "reports"
         target_dir = tmp_path / "repo"
         target_dir.mkdir()
@@ -565,13 +565,197 @@ class TestRunDiagnosticEdgeCases:
             target_config={"test_cmd": "pytest; echo INJECTED"},
         )
 
+        result = run_diagnostic(action, ctx)
+        assert result.success is False
+        assert "shell metacharacter" in result.stderr
+
+    def test_cmd_config_values_without_metacharacters_work(self, tmp_path):
+        """_cmd target_config values without shell metacharacters should work."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "{test_cmd}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"test_cmd": "pytest -q"},
+        )
+
         with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = run_diagnostic(action, ctx)
 
         assert result.success is True
         cmd = mock_run.call_args.args[0]
-        assert cmd == "pytest; echo INJECTED"
+        assert cmd == ["pytest", "-q"]
+        assert mock_run.call_args.kwargs.get("shell") is False
+
+    def test_cmd_config_values_with_exclamation_are_accepted(self, tmp_path):
+        """_cmd target_config values containing '!' (find negation) should be accepted."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "{test_cmd}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"test_cmd": "find . -name '*.py' ! -path './tests/*'"},
+        )
+
+        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is True
+        cmd = mock_run.call_args.args[0]
+        assert cmd == ["find", ".", "-name", "*.py", "!", "-path", "./tests/*"]
+        assert mock_run.call_args.kwargs.get("shell") is False
+
+    def test_cmd_config_values_with_hash_are_accepted(self, tmp_path):
+        """_cmd target_config values containing '#' should be accepted."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "{lint_cmd}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"lint_cmd": "ruff check src --exclude 'file#1.py'"},
+        )
+
+        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is True
+        cmd = mock_run.call_args.args[0]
+        assert cmd == ["ruff", "check", "src", "--exclude", "file#1.py"]
+        assert mock_run.call_args.kwargs.get("shell") is False
+
+    def test_cmd_config_values_with_glob_patterns_are_accepted(self, tmp_path):
+        """_cmd target_config values with shell globbing characters should be accepted."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "{test_cmd}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"test_cmd": "pytest tests/*.py"},
+        )
+
+        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is True
+        cmd = mock_run.call_args.args[0]
+        assert cmd == ["pytest", "tests/*.py"]
+        assert mock_run.call_args.kwargs.get("shell") is False
+
+    def test_cmd_config_values_with_glob_question_brackets_accepted(self, tmp_path):
+        """_cmd target_config values with ?, [, ] glob characters should be accepted."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "{lint_cmd}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"lint_cmd": "ruff check src/**/*.py"},
+        )
+
+        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is True
+        cmd = mock_run.call_args.args[0]
+        assert cmd == ["ruff", "check", "src/**/*.py"]
+        assert mock_run.call_args.kwargs.get("shell") is False
+
+    def test_format_template_failure_returns_error(self, tmp_path):
+        """When format_template fails, should return failure ActionResult."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "echo {missing_var}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+
+        result = run_diagnostic(action, ctx)
+        assert result.success is False
+        assert "Template substitution failed" in result.stderr
+
+    def test_shlex_split_failure_returns_error(self, tmp_path):
+        """When shlex.split fails (unterminated quote), should return failure."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "echo 'unterminated",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+
+        result = run_diagnostic(action, ctx)
+        assert result.success is False
+        assert "Invalid command" in result.stderr
 
     def test_command_timeout(self, tmp_path):
         """Command timeout should return failure with timeout message."""
