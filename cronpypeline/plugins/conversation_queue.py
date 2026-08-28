@@ -83,11 +83,16 @@ class ConversationQueueHandler(ActionHandler):
         is_retry = context.retry_count > 0
         if is_retry and reminder_prompt_template:
             prompt = reminder_prompt_template
+            is_template = True
         elif is_retry and reminder_prompt:
             prompt = reminder_prompt
+            is_template = False
         elif prompt_template:
             prompt = prompt_template
-        # else: use prompt as-is
+            is_template = True
+        else:
+            # use prompt as-is
+            is_template = False
 
         # Format prompt with context variables
         variables = {
@@ -101,10 +106,16 @@ class ConversationQueueHandler(ActionHandler):
             if k not in variables:
                 variables[k] = v
         try:
-            if prompt_template:
-                prompt = format_template(prompt_template, variables)
-            else:
+            if is_template:
                 prompt = format_template(prompt, variables)
+            else:
+                # Plain prompts may contain unescaped braces from dynamic content
+                # (e.g., issue bodies with JSON literals). Try to format, but fall
+                # back to using the prompt as-is if formatting fails.
+                try:
+                    prompt = format_template(prompt, variables)
+                except ValueError:
+                    pass
         except ValueError as e:
             return ActionResult(success=False, stderr=str(e))
 
