@@ -13,7 +13,6 @@ Drives a single issue through a fix loop:
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess  # nosec B404 - subprocess used for git and verification commands
 import sys

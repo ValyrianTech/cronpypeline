@@ -181,7 +181,7 @@ class TestCommandActionHandler:
         result = handler.execute(action, ctx)
         assert result.success is True
         assert str(ctx.target_dir) in result.stdout
-        assert f"'{str(ctx.target_dir)}'" not in result.stdout
+        assert f"'{ctx.target_dir!s}'" not in result.stdout
         assert ctx.target_dir.exists()
         quoted_dir = workspace_dir / "'repo'"
         assert not quoted_dir.exists()

@@ -7,7 +7,6 @@ referenced from pipeline JSON configs via "callable": "cronpypeline.plugins.swe_
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess  # nosec B404 - subprocess is used by design to run git commands for pipeline state detection
 import sys
