@@ -6,6 +6,7 @@ lives in the plugins package.
 """
 
 import os
+import shlex
 import socket
 import subprocess  # nosec B404 - subprocess is used by design to run pipeline commands/scripts
 import sys
@@ -145,9 +146,9 @@ class CommandActionHandler(ActionHandler):
 
         # Substitute template variables
         variables = {
-            "target": context.target,
-            "target_dir": str(context.target_dir),
-            "workspace_dir": str(context.workspace_dir),
+            "target": shlex.quote(context.target),
+            "target_dir": shlex.quote(str(context.target_dir)),
+            "workspace_dir": shlex.quote(str(context.workspace_dir)),
         }
         cmd = format_template(cmd, variables)
         cwd = format_template(cwd, variables)

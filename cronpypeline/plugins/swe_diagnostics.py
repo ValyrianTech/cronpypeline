@@ -7,6 +7,7 @@ Provides:
 """
 
 import re
+import shlex
 import subprocess  # nosec B404 - subprocess is used by design to run diagnostic commands
 from collections.abc import Callable
 from typing import Any
@@ -279,13 +280,13 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
 
     # Format command with context variables
     variables = {
-        "target": context.target,
-        "target_dir": str(context.target_dir),
-        "workspace_dir": str(context.workspace_dir),
+        "target": shlex.quote(context.target),
+        "target_dir": shlex.quote(str(context.target_dir)),
+        "workspace_dir": shlex.quote(str(context.workspace_dir)),
     }
     for k, v in context.target_config.items():
         if k not in variables:
-            variables[k] = v
+            variables[k] = shlex.quote(str(v))
     command = format_template(command, variables)
 
     # Resolve timeout: action param → timeout_seconds → default 300s
