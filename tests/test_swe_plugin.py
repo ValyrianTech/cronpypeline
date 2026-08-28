@@ -2512,6 +2512,28 @@ class TestDetectCDocSync:
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_doc_sync(ctx) is True
 
+    def test_does_not_fire_when_doc_sync_sha_is_ancestor(self, tmp_path, monkeypatch):
+        """Doc-sync agent committed on top of synced SHA, advancing HEAD.
+
+        The old SHA in doc_sync.json is an ancestor of the current HEAD,
+        so the marker should still count as done.
+        """
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        self._setup_git(target)
+        # Record the SHA before the doc-sync agent's commit
+        old_sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": old_sha}))
+        # Simulate the doc-sync agent committing on top
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "docs.md").write_text("# Docs\n")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "docs: sync"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_doc_sync(ctx) is False
+
 
 # ─── run_c_doc_sync ─────────────────────────────────────────────────────────
 
@@ -3166,6 +3188,41 @@ class TestDetectCPrPublishShaMismatch:
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is False
+
+
+class TestDetectCPrPublishAncestorDocSync:
+    def test_fires_when_doc_sync_sha_is_ancestor(self, tmp_path, monkeypatch):
+        """Doc-sync agent committed on top of synced SHA, advancing HEAD.
+
+        The old SHA in doc_sync.json is an ancestor of the current HEAD,
+        so publish should proceed.
+        """
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        # Record SHA before doc-sync agent's commit
+        old_sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": old_sha}))
+        # Simulate doc-sync agent committing on top
+        (target / "docs.md").write_text("# Docs\n")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "docs: sync"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_publish(ctx) is True
 
 
 class TestRunCPrPublishTimeout:

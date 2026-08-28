@@ -1249,6 +1249,27 @@ def integration_head_sha(target_dir: Path, default_branch: str) -> str | None:
     return None
 
 
+def _sha_is_ancestor(target_dir: Path, ancestor_sha: str, descendant_ref: str) -> bool:
+    """Check whether *ancestor_sha* is an ancestor of *descendant_ref*.
+
+    Uses ``git merge-base --is-ancestor``.  Returns ``False`` on any git
+    error or when *ancestor_sha* is empty.
+
+    :param target_dir: Target repo directory.
+    :param ancestor_sha: Potential ancestor commit SHA.
+    :param descendant_ref: Ref (or SHA) to check ancestry against.
+    :returns: True if *ancestor_sha* is reachable from *descendant_ref*.
+    """
+    if not ancestor_sha:
+        return False
+    res = subprocess.run(
+        [GIT_BIN, "-C", str(target_dir), "merge-base", "--is-ancestor",
+         ancestor_sha, descendant_ref],
+        capture_output=True, check=False,
+    )  # nosec B603 - git with fixed args
+    return res.returncode == 0
+
+
 def _open_issue_count(target_dir: Path) -> int:
     """Count open issues under .SWE/issues/.
 
@@ -2788,12 +2809,15 @@ def detect_c_doc_sync(context: dict[str, Any]) -> bool:
     if "/" not in slug:
         return False
 
-    # Idempotency: already synced for this SHA?
+    # Idempotency: already synced for this SHA (or an ancestor of it)?
+    # The doc-sync agent may commit on top of the queued SHA, advancing
+    # HEAD — the marker still counts as done for the current branch tip.
     done_marker = target_dir / SWE_SUBDIR / DOC_SYNC_MARKER
     if done_marker.exists():
         try:
             data = json.loads(done_marker.read_text(encoding="utf-8"))
-            if data.get("sha") == sha:
+            ds_sha = data.get("sha")
+            if ds_sha == sha or _sha_is_ancestor(target_dir, ds_sha, INTEGRATION_BRANCH):
                 return False
         except (OSError, json.JSONDecodeError):
             pass
@@ -2937,13 +2961,15 @@ def detect_c_pr_publish(context: dict[str, Any]) -> bool:
     if "/" not in slug:
         return False
 
-    # Doc sync must be done for this SHA
+    # Doc sync must be done for this SHA (or an ancestor of it).  The
+    # doc-sync agent may commit on top of the queued SHA, advancing HEAD.
     doc_sync_marker = target_dir / SWE_SUBDIR / DOC_SYNC_MARKER
     if not doc_sync_marker.exists():
         return False
     try:
         ds_data = json.loads(doc_sync_marker.read_text(encoding="utf-8"))
-        if ds_data.get("sha") != sha:
+        ds_sha = ds_data.get("sha")
+        if ds_sha != sha and not _sha_is_ancestor(target_dir, ds_sha, INTEGRATION_BRANCH):
             return False
     except (OSError, json.JSONDecodeError):
         return False
