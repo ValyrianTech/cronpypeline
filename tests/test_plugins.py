@@ -123,6 +123,24 @@ class TestConversationQueueHandler:
         entry = json.loads(files[0].read_text())
         assert "Run tox for my-repo" == entry["prompt"]
 
+    def test_format_template_failure_returns_error(self, tmp_path):
+        """When format_template fails, should return failure ActionResult."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "CoderAgent",
+                "prompt_template": "Fix issue {missing_var}",
+            },
+        )
+        ctx = TickContext(target="my-repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "Template substitution failed" in result.stderr
+
     def test_includes_optional_fields(self, tmp_path):
         queue_dir = tmp_path / "queue"
         handler = ConversationQueueHandler(queue_dir=str(queue_dir))

@@ -96,12 +96,13 @@ def format_template(template: str, variables: dict[str, Any]) -> str:
 
     :param template: Template string with ``{key}`` placeholders.
     :param variables: Mapping of keys to substitution values.
-    :returns: Formatted string, or the original template if substitution fails.
+    :returns: Formatted string.
+    :raises ValueError: If substitution fails (missing key, bad format, etc.).
     """
     try:
         return template.format(**variables)
-    except (KeyError, IndexError, ValueError):
-        return template
+    except (KeyError, IndexError, ValueError) as e:
+        raise ValueError(f"Template substitution failed for: {template!r}: {e}") from e
 
 
 class ActionHandler:
@@ -145,7 +146,7 @@ class CommandActionHandler(ActionHandler):
         cwd = action.params.get("cwd", str(context.target_dir))
 
         # Substitute template variables
-        # cmd is executed via shell=True so variables must be shell-quoted
+        # cmd is executed via an argument list (no shell) so variables must be shell-quoted
         cmd_variables = {
             "target": shlex.quote(context.target),
             "target_dir": shlex.quote(str(context.target_dir)),
@@ -157,17 +158,25 @@ class CommandActionHandler(ActionHandler):
             "target_dir": str(context.target_dir),
             "workspace_dir": str(context.workspace_dir),
         }
-        cmd = format_template(cmd, cmd_variables)
-        cwd = format_template(cwd, cwd_variables)
+        try:
+            cmd = format_template(cmd, cmd_variables)
+            cwd = format_template(cwd, cwd_variables)
+        except ValueError as e:
+            return ActionResult(success=False, stderr=str(e))
 
         timeout = action.timeout_seconds
 
         Path(cwd).mkdir(parents=True, exist_ok=True)
 
         try:
+            cmd_args = shlex.split(cmd)
+        except ValueError as e:
+            return ActionResult(success=False, stderr=f"Invalid command: {e}")
+
+        try:
             proc = subprocess.run(
-                cmd,
-                shell=True,  # nosec B602 - shell command execution is the intended behavior of CommandActionHandler; commands come from trusted pipeline config
+                cmd_args,
+                shell=False,
                 cwd=cwd,
                 capture_output=True,
                 text=True,
