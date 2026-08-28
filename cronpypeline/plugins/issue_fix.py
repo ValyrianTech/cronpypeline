@@ -812,6 +812,8 @@ def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str, str]:
         err = (exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")) \
             + f"\n[TIMEOUT after {timeout}s]"
         return 124, out, err
+    except (FileNotFoundError, OSError):
+        return 127, "", f"Command not found: {cmd_args[0]}"
 
 
 def _queue_agent(agent_name: str, prompt: str, repo_name: str,

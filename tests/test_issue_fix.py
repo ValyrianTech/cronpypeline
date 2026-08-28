@@ -419,6 +419,11 @@ class TestRun:
         c, o, e = _run('echo "unterminated', tmp_path, 10)
         assert c == 1 and o == "" and "Invalid command" in e
 
+    def test_file_not_found(self, tmp_path):
+        with patch("cronpypeline.plugins.issue_fix.subprocess.run", side_effect=FileNotFoundError()):
+            c, o, e = _run("nonexistent-cmd", tmp_path, 10)
+        assert (c, o, e) == (127, "", "Command not found: nonexistent-cmd")
+
 
 class TestPromptBuilders:
     def test_closing_loop(self, tmp_path):

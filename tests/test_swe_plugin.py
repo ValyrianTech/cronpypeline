@@ -703,6 +703,26 @@ class TestRunLintAutofix:
         assert result.success is False
         assert "Invalid command" in result.stderr
 
+    def test_file_not_found_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "lint", "r.md", "# Lint — FAIL\n\n- **fixable**: 0\n")
+        subprocess.run(["git", "init", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"command": "nonexistent-cmd"})
+        real_run = subprocess.run
+
+        def _mock_run(*args, **kwargs):
+            if args and args[0] == ["nonexistent-cmd"]:
+                raise FileNotFoundError()
+            return real_run(*args, **kwargs)
+
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_mock_run):
+            result = run_lint_autofix(action, ctx)
+        assert result.success is False
+        assert result.stderr == "Command not found: nonexistent-cmd"
+
 
 # ─── _load_github_token ─────────────────────────────────────────────────────
 
