@@ -37,6 +37,8 @@
 - `http_request` action handler now redacts URLs (removes userinfo and query params) in result data to avoid leaking sensitive information.
 - Template-substituted variables (`target`, `target_dir`, `workspace_dir`, and target config values) are now shell-quoted with `shlex.quote()` before substitution into `command`-type actions and `run_diagnostic` commands, preventing command injection when values contain shell metacharacters.
 - `command`-type actions and `run_diagnostic` now execute commands via an argument list (`shell=False` using `shlex.split()`) instead of a shell, preventing shell injection through template-substituted values.
+- The `run_lint_autofix` action in the SWE plugin now executes its command via an argument list (`shell=False` using `shlex.split()`) instead of a shell, preventing command injection through template-substituted values; invalid commands return an ACTION_FAILED result.
+- The `_run` helper in the issue-fix plugin now executes commands via an argument list (`shell=False` using `shlex.split()`) instead of a shell, preventing command injection through template-substituted values; invalid commands return an error result.
 - `run_diagnostic` now validates command config values (e.g. `test_cmd`, `lint_cmd`) and rejects values containing shell metacharacters.
 - `format_template` now raises `ValueError` on substitution failure (missing key, bad format) instead of silently returning the unformatted template; callers return an `ACTION_FAILED` result with the error message.
 - Fixed prompt template escaping in SWE plugin and prompt builders so JSON literals embedded in prompts render correctly after `.format()` substitution.

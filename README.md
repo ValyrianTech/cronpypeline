@@ -722,6 +722,7 @@ Custom triggers and actions for the SWE pipeline:
 - `cleanup_git_branch` — action: cleans up git branches after failure
 - `reset_issue_status` — action: resets issue status to "open" after failure (updates YAML frontmatter)
 - `sync_session_mode` — pre_tick hook: syncs `.SWE/github_session.json` to the pipeline `mode_file`
+- `run_lint_autofix` — action: runs a lint autofix command (default `ruff check --fix .`), parses the fixed-count, writes a timestamped report, and commits changes. The command is executed via an argument list (`shell=False` using `shlex.split()`) rather than a shell, so commands relying on shell features (pipes, redirection, `&&`, etc.) must be wrapped in `sh -c '...'`; invalid/unparseable commands return an ACTION_FAILED result.
 
 Git is invoked via `shutil.which("git")` (resolved to an absolute path, falling back to `"git"`), so the binary location is detected at runtime rather than hardcoded.
 
@@ -922,7 +923,7 @@ Existing pipelines can be migrated incrementally:
 
 ### Migrating commands that use shell features
 
-Commands are now executed with `shell=False` (via `shlex.split()`), a **breaking change** for configs that rely on shell features. Before migrating an existing config, audit every `command`-type action and every `run_diagnostic` command for shell syntax — pipes (`|`), redirections (`>`, `>>`, `<`, `2>&1`), command chaining (`&&`, `;`), command substitution (`$(...)`), globbing, or environment variable expansion.
+Commands are now executed with `shell=False` (via `shlex.split()`), a **breaking change** for configs that rely on shell features. Before migrating an existing config, audit every `command`-type action, every `run_diagnostic` command, the `run_lint_autofix` action, and the issue-fix plugin's `_run` commands for shell syntax — pipes (`|`), redirections (`>`, `>>`, `<`, `2>&1`), command chaining (`&&`, `;`), command substitution (`$(...)`), globbing, or environment variable expansion.
 
 If a command uses any of these, wrap it in `sh -c '...'`:
 

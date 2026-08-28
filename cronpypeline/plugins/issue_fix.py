@@ -13,6 +13,7 @@ Drives a single issue through a fix loop:
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess  # nosec B404 - subprocess used for git and verification commands
 import sys
@@ -789,16 +790,22 @@ def _build_review_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
 
 
 def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str, str]:
-    """Run a shell command and return (exit_code, stdout, stderr).
+    """Run a command and return (exit_code, stdout, stderr).
 
-    :param cmd: Shell command string.
+    :param cmd: Command string.
     :param cwd: Working directory.
     :param timeout: Timeout in seconds.
     :returns: Tuple of (exit_code, stdout, stderr).
     """
     try:
-        proc = subprocess.run(  # nosec B602 - commands come from trusted pipeline config (target_config); no template substitution is performed
-            cmd, shell=True, cwd=str(cwd),
+        cmd_args = shlex.split(cmd)
+    except ValueError as e:
+        return 1, "", f"Invalid command: {e}"
+    if not cmd_args:
+        return 1, "", "Empty command string"
+    try:
+        proc = subprocess.run(
+            cmd_args, cwd=str(cwd),
             capture_output=True, text=True, timeout=timeout, check=False,
         )
         return proc.returncode, proc.stdout, proc.stderr
@@ -807,6 +814,8 @@ def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str, str]:
         err = (exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")) \
             + f"\n[TIMEOUT after {timeout}s]"
         return 124, out, err
+    except (FileNotFoundError, OSError):
+        return 127, "", f"Command not found: {cmd_args[0]}"
 
 
 def _queue_agent(agent_name: str, prompt: str, repo_name: str,

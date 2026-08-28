@@ -3960,7 +3960,6 @@ class TestTickChainEdgeCases:
         # Pre-create the completion marker for B0 so it's already complete
         (target_dir / "b_done.md").write_text("done", encoding="utf-8")
 
-        call_count = 0
         import sys
         sys.path.insert(0, str(tmp_path))
         (tmp_path / "chain_skip_completed_mod.py").write_text(

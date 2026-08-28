@@ -32,7 +32,7 @@ from cronpypeline.markers import (
     marker_exists,
     read_marker,
 )
-from cronpypeline.state import PipelineState, StageState
+from cronpypeline.state import PipelineState, StageState, TargetState
 from cronpypeline.targets import load_targets, load_targets_with_config
 from cronpypeline.triggers import evaluate_trigger, resolve_custom_callable
 
@@ -690,7 +690,7 @@ class Pipeline:
         target: str,
         target_dir: Path,
         target_config: dict[str, Any],
-        target_state: PipelineState,
+        target_state: TargetState,
         active_stages: list[Stage],
         dry_run: bool,
         verbose: bool,

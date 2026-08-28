@@ -405,15 +405,28 @@ class TestRun:
         assert c == 0 and "hi" in o
 
     def test_fail(self, tmp_path):
-        assert _run("exit 1", tmp_path, 10)[0] == 1
+        assert _run("false", tmp_path, 10)[0] == 1
 
     def test_timeout(self, tmp_path):
         c, _, e = _run("sleep 5", tmp_path, 1)
         assert c == 124 and "TIMEOUT" in e
 
-    def test_shell_metacharacters_preserved(self, tmp_path):
-        c, o, _ = _run("echo a && echo b", tmp_path, 10)
-        assert c == 0 and "a" in o and "b" in o
+    def test_simple_command_split(self, tmp_path):
+        c, o, _ = _run("echo hello world", tmp_path, 10)
+        assert c == 0 and "hello" in o and "world" in o
+
+    def test_invalid_command_returns_error(self, tmp_path):
+        c, o, e = _run('echo "unterminated', tmp_path, 10)
+        assert c == 1 and o == "" and "Invalid command" in e
+
+    def test_file_not_found(self, tmp_path):
+        with patch("cronpypeline.plugins.issue_fix.subprocess.run", side_effect=FileNotFoundError()):
+            c, o, e = _run("nonexistent-cmd", tmp_path, 10)
+        assert (c, o, e) == (127, "", "Command not found: nonexistent-cmd")
+
+    def test_empty_command_returns_error(self, tmp_path):
+        c, o, e = _run("", tmp_path, 10)
+        assert c == 1 and o == "" and "Empty command" in e
 
 
 class TestPromptBuilders:
