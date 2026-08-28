@@ -1101,12 +1101,8 @@ class TestRunIssueFixStateMachine:
         subprocess.run(["git", "-C", str(t), "commit", "-m", "f"], capture_output=True, check=True)
         monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
         monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "tasks")
-        original_git = __import__("cronpypeline.plugins.swe_plugin", fromlist=["_git"])._git
         def fake_git(repo, *args, check=True):
-            if args[0] == "log":
-                raise OSError("boom")
-            return original_git(repo, *args, check=check)
-        fake_git(t, "rev-parse", "--git-dir", check=False)
+            raise OSError("boom")
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
             assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), verbose=True) is True
 
@@ -1168,13 +1164,8 @@ class TestCleanupStaleTaskGitError:
             "source_issue_id": "",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }))
-        original_git = __import__("cronpypeline.plugins.swe_plugin", fromlist=["_git"])._git
         def fake_git(repo, *args, check=True):
-            # rev-parse is called with check=True, make it fail to trigger the except
-            if args[0] == "rev-parse":
-                raise subprocess.CalledProcessError(1, "git", stderr="err")
-            return original_git(repo, *args, check=check)
-        fake_git(target, "branch", "--list", check=False)
+            raise subprocess.CalledProcessError(1, "git", stderr="err")
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
             assert _cleanup_stale_task(target, task_dir, verbose=True) is True
         assert "WARNING" in capsys.readouterr().out
