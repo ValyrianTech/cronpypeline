@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- `_build_queue_handler` in the SWE prompt builders now raises a `ValueError` when `queue_dir` is missing or empty, instead of silently defaulting to an empty string (which previously resolved to the current working directory). This affects the `queue_fix_agent`, `queue_coder_agent`, and `queue_review_agent` actions, which now require `queue_dir` to be configured either in the stage action params or in the pipeline's top-level `action_handler` config.
+
 ### Fixed
 - Chained stage failure now reported in TickResult with ACTION_FAILED status and the failed stage ID.
 - Chained stage on_fail actions are now executed when a chained stage fails (previously silently ignored).
