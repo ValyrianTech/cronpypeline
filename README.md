@@ -24,7 +24,7 @@
 - **Conversation ID continuation**: On retry, the previous `entry_id` is reused as `conversation_id` so agents continue the same conversation instead of starting fresh.
 - **Serendipity-compatible queue format**: Configurable `prompt_field` (e.g. `content` instead of `prompt`), `default_fields` for static metadata (`sender`, `folder_name`, `model_name`, `runs_left`), and `flatten_agent_settings` for flat agent config merging.
 - **Dynamic marker naming**: Marker names and directories support `{target}`, `{slug}`, and any target config key via template substitution.
-- **Shell-quoting of template variables**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into shell commands are quoted with `shlex.quote()` to prevent command injection.
+- **Shell-safe command execution**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into commands are shell-quoted with `shlex.quote()`, and commands are executed via an argument list (`shell=False`) rather than a shell, preventing command injection.
 - **HTTP requests**: Built-in `http_request` action handler with auth token resolution from config, env vars, or context.
 - **SWE pipeline plugins**: Issue store (YAML frontmatter), diagnostic report handlers with output parsers, prompt builders for fix/coder/review agents, GitHub session adapter.
 - **VNN pipeline plugins**: Story state sync, inconsistent state cleanup, global queue-empty gate, completed compilation checks, story discovery, rejection audit trail.
@@ -390,7 +390,7 @@ The filesystem is the source of truth — no database, no in-memory state:
 - `{target_config}` — full per-target config dict
 - Any flattened target config key (e.g. `{slug}`, `{test_cmd}`, `{coverage_threshold}`) — available when using a registry target spec
 
-Template variables substituted into shell commands (`command`-type actions) are shell-quoted with `shlex.quote()` before substitution, preventing command injection when a value (e.g. a target name or path) contains shell metacharacters.
+Template variables substituted into commands (`command`-type actions) are shell-quoted with `shlex.quote()` before substitution, and commands are executed without a shell (via an argument list built with `shlex.split()`, i.e. `shell=False`), preventing command injection when a value (e.g. a target name or path) contains shell metacharacters. If template substitution fails (missing key, bad format, etc.), an error is raised rather than silently falling back to the unformatted template.
 
 ### Marker specs
 
@@ -736,7 +736,7 @@ Diagnostic report action handler and output parsers:
 - `run_diagnostic` — custom action: runs a command, parses output, writes a timestamped markdown report, creates `latest.md` symlink
 - Output parsers: `parse_pytest_output`, `parse_ruff_output`, `parse_mypy_output`, `parse_pydocstyle_output`, `parse_vulture_output`, `parse_coverage_output`, `parse_bandit_output`, `parse_pip_audit_output`, `parse_radon_output`
 
-`run_diagnostic` shell-quotes template variables (`target`, `target_dir`, `workspace_dir`, and flattened target config values) with `shlex.quote()` before substituting them into the diagnostic command, preventing command injection.
+`run_diagnostic` shell-quotes template variables (`target`, `target_dir`, `workspace_dir`, and flattened target config values) with `shlex.quote()` before substituting them into the diagnostic command. Command config values (e.g. `test_cmd`, `lint_cmd`, `typecheck_cmd`, `security_cmd`, `deadcode_cmd`, `build_cmd`, `dep_audit_cmd`, `coverage_cmd`) are validated to reject shell metacharacters, and commands are executed via an argument list (`shell=False`). If template substitution fails (missing key, bad format, etc.), an error result is returned instead of silently running the unformatted command.
 
 ```json
 {
