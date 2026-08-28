@@ -284,9 +284,19 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
         "target_dir": shlex.quote(str(context.target_dir)),
         "workspace_dir": shlex.quote(str(context.workspace_dir)),
     }
+    # target_config values that are full shell commands must NOT be quoted —
+    # quoting turns the entire command string into a single path.
+    _cmd_keys = frozenset({
+        "test_cmd", "lint_cmd", "docstring_cmd", "typecheck_cmd",
+        "coverage_cmd", "security_cmd", "deadcode_cmd", "build_cmd",
+        "dep_audit_cmd",
+    })
     for k, v in context.target_config.items():
         if k not in variables:
-            variables[k] = shlex.quote(str(v))
+            if k in _cmd_keys:
+                variables[k] = str(v)
+            else:
+                variables[k] = shlex.quote(str(v))
     command = format_template(command, variables)
 
     # Resolve timeout: action param → timeout_seconds → default 300s

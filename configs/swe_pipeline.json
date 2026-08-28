@@ -226,7 +226,7 @@
           "invalidate_paths": [".SWE/reports/test-infra/latest.md", ".SWE/reports/lint/latest.md", ".SWE/reports/docstrings/latest.md"],
           "completion_marker": ".SWE/markers/a3_fix_complete.marker",
           "commit_message": "docs: add missing docstrings",
-          "verify_commands": [".venv/bin/interrogate -v .", ".venv/bin/pytest -q"]
+          "verify_commands": [".venv/bin/interrogate -v --fail-under 100 {target}/", ".venv/bin/pytest -q"]
         }
       },
       "markers": {

@@ -516,7 +516,7 @@ class TestRunDiagnosticEdgeCases:
         assert "pytest" in content
 
     def test_target_config_values_with_metacharacters_are_quoted(self, tmp_path):
-        """Target config values with shell metacharacters should be shell-quoted."""
+        """Non-cmd target_config values with shell metacharacters should be shell-quoted."""
         report_dir = tmp_path / "reports"
         target_dir = tmp_path / "repo"
         target_dir.mkdir()
@@ -524,7 +524,36 @@ class TestRunDiagnosticEdgeCases:
         action = ActionSpec(
             type=ActionType.CUSTOM,
             params={
-                "command": "echo {test_cmd}",
+                "command": "echo {custom_value}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"custom_value": "hello; echo INJECTED"},
+        )
+
+        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is True
+        cmd = mock_run.call_args.args[0]
+        assert cmd == "echo 'hello; echo INJECTED'"
+
+    def test_cmd_config_values_are_not_quoted(self, tmp_path):
+        """_cmd target_config values are full shell commands and must not be quoted."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "{test_cmd}",
                 "report_dir": str(report_dir),
             },
         )
@@ -542,7 +571,7 @@ class TestRunDiagnosticEdgeCases:
 
         assert result.success is True
         cmd = mock_run.call_args.args[0]
-        assert cmd == "echo 'pytest; echo INJECTED'"
+        assert cmd == "pytest; echo INJECTED"
 
     def test_command_timeout(self, tmp_path):
         """Command timeout should return failure with timeout message."""
