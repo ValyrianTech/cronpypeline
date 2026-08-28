@@ -141,6 +141,27 @@ class TestConversationQueueHandler:
         assert result.success is False
         assert "Template substitution failed" in result.stderr
 
+    def test_prompt_with_unescaped_braces_is_queued_as_is(self, tmp_path):
+        """Plain prompts with unescaped braces from dynamic content should be queued as-is."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "CoderAgent",
+                "prompt": "Fix the bug with this JSON: {'key': 'value'}",
+            },
+        )
+        ctx = TickContext(target="my-repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        entry = json.loads(files[0].read_text())
+        assert entry["prompt"] == "Fix the bug with this JSON: {'key': 'value'}"
+
     def test_includes_optional_fields(self, tmp_path):
         queue_dir = tmp_path / "queue"
         handler = ConversationQueueHandler(queue_dir=str(queue_dir))

@@ -308,6 +308,44 @@ class TestQueueCoderAgent:
         result = queue_coder_agent(action, ctx)
         assert result.success is False
 
+    def test_issue_body_with_unescaped_braces(self, tmp_path):
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+        create_issue(target_dir, {
+            "id": 42,
+            "source": "dep-audit",
+            "type": "bug",
+            "status": "open",
+            "repo": "org/repo",
+        }, body="The bug occurs when using {'key': 'value'}")
+
+        queue_dir = tmp_path / "queue"
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "callable": "cronpypeline.plugins.swe_prompts.queue_coder_agent",
+                "issue_id": 42,
+                "agent": "CoderAgent",
+                "queue_dir": str(queue_dir),
+                "prompt_field": "content",
+                "default_fields": {
+                    "sender": "SWE_PIPELINE",
+                    "folder_name": "SWE",
+                    "runs_left": 3,
+                },
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="abc1234567\n")
+            result = queue_coder_agent(action, ctx)
+
+        assert result.success is True
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        assert "The bug occurs when using {'key': 'value'}" in entry["content"]
+
 
 class TestQueueReviewAgent:
     """Tests for queue_review_agent custom action callable."""
