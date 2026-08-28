@@ -587,6 +587,8 @@ def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
         cmd_args = shlex.split(command)
     except ValueError as e:
         return ActionResult(success=False, stderr=f"Invalid command: {e}")
+    if not cmd_args:
+        return ActionResult(success=False, stderr="Empty command string")
     try:
         proc = subprocess.run(
             cmd_args, cwd=str(target_dir),
