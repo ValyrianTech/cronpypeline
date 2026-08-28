@@ -424,6 +424,10 @@ class TestRun:
             c, o, e = _run("nonexistent-cmd", tmp_path, 10)
         assert (c, o, e) == (127, "", "Command not found: nonexistent-cmd")
 
+    def test_empty_command_returns_error(self, tmp_path):
+        c, o, e = _run("", tmp_path, 10)
+        assert c == 1 and o == "" and "Empty command" in e
+
 
 class TestPromptBuilders:
     def test_closing_loop(self, tmp_path):

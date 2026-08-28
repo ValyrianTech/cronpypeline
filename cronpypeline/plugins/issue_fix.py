@@ -801,6 +801,8 @@ def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str, str]:
         cmd_args = shlex.split(cmd)
     except ValueError as e:
         return 1, "", f"Invalid command: {e}"
+    if not cmd_args:
+        return 1, "", "Empty command string"
     try:
         proc = subprocess.run(
             cmd_args, cwd=str(cwd),
