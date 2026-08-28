@@ -165,6 +165,27 @@ class TestCommandActionHandler:
         assert result.success is True
         assert str(ctx.target_dir) in result.stdout
 
+    def test_cwd_with_spaces_is_not_quoted(self, tmp_path):
+        workspace_dir = tmp_path / "my workspace"
+        action = ActionSpec(
+            type=ActionType.COMMAND,
+            params={"command": "pwd", "cwd": "{target_dir}"},
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=workspace_dir,
+            dry_run=False,
+            verbose=False,
+        )
+        handler = CommandActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is True
+        assert str(ctx.target_dir) in result.stdout
+        assert f"'{str(ctx.target_dir)}'" not in result.stdout
+        assert ctx.target_dir.exists()
+        quoted_dir = workspace_dir / "'repo'"
+        assert not quoted_dir.exists()
+
     def test_target_shell_metacharacters_are_quoted(self, tmp_path):
         action = ActionSpec(
             type=ActionType.COMMAND,
