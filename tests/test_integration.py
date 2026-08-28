@@ -456,7 +456,7 @@ class TestOnFailExecution:
                     "markers": {"completion": {"type": "file", "name": "a.md"}},
                     "on_fail": {
                         "type": "command",
-                        "params": {"command": "echo failed > cleanup.txt"},
+                        "params": {"command": "sh -c 'echo failed > cleanup.txt'"},
                     },
                 },
             ],

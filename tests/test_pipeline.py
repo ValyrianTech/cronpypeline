@@ -3777,7 +3777,7 @@ class TestTickChainEdgeCases:
                     "name": "Failing Step",
                     "trigger": {"type": "file_missing", "path": "b.md"},
                     "action": {"type": "command", "params": {"command": "false"}},
-                    "on_fail": {"type": "command", "params": {"command": "echo on_fail_failed >&2 && false"}},
+                    "on_fail": {"type": "command", "params": {"command": "sh -c 'echo on_fail_failed >&2 && false'"}},
                     "markers": {"completion": {"type": "file", "name": "b.md"}},
                 },
             ],

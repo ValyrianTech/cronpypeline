@@ -100,10 +100,13 @@ class ConversationQueueHandler(ActionHandler):
         for k, v in context.target_config.items():
             if k not in variables:
                 variables[k] = v
-        if prompt_template:
-            prompt = format_template(prompt_template, variables)
-        else:
-            prompt = format_template(prompt, variables)
+        try:
+            if prompt_template:
+                prompt = format_template(prompt_template, variables)
+            else:
+                prompt = format_template(prompt, variables)
+        except ValueError as e:
+            return ActionResult(success=False, stderr=str(e))
 
         # Build queue entry — start with default fields, then add dynamic fields
         entry = dict(self.default_fields)

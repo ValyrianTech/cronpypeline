@@ -350,7 +350,7 @@ You are on branch `{PHASE_A_BRANCH}`. After making your changes:
         prompt += f"""
 3. As your FINAL step, write the completion marker using WriteFile:
    Path: {completion_marker}
-   Content: {{"completed_at": "<current ISO timestamp>"}}
+   Content: {{{{"completed_at": "<current ISO timestamp>"}}}}
    Replace <current ISO timestamp> with the actual current time in ISO format.
 """
 

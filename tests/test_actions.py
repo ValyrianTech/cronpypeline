@@ -202,7 +202,31 @@ class TestCommandActionHandler:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             handler.execute(action, ctx)
         cmd = mock_run.call_args.args[0]
-        assert cmd == "echo 'repo; echo INJECTED'"
+        assert cmd == ["echo", "repo; echo INJECTED"]
+
+    def test_format_template_failure_returns_error(self, tmp_path):
+        """When format_template fails, should return failure ActionResult."""
+        action = ActionSpec(
+            type=ActionType.COMMAND,
+            params={"command": "echo {missing_var}"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = CommandActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is False
+        assert "Template substitution failed" in result.stderr
+
+    def test_shlex_split_failure_returns_error(self, tmp_path):
+        """When shlex.split fails (unterminated quote), should return failure."""
+        action = ActionSpec(
+            type=ActionType.COMMAND,
+            params={"command": "echo 'unterminated"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = CommandActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is False
+        assert "Invalid command" in result.stderr
 
 
 class TestSubprocessActionHandler:
@@ -595,17 +619,17 @@ def my_action(action, context):
 class TestFormatTemplateEdgeCases:
     """Tests for format_template error handling."""
 
-    def test_keyerror_returns_original(self):
-        result = format_template("Hello {missing}", {"name": "world"})
-        assert result == "Hello {missing}"
+    def test_keyerror_raises(self):
+        with pytest.raises(ValueError, match="Template substitution failed"):
+            format_template("Hello {missing}", {"name": "world"})
 
-    def test_indexerror_returns_original(self):
-        result = format_template("Hello {0}", {})
-        assert result == "Hello {0}"
+    def test_indexerror_raises(self):
+        with pytest.raises(ValueError, match="Template substitution failed"):
+            format_template("Hello {0}", {})
 
-    def test_valueerror_returns_original(self):
-        result = format_template("Hello {name!x}", {"name": "world"})
-        assert result == "Hello {name!x}"
+    def test_valueerror_raises(self):
+        with pytest.raises(ValueError, match="Template substitution failed"):
+            format_template("Hello {name!x}", {"name": "world"})
 
 
 class TestActionHandlerBase:
