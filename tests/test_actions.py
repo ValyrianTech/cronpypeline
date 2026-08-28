@@ -165,6 +165,24 @@ class TestCommandActionHandler:
         assert result.success is True
         assert str(ctx.target_dir) in result.stdout
 
+    def test_target_shell_metacharacters_are_quoted(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.COMMAND,
+            params={"command": "echo {target}"},
+        )
+        ctx = TickContext(
+            target="repo; echo INJECTED",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+        )
+        handler = CommandActionHandler()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            handler.execute(action, ctx)
+        cmd = mock_run.call_args.args[0]
+        assert cmd == "echo 'repo; echo INJECTED'"
+
 
 class TestSubprocessActionHandler:
     """Tests for subprocess action handler."""

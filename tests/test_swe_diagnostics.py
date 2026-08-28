@@ -515,6 +515,35 @@ class TestRunDiagnosticEdgeCases:
         content = Path(result.data["report_path"]).read_text()
         assert "pytest" in content
 
+    def test_target_config_values_with_metacharacters_are_quoted(self, tmp_path):
+        """Target config values with shell metacharacters should be shell-quoted."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "echo {test_cmd}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"test_cmd": "pytest; echo INJECTED"},
+        )
+
+        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is True
+        cmd = mock_run.call_args.args[0]
+        assert cmd == "echo 'pytest; echo INJECTED'"
+
     def test_command_timeout(self, tmp_path):
         """Command timeout should return failure with timeout message."""
         report_dir = tmp_path / "reports"

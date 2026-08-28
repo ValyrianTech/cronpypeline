@@ -401,6 +401,10 @@ class TestRun:
         c, _, e = _run("sleep 5", tmp_path, 1)
         assert c == 124 and "TIMEOUT" in e
 
+    def test_shell_metacharacters_preserved(self, tmp_path):
+        c, o, _ = _run("echo a && echo b", tmp_path, 10)
+        assert c == 0 and "a" in o and "b" in o
+
 
 class TestPromptBuilders:
     def test_closing_loop(self, tmp_path):
@@ -1102,6 +1106,7 @@ class TestRunIssueFixStateMachine:
             if args[0] == "log":
                 raise OSError("boom")
             return original_git(repo, *args, check=check)
+        fake_git(t, "rev-parse", "--git-dir", check=False)
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
             assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), verbose=True) is True
 
@@ -1169,6 +1174,7 @@ class TestCleanupStaleTaskGitError:
             if args[0] == "rev-parse":
                 raise subprocess.CalledProcessError(1, "git", stderr="err")
             return original_git(repo, *args, check=check)
+        fake_git(target, "branch", "--list", check=False)
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
             assert _cleanup_stale_task(target, task_dir, verbose=True) is True
         assert "WARNING" in capsys.readouterr().out

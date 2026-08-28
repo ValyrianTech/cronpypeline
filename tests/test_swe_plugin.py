@@ -681,6 +681,19 @@ class TestRunLintAutofix:
         assert result.success is True
         assert result.data["fixed_count"] == 2
 
+    def test_custom_command_stdout_captured(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "lint", "r.md", "# Lint — FAIL\n\n- **fixable**: 0\n")
+        subprocess.run(["git", "init", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"command": "echo marker-xyz"})
+        result = run_lint_autofix(action, ctx)
+        assert result.success is True
+        latest = (target / ".SWE" / "reports" / "lint-autofix" / "latest.md").read_text()
+        assert "marker-xyz" in latest
+
 
 # ─── _load_github_token ─────────────────────────────────────────────────────
 
