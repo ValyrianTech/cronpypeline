@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.issue_store import create_issue, get_issue
@@ -875,3 +877,38 @@ class TestBuildQueueHandler:
         params = {"queue_dir": str(tmp_path / "q")}
         handler = _build_queue_handler(params, ctx)
         assert str(handler.queue_dir) == str(tmp_path / "q")
+
+    def test_raises_when_queue_dir_missing(self, tmp_path):
+        """ValueError when queue_dir is missing from params and fallback."""
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+        with pytest.raises(ValueError, match="queue_dir is required"):
+            _build_queue_handler({}, ctx)
+
+    def test_raises_when_queue_dir_empty_string(self, tmp_path):
+        """ValueError when queue_dir is an empty string."""
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+        with pytest.raises(ValueError, match="queue_dir is required"):
+            _build_queue_handler({"queue_dir": ""}, ctx)
+
+    def test_queue_dir_from_fallback_used_when_params_missing(self, tmp_path):
+        """queue_dir from fallback config is used when params don't provide it."""
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+        mock_pipeline = MagicMock()
+        mock_pipeline.config.action_handler.params = {
+            "queue_dir": str(tmp_path / "fallback_queue"),
+        }
+        ctx.pipeline = mock_pipeline
+        handler = _build_queue_handler({}, ctx)
+        assert str(handler.queue_dir) == str(tmp_path / "fallback_queue")
+
+    def test_queue_dir_from_params_takes_precedence(self, tmp_path):
+        """queue_dir from params takes precedence over fallback config."""
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+        mock_pipeline = MagicMock()
+        mock_pipeline.config.action_handler.params = {
+            "queue_dir": str(tmp_path / "fallback_queue"),
+        }
+        ctx.pipeline = mock_pipeline
+        params = {"queue_dir": str(tmp_path / "override_queue")}
+        handler = _build_queue_handler(params, ctx)
+        assert str(handler.queue_dir) == str(tmp_path / "override_queue")
