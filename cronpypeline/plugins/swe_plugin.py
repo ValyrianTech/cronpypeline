@@ -595,6 +595,8 @@ def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
         stdout, stderr, exit_code = proc.stdout, proc.stderr, proc.returncode
     except subprocess.TimeoutExpired:
         return ActionResult(success=False, stderr="ruff --fix timed out (600s)")
+    except (FileNotFoundError, OSError):
+        return ActionResult(success=False, stderr=f"Command not found: {cmd_args[0]}")
     duration_s = (datetime.now(timezone.utc) - t0).total_seconds()
 
     combined = stdout + "\n" + stderr
