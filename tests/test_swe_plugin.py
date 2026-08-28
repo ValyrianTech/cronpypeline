@@ -54,6 +54,7 @@ from cronpypeline.plugins.swe_plugin import (
     _read_batch_marker,
     _read_github_session,
     _resolve_latest_report,
+    _sha_is_ancestor,
     _should_block_on_open_issues,
     _slugify,
     _venv_binary,
@@ -1488,6 +1489,44 @@ class TestIntegrationHeadSha:
         subprocess.run(["git", "init", "-b", "main", str(tmp_path)], capture_output=True, check=True)
         sha = integration_head_sha(tmp_path, "main")
         assert sha is None
+
+
+# ─── _sha_is_ancestor ────────────────────────────────────────────────────────
+
+
+class TestShaIsAncestor:
+    def test_returns_false_for_empty_sha(self, tmp_path):
+        subprocess.run(["git", "init", "-b", "main", str(tmp_path)], capture_output=True, check=True)
+        assert _sha_is_ancestor(tmp_path, "", "main") is False
+
+    def test_returns_false_for_none_sha(self, tmp_path):
+        subprocess.run(["git", "init", "-b", "main", str(tmp_path)], capture_output=True, check=True)
+        assert _sha_is_ancestor(tmp_path, None, "main") is False  # type: ignore[arg-type]
+
+    def test_returns_true_for_ancestor(self, tmp_path):
+        subprocess.run(["git", "init", "-b", "main", str(tmp_path)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "T"], capture_output=True, check=True)
+        (tmp_path / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "init"], capture_output=True, check=True)
+        old_sha = subprocess.run(
+            ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        (tmp_path / "g.txt").write_text("y")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "second"], capture_output=True, check=True)
+        assert _sha_is_ancestor(tmp_path, old_sha, "main") is True
+
+    def test_returns_false_for_nonexistent_sha(self, tmp_path):
+        subprocess.run(["git", "init", "-b", "main", str(tmp_path)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "T"], capture_output=True, check=True)
+        (tmp_path / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "init"], capture_output=True, check=True)
+        assert _sha_is_ancestor(tmp_path, "0" * 40, "main") is False
 
 
 # ─── _build_pr_body ─────────────────────────────────────────────────────────
