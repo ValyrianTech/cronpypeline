@@ -1269,6 +1269,15 @@ class TestDetectCIssueFix:
         ctx = {"target_dir": str(target), "target": "repo"}
         assert detect_c_issue_fix(ctx) is False
 
+    def test_fires_when_active_session_and_revision_issue(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        session = {"active": True}
+        (target / ".SWE" / "github_session.json").write_text(json.dumps(session))
+        create_issue(target, issue_data={"id": "rev1", "status": "open", "type": "revision"}, body="# Revision")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "no-tasks")
+        ctx = {"target_dir": str(target), "target": "repo"}
+        assert detect_c_issue_fix(ctx) is True
+
     def test_does_not_fire_when_no_issues_and_no_task(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "no-tasks")

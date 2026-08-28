@@ -300,6 +300,12 @@ def select_open_issue(repo_dir: Path, issue_id: str | None = None,
             print("  [select] no issues with status 'open'")
         return None
 
+    # Revision issues (from PR review change requests) take priority —
+    # they block the PR from merging and must be addressed first.
+    revision_issues = [i for i in open_issues if (i.type or "") == "revision"]
+    if revision_issues:
+        return revision_issues[0]
+
     session = _read_github_session(repo_dir)
     if session is not None and session.get("active"):
         session_start = session.get("started_at", "")

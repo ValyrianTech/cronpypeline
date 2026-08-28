@@ -307,6 +307,16 @@ class TestSelectOpenIssue:
         r = select_open_issue(t)
         assert r is not None and str(r.id) == "2"
 
+    def test_revision_issue_takes_priority_over_ranked(self, tmp_path):
+        t = _make_target_dir(tmp_path)
+        _write_issue(t / ".SWE" / "issues", "1", status="open")
+        _write_issue(t / ".SWE" / "issues", "rev1", status="open", type="revision")
+        markers_dir = t / ".SWE" / "markers"
+        markers_dir.mkdir(parents=True, exist_ok=True)
+        (markers_dir / "review_ranked.json").write_text(json.dumps({"issue_id": "1"}))
+        r = select_open_issue(t)
+        assert r is not None and str(r.id) == "rev1"
+
     def test_corrupted_ranking_marker_falls_through(self, tmp_path):
         t = _make_target_dir(tmp_path)
         _write_issue(t / ".SWE" / "issues", "1", status="open")

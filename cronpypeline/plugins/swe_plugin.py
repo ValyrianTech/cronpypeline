@@ -1181,13 +1181,23 @@ def detect_c_issue_fix(context: dict[str, Any]) -> bool:
 
     session = _read_github_session(target_dir)
     if session is not None and session.get("active"):
-        return False
+        # Allow revision issues (from PR review change requests) to be
+        # processed during an active GitHub session — they are part of the
+        # PR review cycle, not new issue selection.
+        issues = load_issues(target_dir)
+        if not any(i.status == "open" and (i.type or "") == "revision" for i in issues):
+            return False
 
     if _find_active_task(repo_name) is not None:
         return True
 
     if _batch_is_full(target_dir, target_config):
-        return _has_open_coverage_issues(target_dir)
+        if _has_open_coverage_issues(target_dir):
+            return True
+        # Revision issues (from PR review change requests) must be processed
+        # even when the batch is full — they are part of the PR review cycle.
+        issues = load_issues(target_dir)
+        return any(i.status == "open" and (i.type or "") == "revision" for i in issues)
 
     issues = load_issues(target_dir)
     return any(i.status == "open" for i in issues)
@@ -1754,11 +1764,12 @@ def _build_pr_review_prompt(
         f"Target:    {default_branch}\n"
         f"Commit:    {sha[:12]}\n\n"
         f"## Your task\n\n"
-        f"Review this PR and post a review. Use **COMMENT** if the changes "
-        f"are good or only have minor observations. Use **REQUEST_CHANGES** "
-        f"if you find concrete problems that should block merging — real bugs, "
-        f"regressions, missing error handling, or security concerns. Be "
-        f"thorough but fair. Do NOT use APPROVE (that is for humans)."
+        f"Review this PR and post a review. Since this PR was opened by the "
+        f"pipeline's own GitHub token, GitHub does not allow REQUEST_CHANGES "
+        f"on your own pull request — always post as **COMMENT**. The pipeline "
+        f"detects change requests from the review body text, so what matters "
+        f"is the Recommendation section content, not the review event type. "
+        f"Be thorough but fair. Do NOT use APPROVE (that is for humans)."
         f"{cycle_guidance}\n"
         f"## Step 1 — gather context\n\n"
         f"Use RunCommand to understand the changes. Start small:\n"
@@ -1791,14 +1802,14 @@ def _build_pr_review_prompt(
         f"description paragraph.\n\n"
         f"If the changes look clean, write \"No issues identified.\"\n\n"
         f"### Recommendation\n"
-        f"Clear recommendation: either \"Ready to merge\" (post as COMMENT) "
-        f"or \"Changes needed before merging\" (post as REQUEST_CHANGES, "
-        f"with the specific problems listed above).\n\n"
+        f"Clear recommendation: either \"Ready to merge\" or \"Changes needed "
+        f"before merging\" (with the specific problems listed above). The "
+        f"pipeline uses this text to decide whether to file revision issues, "
+        f"so be explicit.\n\n"
         f"Then post it with RunCommand:\n\n"
-        f"  If the PR is ready to merge (COMMENT):\n"
+        f"  Always post as COMMENT (the pipeline detects change requests from "
+        f"the Recommendation text above):\n"
         f"    {reviewer_cmd_base} --event COMMENT\n\n"
-        f"  If changes are needed before merging (REQUEST_CHANGES):\n"
-        f"    {reviewer_cmd_base} --event REQUEST_CHANGES\n\n"
         f"CRITICAL: The RunCommand output MUST show \"Posted ... review\" before "
         f"you proceed. If the post fails, read the error and fix the problem. "
         f"Do NOT write the completion marker until the post succeeds.\n\n"

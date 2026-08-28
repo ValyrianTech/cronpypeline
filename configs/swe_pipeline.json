@@ -606,18 +606,32 @@
       "timeout_minutes": 30
     },
     {
-      "id": "C-pr-status",
-      "name": "Poll GitHub PR for merge/reject/changes-requested",
+      "id": "C-pr-review",
+      "name": "Queue PRReviewAgent for published PR",
       "trigger": {
         "type": "custom",
-        "callable": "cronpypeline.plugins.swe_plugin.detect_c_pr_status"
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_pr_review"
       },
       "action": {
         "type": "custom",
         "params": {
-          "callable": "cronpypeline.plugins.swe_plugin.run_c_pr_status"
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_pr_review"
         }
-      }
+      },
+      "markers": {
+        "completion": {
+          "type": "json",
+          "name": "pr_reviewed.json",
+          "directory": ".SWE"
+        },
+        "processing": {
+          "type": "json",
+          "name": ".processing_c_pr_review",
+          "directory": ".SWE/markers"
+        }
+      },
+      "max_retries": 3,
+      "timeout_minutes": 30
     },
     {
       "id": "C-issue-fix",
@@ -630,6 +644,20 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_plugin.run_c_issue_fix"
+        }
+      }
+    },
+    {
+      "id": "C-pr-status",
+      "name": "Poll GitHub PR for merge/reject/changes-requested",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_pr_status"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_pr_status"
         }
       }
     },
@@ -733,34 +761,6 @@
           "callable": "cronpypeline.plugins.swe_plugin.run_c_pr_publish"
         }
       }
-    },
-    {
-      "id": "C-pr-review",
-      "name": "Queue PRReviewAgent for published PR",
-      "trigger": {
-        "type": "custom",
-        "callable": "cronpypeline.plugins.swe_plugin.detect_c_pr_review"
-      },
-      "action": {
-        "type": "custom",
-        "params": {
-          "callable": "cronpypeline.plugins.swe_plugin.run_c_pr_review"
-        }
-      },
-      "markers": {
-        "completion": {
-          "type": "json",
-          "name": "pr_reviewed.json",
-          "directory": ".SWE"
-        },
-        "processing": {
-          "type": "json",
-          "name": ".processing_c_pr_review",
-          "directory": ".SWE/markers"
-        }
-      },
-      "max_retries": 3,
-      "timeout_minutes": 30
     }
   ]
 }
