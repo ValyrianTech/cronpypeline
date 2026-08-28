@@ -838,8 +838,22 @@ class TestQueueFixAgentBrokenSymlinkOSError:
         )
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
 
-        # Mock Path.resolve to raise OSError, then fall back to raw path
-        with patch.object(Path, "resolve", side_effect=OSError("broken symlink")):
+        # Mock Path.resolve to raise OSError for the report symlink only, then
+        # fall back to the raw path. Other paths (e.g. the queue file) must
+        # still resolve normally so the queue handler can write its entry.
+        original_resolve = Path.resolve
+
+        def resolve_with_broken_symlink(path, *args, **kwargs):
+            if path == latest:
+                raise OSError("broken symlink")
+            return original_resolve(path, *args, **kwargs)
+
+        with patch.object(
+            Path,
+            "resolve",
+            autospec=True,
+            side_effect=resolve_with_broken_symlink,
+        ):
             result = queue_fix_agent(action, ctx)
         assert result.success is True
 

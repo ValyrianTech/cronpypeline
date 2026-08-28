@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
@@ -235,6 +237,78 @@ class TestConversationQueueHandler:
         entry = json.loads(files[0].read_text())
         assert "agent_config" in entry
         assert entry["agent_config"]["system_prompt"] == "You are a coder"
+
+    def test_sanitizes_agent_with_path_traversal(self, tmp_path):
+        """Path traversal characters in agent name are replaced with underscores."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "../../tmp/evil", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        assert files[0].parent == queue_dir
+        assert files[0].name.startswith(".._.._tmp_evil_")
+
+    def test_sanitized_agent_not_created_outside_queue_dir(self, tmp_path):
+        """The sanitized queue file must never be written outside the queue directory."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "../../tmp/evil", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler.execute(action, ctx)
+
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        assert files[0].name.startswith(".._.._tmp_evil_")
+
+        all_json = list(tmp_path.rglob("*.json"))
+        assert len(all_json) == 1
+        assert all(p.parent == queue_dir for p in all_json)
+
+    def test_normal_agent_name_still_works(self, tmp_path):
+        """A normal agent name produces an unchanged filename inside the queue dir."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "CoderAgent", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        assert files[0].name.startswith("CoderAgent_")
+
+    def test_queue_file_escape_raises_value_error(self, tmp_path, monkeypatch):
+        """When sanitization is bypassed, a traversal filename raises ValueError."""
+        import cronpypeline.plugins.conversation_queue as cq
+
+        monkeypatch.setattr(cq.re, "sub", lambda pattern, repl, string: string)
+
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "../../evil", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        with pytest.raises(ValueError):
+            handler.execute(action, ctx)
 
 
 class TestConversationQueueSerendipityFormat:
