@@ -7,6 +7,7 @@ referenced from pipeline JSON configs via "callable": "cronpypeline.plugins.swe_
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess  # nosec B404 - subprocess is used by design to run git commands for pipeline state detection
 import sys
@@ -583,10 +584,14 @@ def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
     started_at = datetime.now(timezone.utc).isoformat()
     t0 = datetime.now(timezone.utc)
     try:
+        cmd_args = shlex.split(command)
+    except ValueError as e:
+        return ActionResult(success=False, stderr=f"Invalid command: {e}")
+    try:
         proc = subprocess.run(
-            command, shell=True, cwd=str(target_dir),
+            cmd_args, cwd=str(target_dir),
             capture_output=True, text=True, timeout=600, check=False,
-        )  # nosec B602 - command comes from trusted pipeline config (action.params); no template substitution is performed, intentional shell for CLI flexibility
+        )
         stdout, stderr, exit_code = proc.stdout, proc.stderr, proc.returncode
     except subprocess.TimeoutExpired:
         return ActionResult(success=False, stderr="ruff --fix timed out (600s)")
