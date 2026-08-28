@@ -13,6 +13,7 @@ Drives a single issue through a fix loop:
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess  # nosec B404 - subprocess used for git and verification commands
 import sys
@@ -791,7 +792,7 @@ def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str, str]:
     :returns: Tuple of (exit_code, stdout, stderr).
     """
     try:
-        proc = subprocess.run(  # nosec B602 - commands from trusted pipeline config
+        proc = subprocess.run(  # nosec B602 - commands come from trusted pipeline config (target_config); no template substitution is performed
             cmd, shell=True, cwd=str(cwd),
             capture_output=True, text=True, timeout=timeout, check=False,
         )

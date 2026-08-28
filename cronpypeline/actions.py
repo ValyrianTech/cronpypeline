@@ -6,6 +6,7 @@ lives in the plugins package.
 """
 
 import os
+import shlex
 import socket
 import subprocess  # nosec B404 - subprocess is used by design to run pipeline commands/scripts
 import sys
@@ -144,13 +145,20 @@ class CommandActionHandler(ActionHandler):
         cwd = action.params.get("cwd", str(context.target_dir))
 
         # Substitute template variables
-        variables = {
+        # cmd is executed via shell=True so variables must be shell-quoted
+        cmd_variables = {
+            "target": shlex.quote(context.target),
+            "target_dir": shlex.quote(str(context.target_dir)),
+            "workspace_dir": shlex.quote(str(context.workspace_dir)),
+        }
+        # cwd is used as a filesystem path so variables must NOT be quoted
+        cwd_variables = {
             "target": context.target,
             "target_dir": str(context.target_dir),
             "workspace_dir": str(context.workspace_dir),
         }
-        cmd = format_template(cmd, variables)
-        cwd = format_template(cwd, variables)
+        cmd = format_template(cmd, cmd_variables)
+        cwd = format_template(cwd, cwd_variables)
 
         timeout = action.timeout_seconds
 
