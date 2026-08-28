@@ -20,7 +20,7 @@ from cronpypeline.reporting import (
     write_report,
 )
 
-_SHELL_METACHARS = set(";|&><$`(){}[]*?~!#\n")
+_SHELL_METACHARS = set(";|&><$`(){}~!#\n")
 
 
 def _validate_cmd_value(key: str, value: str) -> None:
