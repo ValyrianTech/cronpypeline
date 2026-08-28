@@ -599,6 +599,66 @@ class TestRunDiagnosticEdgeCases:
         assert cmd == ["pytest", "-q"]
         assert mock_run.call_args.kwargs.get("shell") is False
 
+    def test_cmd_config_values_with_exclamation_are_accepted(self, tmp_path):
+        """_cmd target_config values containing '!' (find negation) should be accepted."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "{test_cmd}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"test_cmd": "find . -name '*.py' ! -path './tests/*'"},
+        )
+
+        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is True
+        cmd = mock_run.call_args.args[0]
+        assert cmd == ["find", ".", "-name", "*.py", "!", "-path", "./tests/*"]
+        assert mock_run.call_args.kwargs.get("shell") is False
+
+    def test_cmd_config_values_with_hash_are_accepted(self, tmp_path):
+        """_cmd target_config values containing '#' should be accepted."""
+        report_dir = tmp_path / "reports"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "{lint_cmd}",
+                "report_dir": str(report_dir),
+            },
+        )
+        ctx = TickContext(
+            target="repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"lint_cmd": "ruff check src --exclude 'file#1.py'"},
+        )
+
+        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = run_diagnostic(action, ctx)
+
+        assert result.success is True
+        cmd = mock_run.call_args.args[0]
+        assert cmd == ["ruff", "check", "src", "--exclude", "file#1.py"]
+        assert mock_run.call_args.kwargs.get("shell") is False
+
     def test_cmd_config_values_with_glob_patterns_are_accepted(self, tmp_path):
         """_cmd target_config values with shell globbing characters should be accepted."""
         report_dir = tmp_path / "reports"
