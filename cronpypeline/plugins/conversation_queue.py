@@ -5,6 +5,7 @@ picks them up asynchronously and dispatches them to agents.
 """
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -169,8 +170,11 @@ class ConversationQueueHandler(ActionHandler):
         # matching the format used by the original SWE pipeline runner.
         self.queue_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-        queue_filename = f"{agent}_{ts}.json"
-        queue_file = self.queue_dir / queue_filename
+        safe_agent = re.sub(r"[^A-Za-z0-9_.-]", "_", agent)
+        queue_filename = f"{safe_agent}_{ts}.json"
+        queue_file = (self.queue_dir / queue_filename).resolve()
+        if not queue_file.is_relative_to(self.queue_dir.resolve()):
+            raise ValueError(f"Queue file escapes queue directory: {queue_filename}")
         queue_file.write_text(json.dumps(entry, indent=2))
 
         return ActionResult(
