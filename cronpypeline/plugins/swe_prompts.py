@@ -232,8 +232,11 @@ def _build_queue_handler(params: dict[str, Any], context: TickContext) -> Conver
     if pipeline is not None and pipeline.config.action_handler is not None:
         fallback = dict(pipeline.config.action_handler.params)
     merged = {**fallback, **{k: v for k, v in params.items() if v is not None}}
+    queue_dir = merged.get("queue_dir", "")
+    if not queue_dir:
+        raise ValueError("queue_dir is required for ConversationQueueHandler")
     return ConversationQueueHandler(
-        queue_dir=merged.get("queue_dir", ""),
+        queue_dir=queue_dir,
         agent_settings_dir=merged.get("agent_settings_dir"),
         prompt_field=merged.get("prompt_field", "prompt"),
         default_fields=merged.get("default_fields"),
