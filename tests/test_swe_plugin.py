@@ -694,6 +694,15 @@ class TestRunLintAutofix:
         latest = (target / ".SWE" / "reports" / "lint-autofix" / "latest.md").read_text()
         assert "marker-xyz" in latest
 
+    def test_invalid_command_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "lint", "r.md", "# Lint — FAIL\n\n- **fixable**: 0\n")
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"command": 'echo "unterminated'})
+        result = run_lint_autofix(action, ctx)
+        assert result.success is False
+        assert "Invalid command" in result.stderr
+
 
 # ─── _load_github_token ─────────────────────────────────────────────────────
 
@@ -2816,7 +2825,7 @@ class TestRunLintAutofixTimeout:
         real_run = subprocess.run
 
         def _mock_run(*args, **kwargs):
-            if kwargs.get("shell"):
+            if args and args[0] == ["sleep", "999"]:
                 raise subprocess.TimeoutExpired(cmd="sleep 999", timeout=600)
             return real_run(*args, **kwargs)
 
@@ -4040,7 +4049,7 @@ class TestRunLintAutofixUnlinkOSError:
         real_run = subprocess.run
 
         def _mock_run(*args, **kwargs):
-            if kwargs.get("shell"):
+            if args and args[0] == ["true"]:
                 return mock_proc
             return real_run(*args, **kwargs)
 
