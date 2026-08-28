@@ -3948,6 +3948,77 @@ class TestTickChainEdgeCases:
         assert (target_dir / "chained_produced.txt").exists()
         assert not (target_dir / "old.md").exists()
 
+    def test_chain_skips_completed_stage_with_custom_trigger(self, tmp_path):
+        """Chaining should skip a completed stage even when its custom trigger
+        would fire (e.g. C-review-ranking with a custom callable that doesn't
+        check its own completion marker)."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Pre-create the completion marker for B0 so it's already complete
+        (target_dir / "b_done.md").write_text("done", encoding="utf-8")
+
+        call_count = 0
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        (tmp_path / "chain_skip_completed_mod.py").write_text(
+            "call_count = 0\n"
+            "from cronpypeline.actions import ActionResult\n"
+            "def my_trigger(ctx):\n"
+            "    return True\n"
+            "def my_action(action, context):\n"
+            "    global call_count\n"
+            "    call_count += 1\n"
+            "    return ActionResult(success=True)\n",
+            encoding="utf-8",
+        )
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Step 1",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "command", "params": {"command": "echo a"}},
+                        "markers": {"completion": {"type": "file", "name": "a.md"}},
+                        "chain": True,
+                    },
+                    {
+                        "id": "B0",
+                        "name": "Already Completed Custom Stage",
+                        "trigger": {"type": "custom", "callable": "chain_skip_completed_mod.my_trigger"},
+                        "action": {"type": "custom", "params": {"callable": "chain_skip_completed_mod.my_action"}},
+                        "markers": {"completion": {"type": "file", "name": "b_done.md"}},
+                    },
+                    {
+                        "id": "A1",
+                        "name": "Step 3",
+                        "trigger": {"type": "file_missing", "path": "c.md"},
+                        "action": {"type": "command", "params": {"command": "echo c"}},
+                        "markers": {"completion": {"type": "file", "name": "c.md"}},
+                        "chain": False,
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert (target_dir / "a.md").exists()
+            assert (target_dir / "c.md").exists()
+            # B0 should NOT have been re-executed during chaining
+            import chain_skip_completed_mod
+            assert chain_skip_completed_mod.call_count == 0
+            assert "B0" not in result.chained_stages
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "chain_skip_completed_mod" in sys.modules:
+                del sys.modules["chain_skip_completed_mod"]
+
     def test_chain_no_chained_returns_normal_result(self, tmp_path):
         """When chain is enabled but no stages chain, should return normal result."""
         workspace = tmp_path / "workspace"

@@ -653,7 +653,7 @@ class Pipeline:
             and stage.action.type != ActionType.QUEUE_AGENT
             and not result.data.get("async", False)
         ):
-            chained_result = self._try_chain(target, target_dir, target_config, active_stages, dry_run, verbose, stage)
+            chained_result = self._try_chain(target, target_dir, target_config, target_state, active_stages, dry_run, verbose, stage)
             if chained_result:
                 final_stage_id, chained, failed_stage_id, failed_result = chained_result
                 if failed_stage_id is not None:
@@ -690,6 +690,7 @@ class Pipeline:
         target: str,
         target_dir: Path,
         target_config: dict[str, Any],
+        target_state: PipelineState,
         active_stages: list[Stage],
         dry_run: bool,
         verbose: bool,
@@ -722,6 +723,11 @@ class Pipeline:
             next_stage: Stage | None = None
             for stage in active_stages:
                 if stage.id in executed_ids:
+                    continue
+                # Skip stages that are not actionable (complete, processing,
+                # or given up) — same check as the normal detector chain.
+                candidate_state = target_state.stage_states.get(stage.id)
+                if candidate_state is not None and not candidate_state.is_actionable:
                     continue
                 trigger_context = {
                     "target": target,
