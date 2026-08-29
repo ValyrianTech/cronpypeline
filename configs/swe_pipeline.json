@@ -749,6 +749,34 @@
       "timeout_minutes": 30
     },
     {
+      "id": "C-pr-title",
+      "name": "Queue PRReviewAgent to generate PR title",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_pr_title"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_pr_title"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "json",
+          "name": "pr_title.json",
+          "directory": ".SWE"
+        },
+        "processing": {
+          "type": "json",
+          "name": ".processing_c_pr_title",
+          "directory": ".SWE/markers"
+        }
+      },
+      "max_retries": 3,
+      "timeout_minutes": 30
+    },
+    {
       "id": "C-publish",
       "name": "Push integration branch and open PR",
       "trigger": {

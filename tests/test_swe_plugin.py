@@ -70,6 +70,7 @@ from cronpypeline.plugins.swe_plugin import (
     detect_c_pr_publish,
     detect_c_pr_review,
     detect_c_pr_status,
+    detect_c_pr_title,
     detect_c_review_issue,
     detect_c_review_ranking,
     detect_coverage_fail,
@@ -98,6 +99,7 @@ from cronpypeline.plugins.swe_plugin import (
     run_c_pr_publish,
     run_c_pr_review,
     run_c_pr_status,
+    run_c_pr_title,
     run_c_review_issue,
     run_c_review_ranking,
     run_lint_autofix,
@@ -2231,6 +2233,7 @@ class TestDetectCPrPublish:
         # Write doc_sync marker with matching SHA
         sha = integration_head_sha(target, "main")
         (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is True
@@ -2358,13 +2361,19 @@ class TestRunCPrPublish:
         subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: fix login bug"}))
         ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
         mock_push = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        captured_args = {}
+        def mock_post(owner, repo, endpoint, data, token, **kwargs):
+            captured_args.update(data)
+            return {"number": 42, "html_url": "https://github.com/owner/repo/pull/42"}
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run", return_value=mock_push), \
-             patch("cronpypeline.plugins.swe_plugin._gh_api_post", return_value={"number": 42, "html_url": "https://github.com/owner/repo/pull/42"}):
+             patch("cronpypeline.plugins.swe_plugin._gh_api_post", side_effect=mock_post):
             result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_number"] == 42
+        assert captured_args["title"] == "SWE Pipeline: fix login bug"
         pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
         assert pr_data["pr_number"] == 42
 
@@ -2385,6 +2394,118 @@ class TestRunCPrPublish:
              patch("cronpypeline.plugins.swe_plugin._gh_api_post", return_value=None):
             result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
+
+
+# ─── detect_c_pr_title ──────────────────────────────────────────────────────
+
+
+class TestDetectCPrTitle:
+    def _setup(self, target: Path, pct: float = 100.0) -> None:
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", f"# Coverage — PASS\n\n- **Coverage:** {pct}%\n")
+
+    def _setup_git(self, target: Path) -> None:
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+
+    def _make_ahead(self, target: Path) -> None:
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+
+    def test_fires_when_all_conditions_met(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        self._setup_git(target)
+        self._make_ahead(target)
+        sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_title(ctx) is True
+
+    def test_does_not_fire_when_title_already_exists(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        self._setup_git(target)
+        self._make_ahead(target)
+        sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_title(ctx) is False
+
+    def test_does_not_fire_when_processing(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        self._setup_git(target)
+        self._make_ahead(target)
+        sha = integration_head_sha(target, "main")
+        (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        (target / ".SWE" / "markers" / ".processing_c_pr_title").write_text("{}")
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_title(ctx) is False
+
+    def test_does_not_fire_when_publish_preconditions_not_met(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        self._setup_git(target)
+        self._make_ahead(target)
+        # No doc_sync marker — publish precondition fails
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_pr_title(ctx) is False
+
+
+# ─── run_c_pr_title ─────────────────────────────────────────────────────────
+
+
+class TestRunCPrTitle:
+    def test_dry_run_returns_success(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, dry_run=True)
+        result = run_c_pr_title(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.dry_run is True
+
+    def test_no_sha_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        result = run_c_pr_title(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+
+    def test_queues_agent(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=True, data={"entry_id": "abc", "queue_file": "/q/abc.json"})
+        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler):
+            result = run_c_pr_title(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["async"] is True
+        assert result.data["entry_id"] == "abc"
+        mock_handler.execute.assert_called_once()
+        queued_action = mock_handler.execute.call_args[0][0]
+        assert queued_action.params["agent"] == "PRReviewAgent"
+        assert "SWE Pipeline:" in queued_action.params["prompt"]
 
 
 # ─── detect_c_pr_review ─────────────────────────────────────────────────────
@@ -3328,6 +3449,7 @@ class TestDetectCPrPublishAncestorDocSync:
         subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "commit", "-m", "docs: sync"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is True
@@ -3748,6 +3870,7 @@ class TestDetectCPrPublishCorruptPrMarker:
         sha = integration_head_sha(target, "main")
         (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
         (target / ".SWE" / "pr_published.json").write_text("bad json")
+        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is True
@@ -3774,6 +3897,7 @@ class TestDetectCPrPublishPrMarkerNoNumber:
         sha = integration_head_sha(target, "main")
         (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
         (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_state": "open"}))
+        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is True
@@ -5617,6 +5741,7 @@ class TestDetectCPrPublishBatch:
         create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue")
         sha = integration_head_sha(target, "main")
         (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
+        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr", "issues_per_pr": 1}}
         assert detect_c_pr_publish(ctx) is True

@@ -1564,13 +1564,11 @@ def _close_and_comment_github_issue(
         )
 
 
-def _build_pr_body(target_dir: Path, repo_name: str, default_branch: str) -> str:
-    """Build the PR description summarising the pipeline's work.
+def _count_done_issues(target_dir: Path) -> tuple[int, int, int]:
+    """Count done issues by type from the issue store.
 
     :param target_dir: Target repo directory.
-    :param repo_name: Repo name.
-    :param default_branch: Default branch name.
-    :returns: PR body markdown string.
+    :returns: Tuple of (bug_count, refactor_count, enhance_count).
     """
     bug_count = refactor_count = enhance_count = 0
     issues_dir = target_dir / SWE_SUBDIR / "issues"
@@ -1593,6 +1591,18 @@ def _build_pr_body(target_dir: Path, repo_name: str, default_branch: str) -> str
                 refactor_count += 1
             elif itype == "enhancement":
                 enhance_count += 1
+    return bug_count, refactor_count, enhance_count
+
+
+def _build_pr_body(target_dir: Path, repo_name: str, default_branch: str) -> str:
+    """Build the PR description summarising the pipeline's work.
+
+    :param target_dir: Target repo directory.
+    :param repo_name: Repo name.
+    :param default_branch: Default branch name.
+    :returns: PR body markdown string.
+    """
+    bug_count, refactor_count, enhance_count = _count_done_issues(target_dir)
 
     done_count = bug_count + refactor_count + enhance_count
     pct = _a7_coverage_pct(target_dir) or 100.0
@@ -2913,17 +2923,131 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
     return result
 
 
+# ─── C-pr-title: Queue PRReviewAgent to generate PR title ───────────────────
+
+PR_TITLE_MARKER = "pr_title.json"
+PR_TITLE_PROCESSING = ".processing_c_pr_title"
+
+
+def _build_pr_title_prompt(
+    target_dir: Path, repo_name: str, default_branch: str, sha: str,
+) -> str:
+    """Build the prompt for PRReviewAgent to generate a PR title.
+
+    :param target_dir: Target repo directory.
+    :param repo_name: Repo name.
+    :param default_branch: Default branch name.
+    :param sha: Integration HEAD sha.
+    :returns: Prompt string.
+    """
+    title_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
+    return (
+        f"You are generating a pull request title for the repo at:\n"
+        f"  {target_dir}\n\n"
+        f"Branch:    {INTEGRATION_BRANCH}\n"
+        f"Target:    {default_branch}\n"
+        f"Commit:    {sha[:12]}\n\n"
+        f"## Your task\n\n"
+        f"Examine the changes on the `{INTEGRATION_BRANCH}` branch and write a "
+        f"concise, descriptive PR title that summarises what the PR actually "
+        f"does. The title MUST start with the prefix ``SWE Pipeline: `` "
+        f"followed by a short summary of the work (e.g. "
+        f"``SWE Pipeline: fix login bug and add rate limiting``).\n\n"
+        f"## Step 1 — understand the changes\n\n"
+        f"Use RunCommand to examine the diff:\n"
+        f"  cd {target_dir} && git log {default_branch}..{INTEGRATION_BRANCH} --oneline\n"
+        f"  cd {target_dir} && git diff --stat {default_branch}...{INTEGRATION_BRANCH}\n"
+        f"  cd {target_dir} && git diff {default_branch}...{INTEGRATION_BRANCH} --no-color\n\n"
+        f"Use ReadFile to examine specific changed files if needed for context.\n\n"
+        f"## Step 2 — write the title\n\n"
+        f"Based on the changes, write a fitting title. Rules:\n"
+        f"- Start with ``SWE Pipeline: ``\n"
+        f"- Keep it under 72 characters total\n"
+        f"- Describe the actual changes, not generic boilerplate\n"
+        f"- Use imperative mood (e.g. ``fix`` not ``fixes``)\n\n"
+        f"Write the title to a JSON file using WriteFile:\n"
+        f"  Path: {title_marker}\n"
+        f'  Content: {{"title": "<your title here>"}}\n'
+    )
+
+
+def detect_c_pr_title(context: dict[str, Any]) -> bool:
+    """Trigger: fire when pipeline is ready to publish but no PR title yet.
+
+    Same preconditions as ``detect_c_pr_publish``, but also requires that
+    ``pr_title.json`` does not already exist and that the title agent is
+    not already processing.
+
+    :param context: Trigger context dict.
+    :returns: True if the title-generation agent should be queued.
+    """
+    target_dir = Path(context.get("target_dir", "."))
+
+    # Reuse the publish preconditions — if publish wouldn't fire, no point
+    # generating a title.
+    if not _publish_preconditions_met(context):
+        return False
+
+    # Already have a title?
+    title_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
+    if title_marker.exists():
+        return False
+
+    # Already processing?
+    processing = target_dir / SWE_SUBDIR / "markers" / PR_TITLE_PROCESSING
+    return not processing.exists()
+
+
+def run_c_pr_title(action: ActionSpec, context: TickContext) -> ActionResult:
+    """Queue PRReviewAgent to generate a PR title from the diff.
+
+    :param action: Action spec with optional queue params.
+    :param context: Tick context.
+    :returns: ActionResult.
+    """
+    if context.dry_run:
+        return ActionResult(success=True, dry_run=True)
+
+    target_dir = context.target_dir
+    target_config = context.target_config
+    repo_name = context.target
+    default_branch = target_config.get("default_branch", "main")
+    sha = integration_head_sha(target_dir, default_branch)
+
+    if sha is None:
+        return ActionResult(success=False, stderr="Failed to determine integration head SHA")
+
+    prompt = _build_pr_title_prompt(target_dir, repo_name, default_branch, sha)
+
+    from cronpypeline.plugins.swe_prompts import _build_queue_handler
+    params = action.params
+    handler = _build_queue_handler(params, context)
+    queue_action = ActionSpec(
+        type=action.type,
+        params={
+            "agent": "PRReviewAgent",
+            "prompt": prompt,
+        },
+    )
+    result = handler.execute(queue_action, context)
+    if not result.success:
+        return result
+
+    result.data = {**result.data, "async": True}
+    return result
+
+
 # ─── C-publish: Push integration and open PR ────────────────────────────────
 
 
-def detect_c_pr_publish(context: dict[str, Any]) -> bool:
-    """Trigger: fire when pipeline is complete and PR should be published.
+def _publish_preconditions_met(context: dict[str, Any]) -> bool:
+    """Check all publish preconditions except pr_title.json existence.
 
-    When the issues-per-PR batch is full, only open coverage issues block
-    this stage (other open issues are left for the next cycle).
+    Shared by detect_c_pr_title (which runs before the title exists) and
+    detect_c_pr_publish (which requires the title to exist).
 
     :param context: Trigger context dict.
-    :returns: True if PR should be published.
+    :returns: True if all preconditions for publishing are met.
     """
     target_dir = Path(context.get("target_dir", "."))
     target_config = context.get("target_config", {})
@@ -2997,6 +3121,24 @@ def detect_c_pr_publish(context: dict[str, Any]) -> bool:
     return True
 
 
+def detect_c_pr_publish(context: dict[str, Any]) -> bool:
+    """Trigger: fire when pipeline is complete and PR should be published.
+
+    When the issues-per-PR batch is full, only open coverage issues block
+    this stage (other open issues are left for the next cycle).
+
+    :param context: Trigger context dict.
+    :returns: True if PR should be published.
+    """
+    if not _publish_preconditions_met(context):
+        return False
+
+    # PR title must have been generated by the title agent
+    target_dir = Path(context.get("target_dir", "."))
+    title_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
+    return title_marker.exists()
+
+
 def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     """Push integration branch and create PR via GitHub API.
 
@@ -3031,8 +3173,16 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     if push_result.returncode != 0:
         return ActionResult(success=False, stderr=f"Git push failed: {push_result.stderr}")
 
-    # Create PR
-    title = f"SWE Pipeline: Automated code improvements for {repo_name}"
+    # Read agent-generated title
+    title_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
+    try:
+        title_data = json.loads(title_marker.read_text(encoding="utf-8"))
+        title = title_data.get("title", "").strip()
+    except (OSError, json.JSONDecodeError):
+        title = ""
+    if not title:
+        title = f"SWE Pipeline: Automated code improvements for {repo_name}"
+
     body = _build_pr_body(target_dir, repo_name, default_branch)
     pr_data = _gh_api_post(
         owner, gh_repo_name, "pulls",
