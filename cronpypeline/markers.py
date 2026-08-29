@@ -94,6 +94,9 @@ class MarkerSpec:
         base_resolved = base_dir.resolve()
         if not resolved.is_relative_to(base_resolved):
             raise ValueError(f"Marker path escapes base directory: {directory}/{name}")
+        full_resolved = (resolved / name).resolve()
+        if not full_resolved.is_relative_to(base_resolved):
+            raise ValueError(f"Marker path escapes base directory: {directory}/{name}")
         return resolved / name
 
     def resolve_target(self, context: dict[str, Any] | None = None) -> str | None:

@@ -491,6 +491,15 @@ class TestPathTraversalProtection:
         with pytest.raises(ValueError, match="escapes base directory"):
             m.resolve_path(tmp_path)
 
+    def test_resolve_path_rejects_symlinked_name_escape(self, tmp_path):
+        outside_file = tmp_path.parent / "outside_file.txt"
+        outside_file.write_text("secret")
+        (tmp_path / "reports").mkdir()
+        (tmp_path / "reports" / "done.marker").symlink_to(outside_file)
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="reports")
+        with pytest.raises(ValueError, match="escapes base directory"):
+            m.resolve_path(tmp_path)
+
     def test_resolve_path_returns_resolved_path_for_symlinked_base(self, tmp_path):
         link_dir = tmp_path / "base_link"
         link_dir.symlink_to(tmp_path, target_is_directory=True)
