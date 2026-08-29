@@ -29,6 +29,7 @@
 - `retry_count` is now read from the actual on-disk processing marker data (`stage_state.processing_data`) instead of the static config content, so it is correctly preserved across re-queues by a `queue_agent` action.
 - Pipeline now stops chaining when a custom action returns `data: {"async": true}`, matching `queue_agent` behavior; previously async custom actions would incorrectly chain to the next stage.
 - `ActionHandlerConfig.from_dict` now treats an empty `params: {}` dict as present (not missing), so other top-level keys are no longer incorrectly merged into `params`.
+- `ActionHandlerConfig.from_dict` now raises a `ValueError` with a clear message when the required `type` field is missing, instead of an unhandled `KeyError`.
 - `TickResult.__str__` now includes stderr output, so captured tracebacks are shown to the user.
 - `tick()` exception handler now reports the actual failing target instead of `*`.
 - `tick_all()` now continues processing remaining targets even if one raises an exception, and captures the traceback in the returned TickResult's stderr field.
