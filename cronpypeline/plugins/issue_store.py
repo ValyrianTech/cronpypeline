@@ -25,6 +25,8 @@ def _parse_value(raw: str) -> Any:
     :returns: Parsed value (bool, null, int, float, list, or string).
     """
     raw = raw.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+        return raw[1:-1]
     if raw.startswith("[") and raw.endswith("]"):
         inner = raw[1:-1].strip()
         if not inner:
@@ -80,6 +82,32 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     return fm, body
 
 
+def _needs_quoting(value: str) -> bool:
+    """Return True if a string would be re-parsed as a non-string scalar.
+
+    :param value: String value to inspect.
+    :returns: True if the value looks like a bool, null, int, float, or list.
+    """
+    s = value.strip()
+    if s.startswith("[") and s.endswith("]"):
+        return True
+    if s.lower() in ("true", "yes", "false", "no"):
+        return True
+    if s.lower() in ("null", "none", "~"):
+        return True
+    try:
+        int(s)
+        return True
+    except ValueError:
+        pass
+    try:
+        float(s)
+        return True
+    except ValueError:
+        pass
+    return False
+
+
 def _serialize_value(value: Any) -> str:
     """Serialize a value to YAML-like scalar format.
 
@@ -94,6 +122,10 @@ def _serialize_value(value: Any) -> str:
         return str(value)
     if value is None:
         return "null"
+    if isinstance(value, str):
+        if _needs_quoting(value):
+            return "'" + value + "'"
+        return value
     return str(value)
 
 
