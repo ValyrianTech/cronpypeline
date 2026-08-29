@@ -1466,6 +1466,21 @@ class TestFindIssueById:
         target = _make_target_dir(tmp_path)
         assert _find_issue_by_id(target, "nonexistent") is None
 
+    def test_finds_issue_with_special_chars(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        create_issue(target, issue_data={"id": "foo/bar", "status": "open"}, body="# Issue")
+        result = _find_issue_by_id(target, "foo/bar")
+        assert result is not None
+        assert result.name == "foo-bar.md"
+        assert result.exists()
+
+    def test_finds_issue_with_spaces(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        create_issue(target, issue_data={"id": "my issue!", "status": "open"}, body="# Issue")
+        result = _find_issue_by_id(target, "my issue!")
+        assert result is not None
+        assert result.name == "my-issue.md"
+
 
 # ─── _write_pipeline_issue ──────────────────────────────────────────────────
 
@@ -1505,6 +1520,27 @@ class TestWritePipelineIssue:
         content = path.read_text()
         assert "id: test-1" in content
         assert "type: review" in content
+
+    def test_path_matches_create_issue_with_special_chars(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        path = _write_pipeline_issue(
+            target, "repo", "foo/bar", "coverage", "Special", "Body",
+        )
+        assert path.exists()
+        assert path.name == "foo-bar.md"
+        created = create_issue(
+            target, issue_data={"id": "foo/bar", "status": "open"}, body="x",
+        )
+        assert (target / ".SWE" / "issues" / "foo-bar.md").exists()
+
+    def test_path_matches_create_issue_with_spaces(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        path = _write_pipeline_issue(
+            target, "repo", "my issue!", "review", "Special", "Body",
+        )
+        assert path.name == "my-issue.md"
+        assert path.exists()
+        assert (target / ".SWE" / "issues" / "my-issue.md").exists()
 
 
 # ─── _close_and_comment_github_issue ────────────────────────────────────────
