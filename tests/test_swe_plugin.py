@@ -1528,7 +1528,7 @@ class TestWritePipelineIssue:
         )
         assert path.exists()
         assert path.name == "foo-bar.md"
-        created = create_issue(
+        create_issue(
             target, issue_data={"id": "foo/bar", "status": "open"}, body="x",
         )
         assert (target / ".SWE" / "issues" / "foo-bar.md").exists()
