@@ -156,6 +156,31 @@ class TestParseFrontmatter:
         fm, _ = parse_frontmatter("---\ntitle: 'unterminated\n---\n")
         assert fm["title"] == "'unterminated"
 
+    def test_warns_on_content_after_closing_quote(self):
+        with pytest.warns(UserWarning, match="Content after closing quote"):
+            fm, _ = parse_frontmatter('---\ntitle: "Fix: Login bug" extra\n---\n')
+        assert fm["title"] == "Fix: Login bug"
+
+    def test_warning_includes_key_and_discarded_content(self):
+        with pytest.warns(UserWarning, match=r"title.*extra"):
+            fm, _ = parse_frontmatter('---\ntitle: "Fix: Login bug" extra\n---\n')
+        assert fm["title"] == "Fix: Login bug"
+
+    def test_no_warning_without_content_after_quote(self, recwarn):
+        fm, _ = parse_frontmatter('---\ntitle: "Fix: Login bug"\n---\n')
+        assert fm["title"] == "Fix: Login bug"
+        assert len(recwarn) == 0
+
+    def test_no_warning_with_trailing_whitespace_after_quote(self, recwarn):
+        fm, _ = parse_frontmatter('---\ntitle: "Fix: Login bug"   \n---\n')
+        assert fm["title"] == "Fix: Login bug"
+        assert len(recwarn) == 0
+
+    def test_single_quote_warns_on_content_after_quote(self):
+        with pytest.warns(UserWarning, match="Content after closing quote"):
+            fm, _ = parse_frontmatter("---\ntitle: 'Refactor: Module X' trailing\n---\n")
+        assert fm["title"] == "Refactor: Module X"
+
 
 class TestSerializeFrontmatter:
     """Tests for YAML frontmatter serialization."""
