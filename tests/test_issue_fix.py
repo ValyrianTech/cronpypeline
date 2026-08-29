@@ -168,6 +168,15 @@ class TestTaskCreatedAt:
         result = _task_created_at(d, {"created_at": "not-a-date"})
         assert abs((result - old).total_seconds()) < 60
 
+    def test_non_string_created_at_falls_back_to_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text("{}")
+        old = datetime.now(timezone.utc) - timedelta(minutes=100)
+        os.utime(task_file, (old.timestamp(), old.timestamp()))
+        result = _task_created_at(d, {"created_at": 12345})
+        assert abs((result - old).total_seconds()) < 60
+
     def test_stat_failure_returns_now(self, tmp_path):
         d = tmp_path / "t"; d.mkdir()
         (d / TASK_FILE).write_text("{}")
@@ -711,6 +720,20 @@ class TestCleanupStaleTask:
             "task_id": "t", "branch": "b", "default_branch": "main",
             "source_issue_id": "",
         }))
+        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+
+    def test_verbose_old_mtime_no_created_at(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        task_dir = tmp_path / "tasks" / "d" / "t"
+        task_dir.mkdir(parents=True)
+        task_file = task_dir / TASK_FILE
+        task_file.write_text(json.dumps({
+            "task_id": "t", "branch": "b", "default_branch": "main",
+            "source_issue_id": "",
+        }))
+        old = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).timestamp()
+        os.utime(task_file, (old, old))
         assert _cleanup_stale_task(target, task_dir, verbose=True) is True
 
 

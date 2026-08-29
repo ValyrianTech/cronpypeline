@@ -392,7 +392,7 @@ def _task_created_at(task_dir: Path, task: dict[str, Any]) -> datetime:
     if created_str:
         try:
             return datetime.fromisoformat(created_str)
-        except ValueError:
+        except (ValueError, TypeError):
             pass
     task_file = task_dir / TASK_FILE
     try:
