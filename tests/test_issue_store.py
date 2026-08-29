@@ -722,6 +722,14 @@ class TestParseValueQuoting:
         from cronpypeline.plugins.issue_store import _parse_value
         assert _parse_value("['true', 1]") == ["true", 1]
 
+    def test_parse_unterminated_single_quote(self):
+        from cronpypeline.plugins.issue_store import _parse_value
+        assert _parse_value("'unterminated") == "'unterminated"
+
+    def test_parse_unterminated_double_quote(self):
+        from cronpypeline.plugins.issue_store import _parse_value
+        assert _parse_value('"unterminated') == '"unterminated'
+
 
 class TestRoundTripAmbiguousStrings:
     """Tests for round-tripping string values that look like other types."""
