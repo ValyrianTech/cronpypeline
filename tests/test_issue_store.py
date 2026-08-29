@@ -481,6 +481,18 @@ class TestSerializeValueBool:
         assert _serialize_value([None, 1]) == "[null, 1]"
 
 
+class TestNeedsQuotingMatchingQuotes:
+    """Tests for _needs_quoting detecting matching surrounding quotes."""
+
+    def test_needs_quoting_double_quoted(self):
+        from cronpypeline.plugins.issue_store import _needs_quoting
+        assert _needs_quoting('"bug"') is True
+
+    def test_needs_quoting_single_quoted(self):
+        from cronpypeline.plugins.issue_store import _needs_quoting
+        assert _needs_quoting("'bug'") is True
+
+
 class TestSerializeValueQuoting:
     """Tests for _serialize_value quoting ambiguous string values."""
 
@@ -518,6 +530,14 @@ class TestSerializeValueQuoting:
         from cronpypeline.plugins.issue_store import _serialize_value
         assert _serialize_value("open") == "open"
         assert _serialize_value("issue-42") == "issue-42"
+
+    def test_serialize_double_quoted_string(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value('"bug"') == "'\"bug\"'"
+
+    def test_serialize_single_quoted_string(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value("'bug'") == '"\'bug\'"'
 
 
 class TestParseValueQuoting:
@@ -571,6 +591,28 @@ class TestRoundTripAmbiguousStrings:
         assert isinstance(parsed["labels"][0], str)
         assert isinstance(parsed["labels"][1], str)
         assert parsed["labels"][2] == 1
+
+    def test_roundtrip_labels_with_double_quotes(self):
+        fm = {"labels": ['"bug"', "feature"]}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert parsed["labels"][0] == '"bug"'
+
+    def test_roundtrip_labels_with_single_quotes(self):
+        fm = {"labels": ["'bug'", "feature"]}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert parsed["labels"][0] == "'bug'"
+
+    def test_roundtrip_quoted_ambiguous_string(self):
+        fm = {"value": '"true"'}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert parsed["value"] == '"true"'
+        assert isinstance(parsed["value"], str)
 
 
 class TestSlugify:

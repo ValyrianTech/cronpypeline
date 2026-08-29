@@ -89,6 +89,8 @@ def _needs_quoting(value: str) -> bool:
     :returns: True if the value looks like a bool, null, int, float, or list.
     """
     s = value.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        return True
     if s.startswith("[") and s.endswith("]"):
         return True
     if s.lower() in ("true", "yes", "false", "no"):
@@ -124,6 +126,11 @@ def _serialize_value(value: Any) -> str:
         return "null"
     if isinstance(value, str):
         if _needs_quoting(value):
+            s = value.strip()
+            if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+                if s[0] == "'":
+                    return '"' + value + '"'
+                return "'" + value + "'"
             return "'" + value + "'"
         return value
     return str(value)
