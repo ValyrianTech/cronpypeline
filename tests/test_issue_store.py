@@ -472,6 +472,14 @@ class TestSerializeValueBool:
         from cronpypeline.plugins.issue_store import _serialize_value
         assert _serialize_value(3.14) == "3.14"
 
+    def test_serialize_none(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value(None) == "null"
+
+    def test_serialize_none_in_list(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value([None, 1]) == "[null, 1]"
+
 
 class TestSlugify:
     """Tests for _slugify helper."""

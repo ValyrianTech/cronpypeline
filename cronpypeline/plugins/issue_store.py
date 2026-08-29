@@ -92,6 +92,8 @@ def _serialize_value(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, float):
         return str(value)
+    if value is None:
+        return "null"
     return str(value)
 
 
