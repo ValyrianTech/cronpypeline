@@ -121,6 +121,33 @@ class TestParseFrontmatter:
         parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
         assert parsed == fm
 
+    def test_double_quoted_value_with_colon(self):
+        fm, _ = parse_frontmatter('---\ntitle: "Fix: Login bug"\n---\n')
+        assert fm["title"] == "Fix: Login bug"
+
+    def test_single_quoted_value_with_colon(self):
+        fm, _ = parse_frontmatter("---\ntitle: 'Refactor: Module X'\n---\n")
+        assert fm["title"] == "Refactor: Module X"
+
+    def test_unquoted_url_value(self):
+        fm, _ = parse_frontmatter("---\nurl: https://example.com/path\n---\n")
+        assert fm["url"] == "https://example.com/path"
+
+    def test_multiple_colons_in_quotes(self):
+        fm, _ = parse_frontmatter('---\ntitle: "Bug: Fix: Login"\n---\n')
+        assert fm["title"] == "Bug: Fix: Login"
+
+    def test_regular_value_with_colon_fix(self):
+        fm, _ = parse_frontmatter("---\nid: 42\n---\n")
+        assert fm["id"] == 42
+
+    def test_roundtrip_colon_value(self):
+        fm = {"title": "Fix: Login bug"}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert parsed["title"] == "Fix: Login bug"
+
 
 class TestSerializeFrontmatter:
     """Tests for YAML frontmatter serialization."""
