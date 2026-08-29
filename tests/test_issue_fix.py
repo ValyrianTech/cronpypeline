@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -42,6 +43,7 @@ from cronpypeline.plugins.issue_fix import (
     _run,
     _safe_slug,
     _task_branch_name,
+    _task_created_at,
     ensure_integration_branch,
     merge_into_integration,
     run_gate,
@@ -135,13 +137,75 @@ class TestReadTask:
         assert _read_task(d) == {"task_id": "x"}
 
 
+class TestTaskCreatedAt:
+    def test_valid_created_at(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        (d / TASK_FILE).write_text("{}")
+        created = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        assert _task_created_at(d, {"created_at": created.isoformat()}) == created
+
+    def test_naive_created_at_treated_as_utc(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        (d / TASK_FILE).write_text("{}")
+        assert _task_created_at(d, {"created_at": "2025-01-01T00:00:00"}) == \
+            datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+    def test_missing_created_at_recent_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        (d / TASK_FILE).write_text("{}")
+        result = _task_created_at(d, {})
+        assert abs((datetime.now(timezone.utc) - result).total_seconds()) < 60
+
+    def test_missing_created_at_old_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text("{}")
+        old = datetime.now(timezone.utc) - timedelta(minutes=100)
+        os.utime(task_file, (old.timestamp(), old.timestamp()))
+        result = _task_created_at(d, {})
+        assert abs((result - old).total_seconds()) < 60
+
+    def test_bad_created_at_falls_back_to_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text("{}")
+        old = datetime.now(timezone.utc) - timedelta(minutes=100)
+        os.utime(task_file, (old.timestamp(), old.timestamp()))
+        result = _task_created_at(d, {"created_at": "not-a-date"})
+        assert abs((result - old).total_seconds()) < 60
+
+    def test_non_string_created_at_falls_back_to_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text("{}")
+        old = datetime.now(timezone.utc) - timedelta(minutes=100)
+        os.utime(task_file, (old.timestamp(), old.timestamp()))
+        result = _task_created_at(d, {"created_at": 12345})
+        assert abs((result - old).total_seconds()) < 60
+
+    def test_stat_failure_returns_now(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        (d / TASK_FILE).write_text("{}")
+        with patch("pathlib.Path.stat", side_effect=OSError("x")):
+            result = _task_created_at(d, {})
+        assert abs((datetime.now(timezone.utc) - result).total_seconds()) < 60
+
+
 class TestIsTaskStale:
     def test_no_file(self, tmp_path):
         assert _is_task_stale(tmp_path) is True
 
-    def test_no_created_at(self, tmp_path):
+    def test_no_created_at_recent_mtime(self, tmp_path):
         d = tmp_path / "t"; d.mkdir()
         (d / TASK_FILE).write_text("{}")
+        assert _is_task_stale(d) is False
+
+    def test_no_created_at_old_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text("{}")
+        old = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).timestamp()
+        os.utime(task_file, (old, old))
         assert _is_task_stale(d) is True
 
     def test_old(self, tmp_path):
@@ -155,15 +219,45 @@ class TestIsTaskStale:
         (d / TASK_FILE).write_text(json.dumps({"created_at": datetime.now(timezone.utc).isoformat()}))
         assert _is_task_stale(d) is False
 
-    def test_corrupt_json(self, tmp_path):
+    def test_corrupt_json_recent_mtime(self, tmp_path):
         d = tmp_path / "t"; d.mkdir()
         (d / TASK_FILE).write_text("bad")
+        assert _is_task_stale(d) is False
+
+    def test_corrupt_json_old_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text("bad")
+        old = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).timestamp()
+        os.utime(task_file, (old, old))
         assert _is_task_stale(d) is True
 
-    def test_bad_date(self, tmp_path):
+    def test_bad_date_recent_mtime(self, tmp_path):
         d = tmp_path / "t"; d.mkdir()
         (d / TASK_FILE).write_text(json.dumps({"created_at": "bad"}))
+        assert _is_task_stale(d) is False
+
+    def test_bad_date_old_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text(json.dumps({"created_at": "bad"}))
+        old = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).timestamp()
+        os.utime(task_file, (old, old))
         assert _is_task_stale(d) is True
+
+    def test_stat_oserror(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text("{}")
+        real_stat = Path.stat
+        calls = {"n": 0}
+        def fake_stat(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise OSError("x")
+            return real_stat(task_file)
+        with patch("pathlib.Path.stat", side_effect=fake_stat):
+            assert _is_task_stale(d) is False
 
 
 class TestIterTaskDirs:
@@ -623,6 +717,31 @@ class TestCleanupStaleTask:
         with patch("cronpypeline.plugins.issue_fix.shutil.rmtree", side_effect=OSError("x")):
             assert _cleanup_stale_task(target, task_dir) is False
 
+    def test_verbose_no_created_at(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        task_dir = tmp_path / "tasks" / "d" / "t"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text(json.dumps({
+            "task_id": "t", "branch": "b", "default_branch": "main",
+            "source_issue_id": "",
+        }))
+        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+
+    def test_verbose_old_mtime_no_created_at(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        task_dir = tmp_path / "tasks" / "d" / "t"
+        task_dir.mkdir(parents=True)
+        task_file = task_dir / TASK_FILE
+        task_file.write_text(json.dumps({
+            "task_id": "t", "branch": "b", "default_branch": "main",
+            "source_issue_id": "",
+        }))
+        old = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).timestamp()
+        os.utime(task_file, (old, old))
+        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+
 
 # ─── _cleanup_orphaned_task_dirs ─────────────────────────────────────────────
 
@@ -1049,6 +1168,20 @@ class TestRunIssueFixStateMachine:
         (td / TASK_FILE).write_text(json.dumps({
             "task_id": "t1", "issue_type": "bug", "source_issue_id": "",
             "branch": "swe-pipeline/task_t1", "created_at": recent,
+            "repo_name": "repo",
+        }))
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "tasks")
+        assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), verbose=True) is True
+
+    def test_active_task_no_created_at_waiting_on_agent(self, tmp_path, monkeypatch):
+        t = _make_target_dir(tmp_path)
+        _init_git(t)
+        td = tmp_path / "tasks" / "d" / "20250101_repo_t1"
+        td.mkdir(parents=True)
+        (td / TASK_FILE).write_text(json.dumps({
+            "task_id": "t1", "issue_type": "bug", "source_issue_id": "",
+            "branch": "swe-pipeline/task_t1",
             "repo_name": "repo",
         }))
         monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")

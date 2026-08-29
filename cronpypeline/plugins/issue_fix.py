@@ -377,6 +377,33 @@ def _read_task(task_dir: Path) -> dict[str, Any]:
     return json.loads((task_dir / TASK_FILE).read_text(encoding="utf-8"))
 
 
+def _task_created_at(task_dir: Path, task: dict[str, Any]) -> datetime:
+    """Return a task's creation time, falling back to the file mtime.
+
+    Prefers ``task["created_at"]`` when it is a parseable ISO string. Otherwise
+    falls back to the task file's mtime, and finally to ``datetime.now()`` when
+    the stat fails (so the task is treated as fresh/recent).
+
+    :param task_dir: Task directory path.
+    :param task: Task dict.
+    :returns: Creation datetime (timezone-aware, UTC).
+    """
+    created_str = task.get("created_at", "")
+    if created_str:
+        try:
+            created = datetime.fromisoformat(created_str)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            return created
+        except (ValueError, TypeError):
+            pass
+    task_file = task_dir / TASK_FILE
+    try:
+        return datetime.fromtimestamp(task_file.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return datetime.now(timezone.utc)
+
+
 def _is_task_stale(task_dir: Path) -> bool:
     """Return True if the task is older than TASK_TIMEOUT_MINUTES.
 
@@ -388,12 +415,9 @@ def _is_task_stale(task_dir: Path) -> bool:
         return True
     try:
         task = json.loads(task_file.read_text(encoding="utf-8"))
-        created_str = task.get("created_at", "")
-        if not created_str:
-            return True
-        created = datetime.fromisoformat(created_str)
-    except (OSError, json.JSONDecodeError, ValueError):
-        return True
+    except (OSError, json.JSONDecodeError):
+        task = {}
+    created = _task_created_at(task_dir, task)
     age = (datetime.now(timezone.utc) - created).total_seconds() / 60
     return age > TASK_TIMEOUT_MINUTES
 
@@ -439,7 +463,7 @@ def _cleanup_stale_task(repo_dir: Path, task_dir: Path,
 
     if verbose:
         age_mins = (datetime.now(timezone.utc) -
-                    datetime.fromisoformat(task.get("created_at", ""))).total_seconds() / 60
+                    _task_created_at(task_dir, task)).total_seconds() / 60
         print(f"  stale task '{task_id}' ({age_mins:.0f} min old, "
               f"limit {TASK_TIMEOUT_MINUTES} min) — cleaning up")
 
@@ -1196,7 +1220,7 @@ def run_issue_fix_state_machine(repo_dir: Path, repo_name: str,
         # Check if agent finished but forgot marker
         task = _read_task(active)
         task_age = (datetime.now(timezone.utc) -
-                    datetime.fromisoformat(task.get("created_at", ""))).total_seconds() / 60
+                    _task_created_at(active, task)).total_seconds() / 60
         if task_age >= 2 and task.get("issue_type") == "review":
             # Review agents don't commit — check if the queue is empty instead
             if _is_queue_empty(context):
