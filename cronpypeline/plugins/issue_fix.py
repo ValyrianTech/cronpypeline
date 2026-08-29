@@ -1146,7 +1146,7 @@ def _is_queue_empty(context: TickContext) -> bool:
     Resolves ``queue_dir`` from the pipeline's ``action_handler`` config.
 
     :param context: Tick context with pipeline reference.
-    :returns: True if the queue directory is empty or missing.
+    :returns: True if the queue directory exists and is empty; False otherwise.
     """
     pipeline = getattr(context, "pipeline", None)
     if pipeline is None or pipeline.config.action_handler is None:
@@ -1156,7 +1156,7 @@ def _is_queue_empty(context: TickContext) -> bool:
         return False
     queue_path = Path(queue_dir)
     if not queue_path.is_dir():
-        return True
+        return False
     return not any(queue_path.iterdir())
 
 
