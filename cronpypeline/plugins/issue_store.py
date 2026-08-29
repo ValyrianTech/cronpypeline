@@ -84,7 +84,10 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         # to handle values containing colons (e.g., "Fix: Login bug")
         if len(value) >= 2 and value[0] in ("'", '"'):
             quote = value[0]
-            close = value.find(quote, 1)
+            if value[-1] == quote:
+                close = value.rfind(quote)
+            else:
+                close = value.find(quote, 1)
             if close != -1:
                 value = value[:close + 1]
         fm[key] = _parse_value(value)
