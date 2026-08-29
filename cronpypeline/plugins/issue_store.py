@@ -342,8 +342,14 @@ def create_issue(target_dir: Path | str | None = None, issue_data: dict[str, Any
         issue_data = {}
     issue = Issue.from_dict(issue_data)
     issue.body = body
-    filename = f"{issue.id}.md"
-    path = _issues_dir(target_dir) / filename
+    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", str(issue.id)).strip("-")
+    if not safe_id:
+        safe_id = "issue"
+    issues_dir = _issues_dir(target_dir)
+    filename = f"{safe_id}.md"
+    path = (issues_dir / filename).resolve()
+    if not path.is_relative_to(issues_dir.resolve()):
+        raise ValueError(f"Issue path escapes issues directory: {filename}")
     _write_issue_file(path, issue)
     return issue
 
