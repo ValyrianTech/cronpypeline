@@ -34,6 +34,7 @@
 - `tick()` exception handler now reports the actual failing target instead of `*`.
 - `tick_all()` now continues processing remaining targets even if one raises an exception, and captures the traceback in the returned TickResult's stderr field.
 - `MarkerSpec.resolve_path` now rejects path traversal (`..` segments) and absolute paths that escape the workspace.
+- `MarkerSpec.resolve_path` now resolves the base directory (following symlinks) before the traversal check and returns the fully-resolved path, preventing a TOCTOU race where a symlinked base directory could be swapped between the check and use.
 - Template substitution failures in `command`-type actions, `conversation_queue`, and `run_diagnostic` now return an `ACTION_FAILED` result with the error message instead of silently using the unformatted template.
 
 ### Security

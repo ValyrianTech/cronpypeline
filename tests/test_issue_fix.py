@@ -32,6 +32,7 @@ from cronpypeline.plugins.issue_fix import (
     _gate_review,
     _invalidate_all_reports,
     _invalidate_reports,
+    _is_queue_empty,
     _is_task_stale,
     _iter_task_dirs,
     _parse_coverage_output,
@@ -1179,6 +1180,63 @@ class TestRunIssueFixStateMachine:
         ctx.pipeline.config.action_handler.params = {"queue_dir": str(queue_dir)}
         assert run_issue_fix_state_machine(t, "repo", {}, ctx, verbose=True) is True
         assert not (td / GATE_RESULT_FILE).exists()
+
+    def test_review_agent_forgot_marker_queue_empty_dry_run(self, tmp_path, monkeypatch):
+        """Review agent finished (queue empty) + dry_run — should gate without writing."""
+        t = _make_target_dir(tmp_path)
+        _write_issue(t / ".SWE" / "issues", "rev-1", status="open", source="review", type="review")
+        _init_git(t)
+        subprocess.run(["git", "-C", str(t), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
+        td = tmp_path / "tasks" / "d" / "20250101_repo_rev1"
+        td.mkdir(parents=True)
+        old = (datetime.now(timezone.utc) - timedelta(minutes=5))
+        (td / TASK_FILE).write_text(json.dumps({
+            "task_id": "rev1", "issue_type": "review", "source_issue_id": "rev-1",
+            "branch": INTEGRATION_BRANCH, "created_at": old.isoformat(),
+            "repo_name": "repo",
+        }))
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "tasks")
+        # Empty queue dir
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        ctx = _make_tick_context(t)
+        ctx.pipeline = MagicMock()
+        ctx.pipeline.config.action_handler.params = {"queue_dir": str(queue_dir)}
+        assert run_issue_fix_state_machine(t, "repo", {}, ctx, dry_run=True) is True
+        assert not (td / GATE_RESULT_FILE).exists()
+
+
+class TestIsQueueEmpty:
+    def test_no_pipeline(self, tmp_path):
+        ctx = _make_tick_context(tmp_path)
+        assert _is_queue_empty(ctx) is False
+
+    def test_no_action_handler(self, tmp_path):
+        ctx = _make_tick_context(tmp_path)
+        ctx.pipeline = MagicMock()
+        ctx.pipeline.config.action_handler = None
+        assert _is_queue_empty(ctx) is False
+
+    def test_no_queue_dir(self, tmp_path):
+        ctx = _make_tick_context(tmp_path)
+        ctx.pipeline = MagicMock()
+        ctx.pipeline.config.action_handler.params = {}
+        assert _is_queue_empty(ctx) is False
+
+    def test_missing_dir(self, tmp_path):
+        ctx = _make_tick_context(tmp_path)
+        ctx.pipeline = MagicMock()
+        ctx.pipeline.config.action_handler.params = {"queue_dir": str(tmp_path / "nonexistent")}
+        assert _is_queue_empty(ctx) is False
+
+    def test_regular_file(self, tmp_path):
+        ctx = _make_tick_context(tmp_path)
+        ctx.pipeline = MagicMock()
+        queue_file = tmp_path / "queue"
+        queue_file.write_text("not a directory")
+        ctx.pipeline.config.action_handler.params = {"queue_dir": str(queue_file)}
+        assert _is_queue_empty(ctx) is False
 
 
 # ─── Remaining edge cases for 100% coverage ──────────────────────────────────

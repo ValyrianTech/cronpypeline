@@ -400,7 +400,7 @@ Template variables substituted into commands (`command`-type actions) are shell-
 | `json` | JSON file with fields | `name`, `directory`, `content` |
 | `symlink` | Symlink to latest report | `name`, `directory`, `target` |
 
-Marker paths must be relative and cannot contain `..` segments or absolute paths; `MarkerSpec.resolve_path` rejects path traversal (`..` segments), absolute paths, and any path that resolves outside the workspace/base directory (raising a `ValueError`).
+Marker paths must be relative and cannot contain `..` segments or absolute paths; `MarkerSpec.resolve_path` rejects path traversal (`..` segments), absolute paths, and any path that resolves outside the workspace/base directory (raising a `ValueError`). Before the traversal check, `resolve_path` resolves the base directory (following symlinks) and returns the fully-resolved path, preventing a TOCTOU race where a symlinked base directory could be swapped between the check and use.
 
 ### Target specs
 
