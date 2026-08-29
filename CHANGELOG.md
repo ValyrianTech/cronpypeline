@@ -39,6 +39,7 @@
 - `MarkerSpec.resolve_path` now resolves the base directory (following symlinks) before the traversal check and returns the fully-resolved path, preventing a TOCTOU race where a symlinked base directory could be swapped between the check and use.
 - Template substitution failures in `command`-type actions, `conversation_queue`, and `run_diagnostic` now return an `ACTION_FAILED` result with the error message instead of silently using the unformatted template.
 - The issue store's YAML frontmatter parser (_parse_value) now correctly parses boolean values (true/false/yes/no) and null values (null/none/~) instead of treating them as truthy strings. This fixes config toggles like enabled: false being treated as truthy when read from issue frontmatter.
+- The issue store's YAML frontmatter parser (parse_frontmatter) now correctly handles quoted values containing colons (e.g. `title: "Fix: Login bug"`), instead of truncating the value at the first colon.
 
 ### Security
 - Addressed bandit findings: added nosec annotations for intentional subprocess/shell usage, resolved git binary via shutil.which, and validated HTTP URL schemes.
