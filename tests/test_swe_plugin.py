@@ -2507,6 +2507,24 @@ class TestRunCPrTitle:
         assert queued_action.params["agent"] == "PRReviewAgent"
         assert "SWE Pipeline:" in queued_action.params["prompt"]
 
+    def test_queue_handler_failure(self, tmp_path, monkeypatch):
+        """Covers line 3034 — handler.execute returns failure."""
+        target = _make_target_dir(tmp_path)
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=False)
+        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler):
+            result = run_c_pr_title(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+
 
 # ─── detect_c_pr_review ─────────────────────────────────────────────────────
 
