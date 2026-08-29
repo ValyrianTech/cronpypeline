@@ -490,3 +490,10 @@ class TestPathTraversalProtection:
         m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="link")
         with pytest.raises(ValueError, match="escapes base directory"):
             m.resolve_path(tmp_path)
+
+    def test_resolve_path_returns_resolved_path_for_symlinked_base(self, tmp_path):
+        link_dir = tmp_path / "base_link"
+        link_dir.symlink_to(tmp_path, target_is_directory=True)
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="reports")
+        resolved = m.resolve_path(link_dir)
+        assert resolved == (tmp_path / "reports" / "done.marker").resolve()
