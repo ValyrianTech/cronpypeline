@@ -729,7 +729,7 @@ Git is invoked via `shutil.which("git")` (resolved to an absolute path, falling 
 
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
 
-Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency).
+Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency). The frontmatter parser handles booleans (true/false/yes/no) and null values (null/none/~) in addition to integers, floats, lists, and strings.
 
 **SWE diagnostics** (`cronpypeline.plugins.swe_diagnostics`):
 

@@ -22,14 +22,22 @@ def _parse_value(raw: str) -> Any:
     """Parse a single YAML-like scalar value.
 
     :param raw: Raw string value to parse.
-    :returns: Parsed value (int, float, list, or string).
+    :returns: Parsed value (bool, null, int, float, list, or string).
     """
     raw = raw.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+        return raw[1:-1]
     if raw.startswith("[") and raw.endswith("]"):
         inner = raw[1:-1].strip()
         if not inner:
             return []
         return [_parse_value(v.strip()) for v in inner.split(",")]
+    if raw.lower() in ("true", "yes"):
+        return True
+    if raw.lower() in ("false", "no"):
+        return False
+    if raw.lower() in ("null", "none", "~"):
+        return None
     try:
         return int(raw)
     except ValueError:
@@ -74,6 +82,34 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     return fm, body
 
 
+def _needs_quoting(value: str) -> bool:
+    """Return True if a string would be re-parsed as a non-string scalar.
+
+    :param value: String value to inspect.
+    :returns: True if the value looks like a bool, null, int, float, or list.
+    """
+    s = value.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        return True
+    if s.startswith("[") and s.endswith("]"):
+        return True
+    if s.lower() in ("true", "yes", "false", "no"):
+        return True
+    if s.lower() in ("null", "none", "~"):
+        return True
+    try:
+        int(s)
+        return True
+    except ValueError:
+        pass
+    try:
+        float(s)
+        return True
+    except ValueError:
+        pass
+    return False
+
+
 def _serialize_value(value: Any) -> str:
     """Serialize a value to YAML-like scalar format.
 
@@ -86,6 +122,17 @@ def _serialize_value(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, float):
         return str(value)
+    if value is None:
+        return "null"
+    if isinstance(value, str):
+        if _needs_quoting(value):
+            s = value.strip()
+            if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+                if s[0] == "'":
+                    return '"' + value + '"'
+                return "'" + value + "'"
+            return "'" + value + "'"
+        return value
     return str(value)
 
 

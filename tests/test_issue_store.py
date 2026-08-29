@@ -61,6 +61,63 @@ class TestParseFrontmatter:
         assert fm["id"] == 1
         assert body == ""
 
+    def test_parse_boolean_true(self):
+        text = "---\nenabled: true\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["enabled"] is True
+
+    def test_parse_boolean_false(self):
+        text = "---\nenabled: false\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["enabled"] is False
+
+    def test_parse_boolean_yes(self):
+        text = "---\nenabled: yes\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["enabled"] is True
+
+    def test_parse_boolean_no(self):
+        text = "---\nenabled: no\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["enabled"] is False
+
+    def test_parse_null(self):
+        text = "---\nvalue: null\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["value"] is None
+
+    def test_parse_none(self):
+        text = "---\nvalue: none\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["value"] is None
+
+    def test_parse_tilde(self):
+        text = "---\nvalue: ~\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["value"] is None
+
+    def test_parse_boolean_in_list(self):
+        text = "---\nflags: [true, false]\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["flags"] == [True, False]
+
+    def test_parse_null_in_list(self):
+        text = "---\nitems: [null, 1]\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["items"] == [None, 1]
+
+    def test_roundtrip_boolean(self):
+        fm = {"enabled": True, "disabled": False}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+
+    def test_roundtrip_null(self):
+        fm = {"value": None}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+
 
 class TestSerializeFrontmatter:
     """Tests for YAML frontmatter serialization."""
@@ -414,6 +471,148 @@ class TestSerializeValueBool:
     def test_serialize_float(self):
         from cronpypeline.plugins.issue_store import _serialize_value
         assert _serialize_value(3.14) == "3.14"
+
+    def test_serialize_none(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value(None) == "null"
+
+    def test_serialize_none_in_list(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value([None, 1]) == "[null, 1]"
+
+
+class TestNeedsQuotingMatchingQuotes:
+    """Tests for _needs_quoting detecting matching surrounding quotes."""
+
+    def test_needs_quoting_double_quoted(self):
+        from cronpypeline.plugins.issue_store import _needs_quoting
+        assert _needs_quoting('"bug"') is True
+
+    def test_needs_quoting_single_quoted(self):
+        from cronpypeline.plugins.issue_store import _needs_quoting
+        assert _needs_quoting("'bug'") is True
+
+
+class TestSerializeValueQuoting:
+    """Tests for _serialize_value quoting ambiguous string values."""
+
+    def test_serialize_string_true(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value("true") == "'true'"
+
+    def test_serialize_string_null(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value("null") == "'null'"
+
+    def test_serialize_string_int(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value("123") == "'123'"
+
+    def test_serialize_string_float(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value("3.14") == "'3.14'"
+
+    def test_serialize_string_list(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value("[a, b]") == "'[a, b]'"
+
+    def test_serialize_string_yes_no(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value("yes") == "'yes'"
+        assert _serialize_value("no") == "'no'"
+
+    def test_serialize_string_none_tilde(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value("none") == "'none'"
+        assert _serialize_value("~") == "'~'"
+
+    def test_serialize_regular_string_unquoted(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value("open") == "open"
+        assert _serialize_value("issue-42") == "issue-42"
+
+    def test_serialize_double_quoted_string(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value('"bug"') == "'\"bug\"'"
+
+    def test_serialize_single_quoted_string(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value("'bug'") == '"\'bug\'"'
+
+
+class TestParseValueQuoting:
+    """Tests for _parse_value stripping surrounding quotes."""
+
+    def test_parse_single_quoted_string(self):
+        from cronpypeline.plugins.issue_store import _parse_value
+        assert _parse_value("'true'") == "true"
+        assert _parse_value("'null'") == "null"
+        assert _parse_value("'123'") == "123"
+
+    def test_parse_double_quoted_string(self):
+        from cronpypeline.plugins.issue_store import _parse_value
+        assert _parse_value('"true"') == "true"
+
+    def test_parse_quoted_in_list(self):
+        from cronpypeline.plugins.issue_store import _parse_value
+        assert _parse_value("['true', 1]") == ["true", 1]
+
+
+class TestRoundTripAmbiguousStrings:
+    """Tests for round-tripping string values that look like other types."""
+
+    def test_roundtrip_string_true(self):
+        fm = {"value": "true"}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert isinstance(parsed["value"], str)
+
+    def test_roundtrip_string_null(self):
+        fm = {"value": "null"}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert isinstance(parsed["value"], str)
+
+    def test_roundtrip_string_int_float(self):
+        fm = {"a": "123", "b": "3.14"}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert isinstance(parsed["a"], str)
+        assert isinstance(parsed["b"], str)
+
+    def test_roundtrip_labels_with_ambiguous_strings(self):
+        fm = {"labels": ["true", "null", 1]}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert isinstance(parsed["labels"][0], str)
+        assert isinstance(parsed["labels"][1], str)
+        assert parsed["labels"][2] == 1
+
+    def test_roundtrip_labels_with_double_quotes(self):
+        fm = {"labels": ['"bug"', "feature"]}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert parsed["labels"][0] == '"bug"'
+
+    def test_roundtrip_labels_with_single_quotes(self):
+        fm = {"labels": ["'bug'", "feature"]}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert parsed["labels"][0] == "'bug'"
+
+    def test_roundtrip_quoted_ambiguous_string(self):
+        fm = {"value": '"true"'}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert parsed["value"] == '"true"'
+        assert isinstance(parsed["value"], str)
 
 
 class TestSlugify:
