@@ -10,6 +10,7 @@ This module uses a simple built-in frontmatter parser (no external YAML dependen
 import argparse
 import re
 import sys
+import warnings
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
@@ -330,6 +331,18 @@ def set_issue_status(target_dir: Path | str | None = None, issue_id: Any = None,
     return False
 
 
+def issue_filename(issue_id: Any) -> str:
+    """Return a safe filename (without ``.md`` extension) for an issue id.
+
+    :param issue_id: Issue identifier to sanitize.
+    :returns: Safe filename string, or ``"issue"`` if sanitization yields empty.
+    """
+    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", str(issue_id)).strip("-")
+    if not safe_id:
+        safe_id = "issue"
+    return safe_id
+
+
 def create_issue(target_dir: Path | str | None = None, issue_data: dict[str, Any] | None = None, body: str = "") -> Issue:
     """Create a new issue .md file with frontmatter.
 
@@ -342,8 +355,22 @@ def create_issue(target_dir: Path | str | None = None, issue_data: dict[str, Any
         issue_data = {}
     issue = Issue.from_dict(issue_data)
     issue.body = body
-    filename = f"{issue.id}.md"
-    path = _issues_dir(target_dir) / filename
+    safe_id = issue_filename(issue.id)
+    issues_dir = _issues_dir(target_dir)
+    filename = f"{safe_id}.md"
+    path = (issues_dir / filename).resolve()
+    if not path.is_relative_to(issues_dir.resolve()):
+        raise ValueError(f"Issue path escapes issues directory: {filename}")
+    if path.exists():
+        existing = _read_issue_file(path)
+        if existing.id != issue.id:
+            warnings.warn(
+                f"Issue id {issue.id!r} sanitizes to filename {filename!r}, which is "
+                f"already used by issue id {existing.id!r}; the existing file will be "
+                "overwritten.",
+                UserWarning,
+                stacklevel=2,
+            )
     _write_issue_file(path, issue)
     return issue
 

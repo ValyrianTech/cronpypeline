@@ -2,11 +2,14 @@
 
 from pathlib import Path
 
+import pytest
+
 from cronpypeline.plugins.issue_store import (
     Issue,
     create_issue,
     finalize_issue_outcome,
     get_issue,
+    issue_filename,
     load_issues,
     parse_frontmatter,
     serialize_frontmatter,
@@ -302,6 +305,108 @@ class TestCreateIssue:
         create_issue(tmp_path, {"id": 42, "status": "open"})
         issue_file = tmp_path / ".SWE" / "issues" / "42.md"
         assert issue_file.exists()
+
+    def test_create_issue_sanitizes_path_traversal(self, tmp_path):
+        create_issue(tmp_path, {"id": "../../evil", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "..-..-evil.md").exists()
+        assert not (tmp_path / "evil.md").exists()
+        assert not (tmp_path.parent / "evil.md").exists()
+
+    def test_create_issue_special_chars_only_falls_back_to_issue(self, tmp_path):
+        create_issue(tmp_path, {"id": "!!!", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "issue.md").exists()
+
+    def test_create_issue_slashes_only_falls_back_to_issue(self, tmp_path):
+        create_issue(tmp_path, {"id": "///", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "issue.md").exists()
+
+    def test_create_issue_normal_id_still_works(self, tmp_path):
+        create_issue(tmp_path, {"id": "issue-1", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "issue-1.md").exists()
+
+    def test_create_issue_sanitizes_absolute_path(self, tmp_path):
+        create_issue(tmp_path, {"id": "/etc/passwd", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "etc-passwd.md").exists()
+        assert not (tmp_path.parent / "etc" / "passwd.md").exists()
+
+    def test_create_issue_sanitizes_mixed_chars_and_slashes(self, tmp_path):
+        create_issue(tmp_path, {"id": "foo/bar", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "foo-bar.md").exists()
+
+    def test_create_issue_warns_on_collision(self, tmp_path):
+        create_issue(tmp_path, {"id": "foo/bar", "status": "open"}, body="first")
+        with pytest.warns(UserWarning):
+            create_issue(tmp_path, {"id": "foo-bar", "status": "open"}, body="second")
+
+        loaded = get_issue(tmp_path, "foo-bar")
+        assert loaded is not None
+        assert loaded.id == "foo-bar"
+        assert loaded.body == "second"
+
+    def test_create_issue_no_warning_on_same_id(self, tmp_path, recwarn):
+        create_issue(tmp_path, {"id": "foo-bar", "status": "open"}, body="first")
+        create_issue(tmp_path, {"id": "foo-bar", "status": "open"}, body="second")
+
+        assert len(recwarn) == 0
+
+    def test_create_issue_no_warning_on_new_file(self, tmp_path, recwarn):
+        create_issue(tmp_path, {"id": "new-issue", "status": "open"})
+
+        assert len(recwarn) == 0
+
+    def test_create_issue_path_escape_raises_value_error(self, tmp_path, monkeypatch):
+        import cronpypeline.plugins.issue_store as issue_store_mod
+
+        def fake_sub(pattern, repl, string):
+            return "../evil"
+
+        monkeypatch.setattr(issue_store_mod.re, "sub", fake_sub)
+
+        with pytest.raises(ValueError, match="escapes issues directory"):
+            create_issue(tmp_path, {"id": "anything", "status": "open"})
+
+
+class TestIssueFilename:
+    """Tests for issue_filename helper."""
+
+    def test_normal_id_unchanged(self):
+        assert issue_filename("issue-1") == "issue-1"
+
+    def test_normal_id_with_dots_and_underscores(self):
+        assert issue_filename("v1.2.3_rc") == "v1.2.3_rc"
+
+    def test_special_chars_replaced_with_hyphen(self):
+        assert issue_filename("my issue!") == "my-issue"
+
+    def test_slashes_replaced_with_hyphen(self):
+        assert issue_filename("foo/bar") == "foo-bar"
+
+    def test_path_traversal_sanitized(self):
+        assert issue_filename("../../evil") == "..-..-evil"
+
+    def test_absolute_path_sanitized(self):
+        assert issue_filename("/etc/passwd") == "etc-passwd"
+
+    def test_special_only_returns_issue(self):
+        assert issue_filename("!!!") == "issue"
+
+    def test_slashes_only_returns_issue(self):
+        assert issue_filename("///") == "issue"
+
+    def test_empty_string_returns_issue(self):
+        assert issue_filename("") == "issue"
+
+    def test_integer_id(self):
+        assert issue_filename(42) == "42"
+
+    def test_mixed_chars_and_slashes(self):
+        assert issue_filename("foo/bar baz") == "foo-bar-baz"
 
 
 class TestFinalizeIssueOutcome:

@@ -21,6 +21,7 @@ from urllib.request import Request, urlopen
 from cronpypeline.actions import ActionResult, ActionSpec, TickContext
 from cronpypeline.plugins.issue_store import (
     create_issue,
+    issue_filename,
     load_issues,
     parse_frontmatter,
     set_issue_status,
@@ -1489,7 +1490,7 @@ def _find_issue_by_id(target_dir: Path, issue_id: str) -> Path | None:
     :param issue_id: Issue ID to find.
     :returns: Path to the issue file, or None.
     """
-    path = target_dir / SWE_SUBDIR / "issues" / f"{issue_id}.md"
+    path = target_dir / SWE_SUBDIR / "issues" / f"{issue_filename(issue_id)}.md"
     return path if path.exists() else None
 
 
@@ -1524,7 +1525,7 @@ def _write_pipeline_issue(
         for key, value in extra:
             issue_data[key] = value
     create_issue(target_dir, issue_data=issue_data, body=f"# {title}\n\n{body}")
-    return target_dir / SWE_SUBDIR / "issues" / f"{issue_id}.md"
+    return target_dir / SWE_SUBDIR / "issues" / f"{issue_filename(issue_id)}.md"
 
 
 def _close_and_comment_github_issue(
