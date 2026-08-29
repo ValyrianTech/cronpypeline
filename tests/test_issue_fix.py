@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -139,9 +140,17 @@ class TestIsTaskStale:
     def test_no_file(self, tmp_path):
         assert _is_task_stale(tmp_path) is True
 
-    def test_no_created_at(self, tmp_path):
+    def test_no_created_at_recent_mtime(self, tmp_path):
         d = tmp_path / "t"; d.mkdir()
         (d / TASK_FILE).write_text("{}")
+        assert _is_task_stale(d) is False
+
+    def test_no_created_at_old_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text("{}")
+        old = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).timestamp()
+        os.utime(task_file, (old, old))
         assert _is_task_stale(d) is True
 
     def test_old(self, tmp_path):
@@ -155,15 +164,45 @@ class TestIsTaskStale:
         (d / TASK_FILE).write_text(json.dumps({"created_at": datetime.now(timezone.utc).isoformat()}))
         assert _is_task_stale(d) is False
 
-    def test_corrupt_json(self, tmp_path):
+    def test_corrupt_json_recent_mtime(self, tmp_path):
         d = tmp_path / "t"; d.mkdir()
         (d / TASK_FILE).write_text("bad")
+        assert _is_task_stale(d) is False
+
+    def test_corrupt_json_old_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text("bad")
+        old = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).timestamp()
+        os.utime(task_file, (old, old))
         assert _is_task_stale(d) is True
 
-    def test_bad_date(self, tmp_path):
+    def test_bad_date_recent_mtime(self, tmp_path):
         d = tmp_path / "t"; d.mkdir()
         (d / TASK_FILE).write_text(json.dumps({"created_at": "bad"}))
+        assert _is_task_stale(d) is False
+
+    def test_bad_date_old_mtime(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text(json.dumps({"created_at": "bad"}))
+        old = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).timestamp()
+        os.utime(task_file, (old, old))
         assert _is_task_stale(d) is True
+
+    def test_stat_oserror(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        task_file = d / TASK_FILE
+        task_file.write_text("{}")
+        real_stat = Path.stat
+        calls = {"n": 0}
+        def fake_stat(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise OSError("x")
+            return real_stat(task_file)
+        with patch("pathlib.Path.stat", side_effect=fake_stat):
+            assert _is_task_stale(d) is True
 
 
 class TestIterTaskDirs:
