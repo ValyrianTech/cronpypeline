@@ -303,6 +303,52 @@ class TestCreateIssue:
         issue_file = tmp_path / ".SWE" / "issues" / "42.md"
         assert issue_file.exists()
 
+    def test_create_issue_sanitizes_path_traversal(self, tmp_path):
+        create_issue(tmp_path, {"id": "../../evil", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "..-..-evil.md").exists()
+        assert not (tmp_path / "evil.md").exists()
+        assert not (tmp_path.parent / "evil.md").exists()
+
+    def test_create_issue_special_chars_only_falls_back_to_issue(self, tmp_path):
+        create_issue(tmp_path, {"id": "!!!", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "issue.md").exists()
+
+    def test_create_issue_slashes_only_falls_back_to_issue(self, tmp_path):
+        create_issue(tmp_path, {"id": "///", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "issue.md").exists()
+
+    def test_create_issue_normal_id_still_works(self, tmp_path):
+        create_issue(tmp_path, {"id": "issue-1", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "issue-1.md").exists()
+
+    def test_create_issue_sanitizes_absolute_path(self, tmp_path):
+        create_issue(tmp_path, {"id": "/etc/passwd", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "etc-passwd.md").exists()
+        assert not (tmp_path.parent / "etc" / "passwd.md").exists()
+
+    def test_create_issue_sanitizes_mixed_chars_and_slashes(self, tmp_path):
+        create_issue(tmp_path, {"id": "foo/bar", "status": "open"})
+        issues_dir = tmp_path / ".SWE" / "issues"
+        assert (issues_dir / "foo-bar.md").exists()
+
+    def test_create_issue_path_escape_raises_value_error(self, tmp_path, monkeypatch):
+        import pytest
+
+        import cronpypeline.plugins.issue_store as issue_store_mod
+
+        def fake_sub(pattern, repl, string):
+            return "../evil"
+
+        monkeypatch.setattr(issue_store_mod.re, "sub", fake_sub)
+
+        with pytest.raises(ValueError, match="escapes issues directory"):
+            create_issue(tmp_path, {"id": "anything", "status": "open"})
+
 
 class TestFinalizeIssueOutcome:
     """Tests for finalize_issue_outcome."""
