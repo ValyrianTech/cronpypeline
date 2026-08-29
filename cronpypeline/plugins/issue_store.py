@@ -22,7 +22,7 @@ def _parse_value(raw: str) -> Any:
     """Parse a single YAML-like scalar value.
 
     :param raw: Raw string value to parse.
-    :returns: Parsed value (int, float, list, or string).
+    :returns: Parsed value (bool, null, int, float, list, or string).
     """
     raw = raw.strip()
     if raw.startswith("[") and raw.endswith("]"):
@@ -30,6 +30,12 @@ def _parse_value(raw: str) -> Any:
         if not inner:
             return []
         return [_parse_value(v.strip()) for v in inner.split(",")]
+    if raw.lower() in ("true", "yes"):
+        return True
+    if raw.lower() in ("false", "no"):
+        return False
+    if raw.lower() in ("null", "none", "~"):
+        return None
     try:
         return int(raw)
     except ValueError:
