@@ -475,9 +475,9 @@ def _cleanup_stale_task(repo_dir: Path, task_dir: Path,
             _git(repo_dir, "checkout", "-b", INTEGRATION_BRANCH, check=False)
 
         _git(repo_dir, "checkout", "--force", INTEGRATION_BRANCH, check=False)
-        _git(repo_dir, "clean", "-fd", check=False)
+        _git(repo_dir, "reset", "--hard", "HEAD", check=False)
         if verbose:
-            print(f"  [git] force-checked out {INTEGRATION_BRANCH}, discarded dirty tree")
+            print(f"  [git] force-checked out {INTEGRATION_BRANCH}, reset tracked files")
 
         branch_list = _git(repo_dir, "branch", "--list", branch, check=False).stdout.strip()
         if branch_list:

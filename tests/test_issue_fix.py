@@ -675,6 +675,16 @@ class TestCleanupStaleTask:
         branches = subprocess.run(["git", "-C", str(target), "branch", "--list"], capture_output=True, text=True, check=False).stdout
         assert "swe-pipeline/task_task1" not in branches
 
+    def test_preserves_untracked_files(self, tmp_path):
+        target, task_dir = self._setup(tmp_path)
+        venv_pkg = target / ".venv" / "lib" / "site-packages" / "pkg"
+        venv_pkg.mkdir(parents=True)
+        (venv_pkg / "__init__.py").write_text("x")
+        (target / "generated_artifact.txt").write_text("artifact")
+        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+        assert (venv_pkg / "__init__.py").exists()
+        assert (target / "generated_artifact.txt").exists()
+
     def test_with_source_issue(self, tmp_path):
         target = _make_target_dir(tmp_path)
         _write_issue(target / ".SWE" / "issues", "iss-1", status="open")
@@ -1128,6 +1138,8 @@ class TestRunIssueFixStateMachine:
         _write_issue(t / ".SWE" / "issues", "1", status="open", body="F", type="bug")
         _init_git(t)
         (t / ".gitignore").write_text(".SWE/\n")
+        subprocess.run(["git", "-C", str(t), "add", ".gitignore"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(t), "commit", "-m", "add gitignore"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(t), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
         td = tmp_path / "tasks" / "d" / "20250101_repo_t1"
         td.mkdir(parents=True)
