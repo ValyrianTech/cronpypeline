@@ -89,6 +89,13 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
             else:
                 close = value.find(quote, 1)
             if close != -1:
+                trailing = value[close + 1:]
+                if trailing.strip():
+                    warnings.warn(
+                        f"Content after closing quote in frontmatter value for key {key!r} is ignored: {trailing!r}",
+                        UserWarning,
+                        stacklevel=2,
+                    )
                 value = value[:close + 1]
         fm[key] = _parse_value(value)
 
