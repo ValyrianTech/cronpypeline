@@ -277,6 +277,8 @@ class ActionHandlerConfig:
         :param data: Dictionary with ``type`` and optional ``params``.
         :returns: An :class:`ActionHandlerConfig` instance.
         """
+        if "type" not in data:
+            raise ValueError("action_handler config is missing required 'type' field")
         params = data.get("params")
         if params is None:
             params = {k: v for k, v in data.items() if k != "type"}

@@ -387,6 +387,11 @@ class TestActionHandlerConfig:
         assert c.type == "conversation_queue"
         assert c.params == {"queue_dir": "/tmp/queue"}
 
+    def test_missing_type_raises_value_error(self):
+        with pytest.raises(ValueError) as excinfo:
+            ActionHandlerConfig.from_dict({"params": {"queue_dir": "/tmp/queue"}})
+        assert str(excinfo.value) == "action_handler config is missing required 'type' field"
+
 
 class TestTargetSpec:
     """Tests for TargetSpec parsing."""
