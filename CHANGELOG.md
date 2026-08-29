@@ -7,6 +7,7 @@
 
 ### Fixed
 - The issue-fix plugin's `_is_task_stale` now falls back to the task file's modification time (mtime) when the task's `created_at` field is missing or unparseable (corrupt JSON, invalid date), instead of treating the task as immediately stale. This prevents valid in-progress tasks from being prematurely cleaned up just because they lack a `created_at` timestamp.
+- The issue-fix plugin's stale-task cleanup now uses `git reset --hard HEAD` instead of `git clean -fd`, so untracked files (e.g. `.venv`, generated artifacts) are preserved when a stale task's git state is reset.
 - Chained stage failure now reported in TickResult with ACTION_FAILED status and the failed stage ID.
 - Chained stage on_fail actions are now executed when a chained stage fails (previously silently ignored).
 - Chained stage failure message no longer has a trailing colon when the action produces no output.
