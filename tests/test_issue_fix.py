@@ -1129,6 +1129,57 @@ class TestRunIssueFixStateMachine:
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
             assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), verbose=True) is True
 
+    def test_review_agent_forgot_marker_queue_empty(self, tmp_path, monkeypatch):
+        """Review agent finished (queue empty) but forgot marker — should gate."""
+        t = _make_target_dir(tmp_path)
+        _write_issue(t / ".SWE" / "issues", "rev-1", status="open", source="review", type="review")
+        _init_git(t)
+        subprocess.run(["git", "-C", str(t), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
+        td = tmp_path / "tasks" / "d" / "20250101_repo_rev1"
+        td.mkdir(parents=True)
+        old = (datetime.now(timezone.utc) - timedelta(minutes=5))
+        (td / TASK_FILE).write_text(json.dumps({
+            "task_id": "rev1", "issue_type": "review", "source_issue_id": "rev-1",
+            "branch": INTEGRATION_BRANCH, "created_at": old.isoformat(),
+            "repo_name": "repo",
+        }))
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "tasks")
+        # Empty queue dir
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        ctx = _make_tick_context(t)
+        ctx.pipeline = MagicMock()
+        ctx.pipeline.config.action_handler.params = {"queue_dir": str(queue_dir)}
+        assert run_issue_fix_state_machine(t, "repo", {}, ctx, verbose=True) is True
+        assert (td / GATE_RESULT_FILE).exists()
+
+    def test_review_agent_forgot_marker_queue_busy(self, tmp_path, monkeypatch):
+        """Review agent still running (queue non-empty) — should wait, not gate."""
+        t = _make_target_dir(tmp_path)
+        _write_issue(t / ".SWE" / "issues", "rev-1", status="open", source="review", type="review")
+        _init_git(t)
+        subprocess.run(["git", "-C", str(t), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
+        td = tmp_path / "tasks" / "d" / "20250101_repo_rev1"
+        td.mkdir(parents=True)
+        old = (datetime.now(timezone.utc) - timedelta(minutes=5))
+        (td / TASK_FILE).write_text(json.dumps({
+            "task_id": "rev1", "issue_type": "review", "source_issue_id": "rev-1",
+            "branch": INTEGRATION_BRANCH, "created_at": old.isoformat(),
+            "repo_name": "repo",
+        }))
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path / "tasks")
+        # Non-empty queue dir
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        (queue_dir / "entry.json").write_text("{}")
+        ctx = _make_tick_context(t)
+        ctx.pipeline = MagicMock()
+        ctx.pipeline.config.action_handler.params = {"queue_dir": str(queue_dir)}
+        assert run_issue_fix_state_machine(t, "repo", {}, ctx, verbose=True) is True
+        assert not (td / GATE_RESULT_FILE).exists()
+
 
 # ─── Remaining edge cases for 100% coverage ──────────────────────────────────
 

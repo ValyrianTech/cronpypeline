@@ -1122,6 +1122,26 @@ def run_gate(repo_dir: Path, task_dir: Path,
     return passed or resolved_out_of_tree
 
 
+def _is_queue_empty(context: TickContext) -> bool:
+    """Check if the conversation queue directory is empty.
+
+    Resolves ``queue_dir`` from the pipeline's ``action_handler`` config.
+
+    :param context: Tick context with pipeline reference.
+    :returns: True if the queue directory is empty or missing.
+    """
+    pipeline = getattr(context, "pipeline", None)
+    if pipeline is None or pipeline.config.action_handler is None:
+        return False
+    queue_dir = pipeline.config.action_handler.params.get("queue_dir", "")
+    if not queue_dir:
+        return False
+    queue_path = Path(queue_dir)
+    if not queue_path.is_dir():
+        return True
+    return not any(queue_path.iterdir())
+
+
 # ─── Main entry point (called by run_c_issue_fix in swe_plugin.py) ───────────
 
 
@@ -1155,11 +1175,19 @@ def run_issue_fix_state_machine(repo_dir: Path, repo_name: str,
                                   dry_run=dry_run, verbose=verbose)
             return True
 
-        # Check if agent finished but forgot marker (queue empty + has commits)
+        # Check if agent finished but forgot marker
         task = _read_task(active)
         task_age = (datetime.now(timezone.utc) -
                     datetime.fromisoformat(task.get("created_at", ""))).total_seconds() / 60
-        if task_age >= 2 and task.get("issue_type") != "review":
+        if task_age >= 2 and task.get("issue_type") == "review":
+            # Review agents don't commit — check if the queue is empty instead
+            if _is_queue_empty(context):
+                if not dry_run:
+                    if verbose:
+                        print(f"  {repo_name}: review agent queue empty — gating")
+                    return run_gate(repo_dir, active, dry_run=False, verbose=verbose)
+                return True
+        elif task_age >= 2 and task.get("issue_type") != "review":
             branch = task.get("branch", "")
             has_commits = False
             if branch:
