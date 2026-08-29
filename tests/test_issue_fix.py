@@ -1128,6 +1128,8 @@ class TestRunIssueFixStateMachine:
         _write_issue(t / ".SWE" / "issues", "1", status="open", body="F", type="bug")
         _init_git(t)
         (t / ".gitignore").write_text(".SWE/\n")
+        subprocess.run(["git", "-C", str(t), "add", ".gitignore"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(t), "commit", "-m", "add gitignore"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(t), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
         td = tmp_path / "tasks" / "d" / "20250101_repo_t1"
         td.mkdir(parents=True)
