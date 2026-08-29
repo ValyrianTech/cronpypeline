@@ -389,11 +389,19 @@ def _is_task_stale(task_dir: Path) -> bool:
     try:
         task = json.loads(task_file.read_text(encoding="utf-8"))
         created_str = task.get("created_at", "")
-        if not created_str:
-            return True
-        created = datetime.fromisoformat(created_str)
+        if created_str:
+            created = datetime.fromisoformat(created_str)
+        else:
+            # Fall back to file mtime when created_at is missing.
+            mtime = task_file.stat().st_mtime
+            created = datetime.fromtimestamp(mtime, tz=timezone.utc)
     except (OSError, json.JSONDecodeError, ValueError):
-        return True
+        # Fall back to file mtime on any parse error.
+        try:
+            mtime = task_file.stat().st_mtime
+            created = datetime.fromtimestamp(mtime, tz=timezone.utc)
+        except OSError:
+            return True
     age = (datetime.now(timezone.utc) - created).total_seconds() / 60
     return age > TASK_TIMEOUT_MINUTES
 
