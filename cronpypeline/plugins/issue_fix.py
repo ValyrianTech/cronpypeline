@@ -391,7 +391,10 @@ def _task_created_at(task_dir: Path, task: dict[str, Any]) -> datetime:
     created_str = task.get("created_at", "")
     if created_str:
         try:
-            return datetime.fromisoformat(created_str)
+            created = datetime.fromisoformat(created_str)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            return created
         except (ValueError, TypeError):
             pass
     task_file = task_dir / TASK_FILE

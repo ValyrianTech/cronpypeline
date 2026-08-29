@@ -144,6 +144,12 @@ class TestTaskCreatedAt:
         created = datetime(2025, 1, 1, tzinfo=timezone.utc)
         assert _task_created_at(d, {"created_at": created.isoformat()}) == created
 
+    def test_naive_created_at_treated_as_utc(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        (d / TASK_FILE).write_text("{}")
+        assert _task_created_at(d, {"created_at": "2025-01-01T00:00:00"}) == \
+            datetime(2025, 1, 1, tzinfo=timezone.utc)
+
     def test_missing_created_at_recent_mtime(self, tmp_path):
         d = tmp_path / "t"; d.mkdir()
         (d / TASK_FILE).write_text("{}")
