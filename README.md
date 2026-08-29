@@ -731,7 +731,7 @@ Git is invoked via `shutil.which("git")` (resolved to an absolute path, falling 
 
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
 
-Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency). The frontmatter parser handles booleans (true/false/yes/no) and null values (null/none/~) in addition to integers, floats, lists, and strings.
+Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency). The frontmatter parser handles booleans (true/false/yes/no) and null values (null/none/~) in addition to integers, floats, lists, and strings; quoted values containing colons (e.g. `title: "Fix: Login bug"`) are parsed correctly.
 
 `create_issue()` sanitizes the issue ID before using it as a filename: any character that is not alphanumeric, dot, underscore, or hyphen is replaced with `-`, and leading/trailing dashes are stripped. If the sanitized ID is empty (e.g. an ID consisting only of special characters or slashes), it falls back to `issue`. The resolved path is validated with `.resolve()`/`is_relative_to()` — if the sanitized filename would still escape the issues directory, a `ValueError` is raised. This prevents path traversal attacks via malicious issue IDs (e.g. `../../evil` or absolute paths like `/etc/passwd`).
 

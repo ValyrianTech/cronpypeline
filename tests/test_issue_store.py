@@ -121,6 +121,66 @@ class TestParseFrontmatter:
         parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
         assert parsed == fm
 
+    def test_double_quoted_value_with_colon(self):
+        fm, _ = parse_frontmatter('---\ntitle: "Fix: Login bug"\n---\n')
+        assert fm["title"] == "Fix: Login bug"
+
+    def test_single_quoted_value_with_colon(self):
+        fm, _ = parse_frontmatter("---\ntitle: 'Refactor: Module X'\n---\n")
+        assert fm["title"] == "Refactor: Module X"
+
+    def test_single_quoted_value_with_apostrophe(self):
+        fm, _ = parse_frontmatter("---\ntitle: 'It's a test'\n---\n")
+        assert fm["title"] == "It's a test"
+
+    def test_unquoted_url_value(self):
+        fm, _ = parse_frontmatter("---\nurl: https://example.com/path\n---\n")
+        assert fm["url"] == "https://example.com/path"
+
+    def test_multiple_colons_in_quotes(self):
+        fm, _ = parse_frontmatter('---\ntitle: "Bug: Fix: Login"\n---\n')
+        assert fm["title"] == "Bug: Fix: Login"
+
+    def test_regular_value_with_colon_fix(self):
+        fm, _ = parse_frontmatter("---\nid: 42\n---\n")
+        assert fm["id"] == 42
+
+    def test_roundtrip_colon_value(self):
+        fm = {"title": "Fix: Login bug"}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert parsed["title"] == "Fix: Login bug"
+
+    def test_unterminated_single_quote_value(self):
+        fm, _ = parse_frontmatter("---\ntitle: 'unterminated\n---\n")
+        assert fm["title"] == "'unterminated"
+
+    def test_warns_on_content_after_closing_quote(self):
+        with pytest.warns(UserWarning, match="Content after closing quote"):
+            fm, _ = parse_frontmatter('---\ntitle: "Fix: Login bug" extra\n---\n')
+        assert fm["title"] == "Fix: Login bug"
+
+    def test_warning_includes_key_and_discarded_content(self):
+        with pytest.warns(UserWarning, match=r"title.*extra"):
+            fm, _ = parse_frontmatter('---\ntitle: "Fix: Login bug" extra\n---\n')
+        assert fm["title"] == "Fix: Login bug"
+
+    def test_no_warning_without_content_after_quote(self, recwarn):
+        fm, _ = parse_frontmatter('---\ntitle: "Fix: Login bug"\n---\n')
+        assert fm["title"] == "Fix: Login bug"
+        assert len(recwarn) == 0
+
+    def test_no_warning_with_trailing_whitespace_after_quote(self, recwarn):
+        fm, _ = parse_frontmatter('---\ntitle: "Fix: Login bug"   \n---\n')
+        assert fm["title"] == "Fix: Login bug"
+        assert len(recwarn) == 0
+
+    def test_single_quote_warns_on_content_after_quote(self):
+        with pytest.warns(UserWarning, match="Content after closing quote"):
+            fm, _ = parse_frontmatter("---\ntitle: 'Refactor: Module X' trailing\n---\n")
+        assert fm["title"] == "Refactor: Module X"
+
 
 class TestSerializeFrontmatter:
     """Tests for YAML frontmatter serialization."""
@@ -661,6 +721,14 @@ class TestParseValueQuoting:
     def test_parse_quoted_in_list(self):
         from cronpypeline.plugins.issue_store import _parse_value
         assert _parse_value("['true', 1]") == ["true", 1]
+
+    def test_parse_unterminated_single_quote(self):
+        from cronpypeline.plugins.issue_store import _parse_value
+        assert _parse_value("'unterminated") == "'unterminated"
+
+    def test_parse_unterminated_double_quote(self):
+        from cronpypeline.plugins.issue_store import _parse_value
+        assert _parse_value('"unterminated') == '"unterminated'
 
 
 class TestRoundTripAmbiguousStrings:
