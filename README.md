@@ -351,6 +351,8 @@ The filesystem is the source of truth — no database, no in-memory state:
 | `and` | All conditions must be true | `conditions` (array of triggers) |
 | `or` | Any condition must be true | `conditions` (array of triggers) |
 
+Trigger `path` values for the file-based triggers (`file_missing`, `file_exists`, `file_older_than`, `marker_state`) must be relative and cannot contain `..` segments or absolute paths; `_validate_trigger_path` rejects path traversal (`..` segments), absolute paths, and any path that resolves outside the workspace/base directory (e.g. via symlinks), raising a `ValueError` for invalid paths instead of silently resolving them.
+
 **Operators for `marker_state`:** `eq`, `ne`, `lt`, `lte`, `gt`, `gte`
 
 **Example:**
