@@ -129,6 +129,10 @@ class TestParseFrontmatter:
         fm, _ = parse_frontmatter("---\ntitle: 'Refactor: Module X'\n---\n")
         assert fm["title"] == "Refactor: Module X"
 
+    def test_single_quoted_value_with_apostrophe(self):
+        fm, _ = parse_frontmatter("---\ntitle: 'It's a test'\n---\n")
+        assert fm["title"] == "It's a test"
+
     def test_unquoted_url_value(self):
         fm, _ = parse_frontmatter("---\nurl: https://example.com/path\n---\n")
         assert fm["url"] == "https://example.com/path"
@@ -147,6 +151,10 @@ class TestParseFrontmatter:
         parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
         assert parsed == fm
         assert parsed["title"] == "Fix: Login bug"
+
+    def test_unterminated_single_quote_value(self):
+        fm, _ = parse_frontmatter("---\ntitle: 'unterminated\n---\n")
+        assert fm["title"] == "'unterminated"
 
 
 class TestSerializeFrontmatter:
