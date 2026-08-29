@@ -32,6 +32,26 @@ def resolve_custom_callable(callable_path: str) -> Callable[..., Any]:
     return getattr(module, func_name)
 
 
+def _validate_trigger_path(base_dir: Path, path: str) -> Path:
+    """Validate and resolve a trigger path against a base directory.
+
+    Rejects paths containing ``..`` segments, absolute paths, and paths that
+    resolve outside of the base directory (e.g. via symlinks).
+
+    :param base_dir: Base directory the path must stay within.
+    :param path: Relative path from the trigger condition.
+    :returns: The resolved absolute path within the base directory.
+    :raises ValueError: If the path contains ``..``, is absolute, or escapes the base directory.
+    """
+    p = Path(path)
+    if ".." in p.parts or p.is_absolute():
+        raise ValueError(f"Trigger path contains '..' or is absolute: {path}")
+    resolved = (base_dir / p).resolve()
+    if not resolved.is_relative_to(base_dir.resolve()):
+        raise ValueError(f"Trigger path escapes base directory: {path}")
+    return resolved
+
+
 def _eval_file_missing(trigger: TriggerCondition, base_dir: Path) -> bool:
     """Evaluate whether a file is missing.
 
@@ -39,7 +59,7 @@ def _eval_file_missing(trigger: TriggerCondition, base_dir: Path) -> bool:
     :param base_dir: Base directory to check in.
     :returns: True if the file does not exist, False otherwise.
     """
-    path = base_dir / (trigger.path or "")
+    path = _validate_trigger_path(base_dir, trigger.path or "")
     return not path.exists()
 
 
@@ -50,7 +70,7 @@ def _eval_file_exists(trigger: TriggerCondition, base_dir: Path) -> bool:
     :param base_dir: Base directory to check in.
     :returns: True if the file exists, False otherwise.
     """
-    path = base_dir / (trigger.path or "")
+    path = _validate_trigger_path(base_dir, trigger.path or "")
     return path.exists()
 
 
@@ -61,7 +81,7 @@ def _eval_file_older_than(trigger: TriggerCondition, base_dir: Path) -> bool:
     :param base_dir: Base directory to check in.
     :returns: True if the file age exceeds the threshold, False otherwise.
     """
-    path = base_dir / (trigger.path or "")
+    path = _validate_trigger_path(base_dir, trigger.path or "")
     if not path.exists():
         return False
     age_seconds = time.time() - path.stat().st_mtime
@@ -73,7 +93,7 @@ def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
 
     :raises ValueError: If the operator is not one of eq, ne, lt, lte, gt, gte.
     """
-    path = base_dir / (trigger.path or "")
+    path = _validate_trigger_path(base_dir, trigger.path or "")
     if not path.exists():
         return False
     try:

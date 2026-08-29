@@ -419,3 +419,51 @@ class TestEvaluateTriggerUnknownType:
         trigger.type = "unknown_type"
         with pytest.raises(ValueError, match="No evaluator"):
             evaluate_trigger(trigger, tmp_path)
+
+
+_PATH_TRIGGER_TYPES = [
+    (TriggerType.FILE_MISSING, {}),
+    (TriggerType.FILE_EXISTS, {}),
+    (TriggerType.FILE_OLDER_THAN, {"minutes": 30}),
+    (TriggerType.MARKER_STATE, {"field": "status", "op": "eq", "value": "open"}),
+]
+
+
+class TestTriggerPathValidation:
+    """Path traversal validation for file-based trigger conditions."""
+
+    @pytest.mark.parametrize("trigger_type, kwargs", _PATH_TRIGGER_TYPES)
+    def test_dotdot_path_raises_value_error(self, tmp_path, trigger_type, kwargs):
+        """A path containing '..' should raise ValueError for every evaluator."""
+        trigger = TriggerCondition(type=trigger_type, path="../outside.txt", **kwargs)
+        with pytest.raises(ValueError, match="contains '\\.\\.' or is absolute"):
+            evaluate_trigger(trigger, tmp_path)
+
+    @pytest.mark.parametrize("trigger_type, kwargs", _PATH_TRIGGER_TYPES)
+    def test_absolute_path_raises_value_error(self, tmp_path, trigger_type, kwargs):
+        """An absolute path should raise ValueError for every evaluator."""
+        trigger = TriggerCondition(type=trigger_type, path="/etc/passwd", **kwargs)
+        with pytest.raises(ValueError, match="contains '\\.\\.' or is absolute"):
+            evaluate_trigger(trigger, tmp_path)
+
+    @pytest.mark.parametrize("trigger_type, kwargs", _PATH_TRIGGER_TYPES)
+    def test_symlink_escape_raises_value_error(
+        self, tmp_path, tmp_path_factory, trigger_type, kwargs
+    ):
+        """A path escaping the base dir via symlink should raise ValueError."""
+        outside = tmp_path_factory.mktemp("outside")
+        (outside / "secret.txt").touch()
+        link = tmp_path / "link"
+        link.symlink_to(outside, target_is_directory=True)
+        trigger = TriggerCondition(type=trigger_type, path="link/secret.txt", **kwargs)
+        with pytest.raises(ValueError, match="escapes base directory"):
+            evaluate_trigger(trigger, tmp_path)
+
+    @pytest.mark.parametrize("trigger_type, kwargs", _PATH_TRIGGER_TYPES)
+    def test_valid_relative_path_resolves(self, tmp_path, trigger_type, kwargs):
+        """A normal relative path should resolve without error."""
+        (tmp_path / "ok.txt").touch()
+        trigger = TriggerCondition(type=trigger_type, path="ok.txt", **kwargs)
+        # Valid paths must not raise; the boolean result is asserted by the
+        # individual evaluator tests above.
+        assert evaluate_trigger(trigger, tmp_path) in (True, False)
