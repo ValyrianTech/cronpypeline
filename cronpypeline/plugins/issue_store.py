@@ -330,6 +330,18 @@ def set_issue_status(target_dir: Path | str | None = None, issue_id: Any = None,
     return False
 
 
+def issue_filename(issue_id: Any) -> str:
+    """Return a safe filename (without ``.md`` extension) for an issue id.
+
+    :param issue_id: Issue identifier to sanitize.
+    :returns: Safe filename string, or ``"issue"`` if sanitization yields empty.
+    """
+    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", str(issue_id)).strip("-")
+    if not safe_id:
+        safe_id = "issue"
+    return safe_id
+
+
 def create_issue(target_dir: Path | str | None = None, issue_data: dict[str, Any] | None = None, body: str = "") -> Issue:
     """Create a new issue .md file with frontmatter.
 
@@ -342,9 +354,7 @@ def create_issue(target_dir: Path | str | None = None, issue_data: dict[str, Any
         issue_data = {}
     issue = Issue.from_dict(issue_data)
     issue.body = body
-    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", str(issue.id)).strip("-")
-    if not safe_id:
-        safe_id = "issue"
+    safe_id = issue_filename(issue.id)
     issues_dir = _issues_dir(target_dir)
     filename = f"{safe_id}.md"
     path = (issues_dir / filename).resolve()
