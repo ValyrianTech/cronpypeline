@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from cronpypeline.plugins.issue_store import (
     Issue,
     create_issue,
@@ -337,9 +339,28 @@ class TestCreateIssue:
         issues_dir = tmp_path / ".SWE" / "issues"
         assert (issues_dir / "foo-bar.md").exists()
 
-    def test_create_issue_path_escape_raises_value_error(self, tmp_path, monkeypatch):
-        import pytest
+    def test_create_issue_warns_on_collision(self, tmp_path):
+        create_issue(tmp_path, {"id": "foo/bar", "status": "open"}, body="first")
+        with pytest.warns(UserWarning):
+            create_issue(tmp_path, {"id": "foo-bar", "status": "open"}, body="second")
 
+        loaded = get_issue(tmp_path, "foo-bar")
+        assert loaded is not None
+        assert loaded.id == "foo-bar"
+        assert loaded.body == "second"
+
+    def test_create_issue_no_warning_on_same_id(self, tmp_path, recwarn):
+        create_issue(tmp_path, {"id": "foo-bar", "status": "open"}, body="first")
+        create_issue(tmp_path, {"id": "foo-bar", "status": "open"}, body="second")
+
+        assert len(recwarn) == 0
+
+    def test_create_issue_no_warning_on_new_file(self, tmp_path, recwarn):
+        create_issue(tmp_path, {"id": "new-issue", "status": "open"})
+
+        assert len(recwarn) == 0
+
+    def test_create_issue_path_escape_raises_value_error(self, tmp_path, monkeypatch):
         import cronpypeline.plugins.issue_store as issue_store_mod
 
         def fake_sub(pattern, repl, string):

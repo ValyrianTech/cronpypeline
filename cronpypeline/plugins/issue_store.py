@@ -10,6 +10,7 @@ This module uses a simple built-in frontmatter parser (no external YAML dependen
 import argparse
 import re
 import sys
+import warnings
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
@@ -360,6 +361,16 @@ def create_issue(target_dir: Path | str | None = None, issue_data: dict[str, Any
     path = (issues_dir / filename).resolve()
     if not path.is_relative_to(issues_dir.resolve()):
         raise ValueError(f"Issue path escapes issues directory: {filename}")
+    if path.exists():
+        existing = _read_issue_file(path)
+        if existing.id != issue.id:
+            warnings.warn(
+                f"Issue id {issue.id!r} sanitizes to filename {filename!r}, which is "
+                f"already used by issue id {existing.id!r}; the existing file will be "
+                "overwritten.",
+                UserWarning,
+                stacklevel=2,
+            )
     _write_issue_file(path, issue)
     return issue
 
