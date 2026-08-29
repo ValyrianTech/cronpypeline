@@ -61,6 +61,63 @@ class TestParseFrontmatter:
         assert fm["id"] == 1
         assert body == ""
 
+    def test_parse_boolean_true(self):
+        text = "---\nenabled: true\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["enabled"] is True
+
+    def test_parse_boolean_false(self):
+        text = "---\nenabled: false\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["enabled"] is False
+
+    def test_parse_boolean_yes(self):
+        text = "---\nenabled: yes\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["enabled"] is True
+
+    def test_parse_boolean_no(self):
+        text = "---\nenabled: no\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["enabled"] is False
+
+    def test_parse_null(self):
+        text = "---\nvalue: null\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["value"] is None
+
+    def test_parse_none(self):
+        text = "---\nvalue: none\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["value"] is None
+
+    def test_parse_tilde(self):
+        text = "---\nvalue: ~\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["value"] is None
+
+    def test_parse_boolean_in_list(self):
+        text = "---\nflags: [true, false]\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["flags"] == [True, False]
+
+    def test_parse_null_in_list(self):
+        text = "---\nitems: [null, 1]\n---\n"
+        fm, _ = parse_frontmatter(text)
+        assert fm["items"] == [None, 1]
+
+    def test_roundtrip_boolean(self):
+        fm = {"enabled": True, "disabled": False}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+
+    def test_roundtrip_null(self):
+        fm = {"value": None}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+
 
 class TestSerializeFrontmatter:
     """Tests for YAML frontmatter serialization."""
