@@ -369,7 +369,6 @@ class TestCreateIssue:
     def test_create_issue_rejects_path_traversal(self, tmp_path):
         with pytest.raises(ValueError, match="Issue id contains '..'"):
             create_issue(tmp_path, {"id": "../../evil", "status": "open"})
-        issues_dir = tmp_path / ".SWE" / "issues"
         assert not (tmp_path / "evil.md").exists()
         assert not (tmp_path.parent / "evil.md").exists()
 
