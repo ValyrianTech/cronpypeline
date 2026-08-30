@@ -515,7 +515,7 @@ class Pipeline:
         # (e.g. agent finished and produced completion) should not trigger re-queue.
         for ss in target_state.stage_states.values():
             if ss.is_stale and ss.is_processing and not ss.is_complete:
-                return self._handle_stale(ss, target, target_dir, target_config, dry_run, verbose)
+                return self._handle_stale(ss, target, target_dir, target_config, target_state, active_stages, dry_run, verbose)
 
         # Find first actionable stage whose trigger condition is met
         trigger_context = {
@@ -830,6 +830,8 @@ class Pipeline:
         target: str,
         target_dir: Path,
         target_config: dict[str, Any],
+        target_state: TargetState,
+        active_stages: list[Stage],
         dry_run: bool,
         verbose: bool,
     ) -> TickResult:
@@ -839,6 +841,8 @@ class Pipeline:
         :param target: Target name.
         :param target_dir: Target directory path.
         :param target_config: Per-target configuration dict.
+        :param target_state: State of the target being processed.
+        :param active_stages: Mode-filtered list of active stages.
         :param dry_run: Whether this is a dry run.
         :param verbose: Whether verbose output is enabled.
         :returns: TickResult — either GAVE_UP, DRY_RUN, ACTION_EXECUTED, or
@@ -917,14 +921,85 @@ class Pipeline:
                 stderr=result.stderr,
             )
 
-        # Update processing marker with result data
-        if result.success and result.data and "processing" in stage.markers:
-            processing_spec = replace(stage.markers["processing"], content={
-                **stage.markers["processing"].content,
-                "retry_count": retry_count + 1,
-                **result.data,
-            })
-            create_marker(processing_spec, target_dir, context=marker_ctx)
+        # Update processing marker with result data, or delete it for sync actions
+        if result.success and "processing" in stage.markers:
+            is_async = (
+                stage.action.type == ActionType.QUEUE_AGENT
+                or (stage.action.type == ActionType.CUSTOM and result.data.get("async", False))
+            )
+            if is_async:
+                # Async custom actions are treated as a fresh start (retry_count reset to 0),
+                # matching the normal execution path.
+                new_retry_count = 0 if (
+                    stage.action.type == ActionType.CUSTOM
+                    and result.data.get("async", False)
+                ) else retry_count + 1
+                processing_spec = replace(stage.markers["processing"], content={
+                    **stage.markers["processing"].content,
+                    "retry_count": new_retry_count,
+                    **result.data,
+                })
+                create_marker(processing_spec, target_dir, context=marker_ctx)
+            else:
+                # Sync actions never have processing markers in the normal path.
+                # Delete the leftover processing marker after successful re-execution.
+                delete_marker(stage.markers["processing"], target_dir, context=marker_ctx)
+
+        # Create produced markers
+        for marker_spec in stage.action.produces:
+            create_marker(marker_spec, target_dir, context=marker_ctx)
+
+        # Create completion marker for sync actions (command, subprocess, custom)
+        # Skip if the marker is a symlink with no target — the action created it
+        # (e.g. run_diagnostic creates the symlink as part of its work).
+        if (
+            stage.action.type != ActionType.QUEUE_AGENT
+            and "completion" in stage.markers
+            and not result.data.get("async", False)
+            and not (
+                stage.markers["completion"].type == MarkerType.SYMLINK
+                and stage.markers["completion"].target is None
+                and marker_exists(stage.markers["completion"], target_dir, context=marker_ctx)
+            )
+        ):
+            create_marker(stage.markers["completion"], target_dir, context=marker_ctx)
+            # Clear rejection marker only when the work is actually completed
+            if "rejection" in stage.markers:
+                delete_marker(stage.markers["rejection"], target_dir, context=marker_ctx)
+
+        # Invalidate markers from other stages
+        for inv_spec in stage.invalidates:
+            delete_marker(inv_spec, target_dir, context=marker_ctx)
+
+        # Handle chaining
+        chained: list[str] = []
+        if (
+            stage.chain
+            and stage.action.type != ActionType.QUEUE_AGENT
+            and not result.data.get("async", False)
+        ):
+            chained_result = self._try_chain(target, target_dir, target_config, target_state, active_stages, dry_run, verbose, stage)
+            if chained_result:
+                final_stage_id, chained, failed_stage_id, failed_result = chained_result
+                if failed_stage_id is not None:
+                    detail = failed_result.stderr or failed_result.stdout if failed_result else None
+                    return TickResult(
+                        target=target,
+                        stage_id=failed_stage_id,
+                        status=TickResultStatus.ACTION_FAILED,
+                        message=f"Chained stage {failed_stage_id} failed: {detail}" if detail else f"Chained stage {failed_stage_id} failed",
+                        stdout=failed_result.stdout if failed_result else "",
+                        stderr=failed_result.stderr if failed_result else "",
+                        chained_stages=chained,
+                        failed_chained_stages=[failed_stage_id],
+                    )
+                return TickResult(
+                    target=target,
+                    stage_id=final_stage_id,
+                    status=TickResultStatus.ACTION_EXECUTED,
+                    message="Chained through stages",
+                    chained_stages=chained,
+                )
 
         return TickResult(
             target=target,
@@ -932,6 +1007,7 @@ class Pipeline:
             status=TickResultStatus.ACTION_EXECUTED,
             message=f"Re-queued stale stage (retry {retry_count + 1})",
             stdout=result.stdout,
+            chained_stages=chained,
         )
 
     def status(self, targets: list[str] | None = None) -> dict[str, Any]:
