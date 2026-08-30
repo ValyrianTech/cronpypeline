@@ -121,14 +121,40 @@ def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
         raise ValueError(f"Unknown operator: {op}")
 
 
+def _validate_queue_dir(base_dir: Path, queue_dir: str) -> Path:
+    """Validate and resolve a queue directory path against a base directory.
+
+    Rejects paths containing ``..`` segments. Absolute paths are resolved and
+    checked to ensure they stay within the base directory; relative paths are
+    resolved against the base directory and checked the same way (catching
+    escapes via symlinks).
+
+    :param base_dir: Base directory the queue directory must stay within.
+    :param queue_dir: Queue directory path from the trigger condition.
+    :returns: The resolved absolute queue directory path within the base directory.
+    :raises ValueError: If the path contains ``..`` or escapes the base directory.
+    """
+    p = Path(queue_dir)
+    if ".." in p.parts:
+        raise ValueError(f"Trigger path contains '..' or is absolute: {queue_dir}")
+    if p.is_absolute():
+        resolved = p.resolve()
+    else:
+        resolved = (base_dir / p).resolve()
+    if not resolved.is_relative_to(base_dir.resolve()):
+        raise ValueError(f"Trigger path escapes base directory: {queue_dir}")
+    return resolved
+
+
 def _eval_queue_empty(trigger: TriggerCondition, base_dir: Path) -> bool:
     """Evaluate whether a queue directory is empty.
 
     :param trigger: Trigger condition with ``queue_dir``.
-    :param base_dir: Base directory (unused).
+    :param base_dir: Base directory the queue directory must stay within.
     :returns: True if the queue directory is empty or doesn't exist.
+    :raises ValueError: If the queue directory path contains ``..`` or escapes the base directory.
     """
-    queue_dir = Path(trigger.queue_dir or "")
+    queue_dir = _validate_queue_dir(base_dir, trigger.queue_dir or "")
     if not queue_dir.exists():
         return True
     return not any(queue_dir.iterdir())
