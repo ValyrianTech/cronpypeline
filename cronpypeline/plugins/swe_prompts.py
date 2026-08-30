@@ -286,16 +286,6 @@ def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
     report_content = report_path.read_text(encoding="utf-8")
     report_name = report_path.name
 
-    # Write deduplication marker (queued_for_{stem}.marker)
-    markers_dir = context.target_dir / ".SWE" / "markers"
-    markers_dir.mkdir(parents=True, exist_ok=True)
-    dedup_marker = markers_dir / f"queued_for_{report_path.stem}.marker"
-    dedup_marker.write_text(
-        f"queued at {datetime.now(timezone.utc).isoformat()} "
-        f"against report {report_name}\n",
-        encoding="utf-8",
-    )
-
     # Build prompt with report content + commit/delete/completion instructions
     repo_name = context.target
     target_dir = context.target_dir
@@ -367,8 +357,35 @@ You are on branch `{PHASE_A_BRANCH}`. After making your changes:
         },
     )
     result = handler.execute(queue_action, context)
-    if result.success and not result.dry_run:
-        result.data = {**result.data, "async": True}
+    if not result.success:
+        return result
+
+    # Write deduplication marker only after successful queue. If the marker
+    # write fails (e.g. disk full, permission error), remove the queued entry
+    # so the report is not queued without a dedup marker (double-queue risk).
+    try:
+        markers_dir = context.target_dir / ".SWE" / "markers"
+        markers_dir.mkdir(parents=True, exist_ok=True)
+        dedup_marker = markers_dir / f"queued_for_{report_path.stem}.marker"
+        dedup_marker.write_text(
+            f"queued at {datetime.now(timezone.utc).isoformat()} "
+            f"against report {report_name}\n",
+            encoding="utf-8",
+        )
+    except OSError as e:
+        # Best-effort cleanup: remove the queued entry to avoid a double-queue.
+        queue_file = result.data.get("queue_file")
+        if queue_file:
+            try:
+                Path(queue_file).unlink(missing_ok=True)
+            except OSError:
+                pass
+        return ActionResult(
+            success=False,
+            stderr=f"Failed to write dedup marker after queueing: {e}",
+        )
+
+    result.data = {**result.data, "async": True}
     return result
 
 
@@ -420,7 +437,7 @@ def queue_coder_agent(action: ActionSpec, context: TickContext) -> ActionResult:
         },
     )
     result = handler.execute(queue_action, context)
-    if result.success and not result.dry_run:
+    if result.success:
         result.data = {**result.data, "async": True}
     return result
 
@@ -471,7 +488,7 @@ def queue_review_agent(action: ActionSpec, context: TickContext) -> ActionResult
         },
     )
     result = handler.execute(queue_action, context)
-    if result.success and not result.dry_run:
+    if result.success:
         result.data = {**result.data, "async": True}
     return result
 

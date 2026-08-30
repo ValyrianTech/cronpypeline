@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cronpypeline.actions import TickContext
+from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.issue_store import create_issue, get_issue
 from cronpypeline.plugins.swe_prompts import (
@@ -247,6 +247,172 @@ class TestQueueFixAgent:
         assert "pytest -q" in entry["prompt"]
         assert "ruff check ." in entry["prompt"]
 
+    def test_dedup_marker_written_on_success(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = queue_fix_agent(action, ctx)
+        assert result.success is True
+
+        marker = ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
+        assert marker.exists()
+        content = marker.read_text()
+        assert "report.md" in content
+
+    def test_dedup_marker_not_written_on_queue_failure(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=False, stderr="queue failed")
+
+        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler):
+            result = queue_fix_agent(action, ctx)
+
+        assert result.success is False
+        marker = ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
+        assert not marker.exists()
+
+    def test_dedup_marker_not_written_when_execute_raises(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        mock_handler = MagicMock()
+        mock_handler.execute.side_effect = ValueError("boom")
+
+        with (
+            patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
+            pytest.raises(ValueError, match="boom"),
+        ):
+            queue_fix_agent(action, ctx)
+
+        marker = ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
+        assert not marker.exists()
+
+    def test_dedup_marker_write_failure_returns_error_and_removes_queue_entry(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        queue_file = tmp_path / "queue" / "FixAgent_20240101_120000.json"
+
+        def mock_execute(queue_action, context):
+            # Actually write the queue file so the fallback path of the
+            # patched write_text is exercised for non-marker writes.
+            queue_file.parent.mkdir(parents=True, exist_ok=True)
+            queue_file.write_text(json.dumps({"agent": "FixAgent"}))
+            return ActionResult(
+                success=True,
+                data={"queue_file": str(queue_file)},
+            )
+
+        mock_handler = MagicMock()
+        mock_handler.execute.side_effect = mock_execute
+
+        real_write_text = Path.write_text
+
+        def failing_write_text(self, data, encoding=None):
+            if self == ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker":
+                raise OSError("disk full")
+            return real_write_text(self, data, encoding=encoding)
+
+        with (
+            patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
+            patch.object(Path, "write_text", new=failing_write_text),
+        ):
+            result = queue_fix_agent(action, ctx)
+
+        assert result.success is False
+        assert "dedup marker" in result.stderr
+        assert "disk full" in result.stderr
+        assert not queue_file.exists()
+
+    def test_dedup_marker_write_failure_returns_error_when_cleanup_fails(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        queue_file = tmp_path / "queue" / "FixAgent_20240101_120000.json"
+
+        def mock_execute(queue_action, context):
+            # Actually write the queue file so the fallback path of the
+            # patched write_text is exercised for non-marker writes.
+            queue_file.parent.mkdir(parents=True, exist_ok=True)
+            queue_file.write_text(json.dumps({"agent": "FixAgent"}))
+            return ActionResult(
+                success=True,
+                data={"queue_file": str(queue_file)},
+            )
+
+        mock_handler = MagicMock()
+        mock_handler.execute.side_effect = mock_execute
+
+        real_write_text = Path.write_text
+
+        def failing_write_text(self, data, encoding=None):
+            if self == ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker":
+                raise OSError("disk full")
+            return real_write_text(self, data, encoding=encoding)
+
+        with (
+            patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
+            patch.object(Path, "write_text", new=failing_write_text),
+            patch.object(Path, "unlink", side_effect=OSError("unlink failed")),
+        ):
+            result = queue_fix_agent(action, ctx)
+
+        assert result.success is False
+        assert "dedup marker" in result.stderr
+        assert "disk full" in result.stderr
+
 
 class TestQueueCoderAgent:
     """Tests for queue_coder_agent custom action callable."""
@@ -348,6 +514,41 @@ class TestQueueCoderAgent:
         entry = json.loads(Path(result.data["queue_file"]).read_text())
         assert "The bug occurs when using {'key': 'value'}" in entry["content"]
 
+    def test_queue_failure_returns_error(self, tmp_path):
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+        create_issue(target_dir, {
+            "id": 42,
+            "source": "dep-audit",
+            "type": "bug",
+            "status": "open",
+            "repo": "org/repo",
+        }, body="Fix the crash in foo()")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "callable": "cronpypeline.plugins.swe_prompts.queue_coder_agent",
+                "issue_id": 42,
+                "agent": "CoderAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=False, stderr="queue failed")
+
+        with (
+            patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="abc1234567\n")
+            result = queue_coder_agent(action, ctx)
+
+        assert result.success is False
+        assert result.stderr == "queue failed"
+
 
 class TestQueueReviewAgent:
     """Tests for queue_review_agent custom action callable."""
@@ -400,6 +601,31 @@ class TestQueueReviewAgent:
         result = queue_review_agent(action, ctx)
         assert result.success is True
         assert result.dry_run is True
+
+    def test_queue_failure_returns_error(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "callable": "cronpypeline.plugins.swe_prompts.queue_review_agent",
+                "agent": "ReviewAgent",
+                "queue_dir": str(tmp_path / "queue"),
+                "cycle_number": 1,
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=False, stderr="queue failed")
+
+        with (
+            patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="abc1234567\n")
+            result = queue_review_agent(action, ctx)
+
+        assert result.success is False
+        assert result.stderr == "queue failed"
 
 
 class TestBuildFixPromptExtraInstructions:
