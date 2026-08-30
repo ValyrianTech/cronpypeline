@@ -172,6 +172,37 @@ class TestQueueEmptyTrigger:
         trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir=str(tmp_path / "nonexistent_queue"))
         assert evaluate_trigger(trigger, tmp_path) is True
 
+    def test_dotdot_queue_dir_raises_value_error(self, tmp_path):
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="../outside")
+        with pytest.raises(ValueError, match="contains '\\.\\.' or is absolute"):
+            evaluate_trigger(trigger, tmp_path)
+
+    def test_absolute_queue_dir_outside_base_raises_value_error(self, tmp_path):
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="/etc")
+        with pytest.raises(ValueError, match="escapes base directory"):
+            evaluate_trigger(trigger, tmp_path)
+
+    def test_symlink_escape_queue_dir_raises_value_error(self, tmp_path, tmp_path_factory):
+        outside = tmp_path_factory.mktemp("outside")
+        (outside / "secret.txt").touch()
+        link = tmp_path / "link"
+        link.symlink_to(outside, target_is_directory=True)
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir=str(tmp_path / "link" / "queue"))
+        with pytest.raises(ValueError, match="escapes base directory"):
+            evaluate_trigger(trigger, tmp_path)
+
+    def test_relative_queue_dir_resolves(self, tmp_path):
+        (tmp_path / "queue").mkdir()
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="queue")
+        assert evaluate_trigger(trigger, tmp_path) is True
+
+    def test_relative_queue_dir_does_not_fire_when_has_files(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        (queue_dir / "task1.json").write_text("{}")
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="queue")
+        assert evaluate_trigger(trigger, tmp_path) is False
+
 
 class TestAndCombinator:
     """and: fire if all conditions are true."""
