@@ -1387,6 +1387,10 @@ class TestTickStaleHandling:
             result = pipeline.tick(target="my-repo")
             assert result.status == TickResultStatus.ACTION_EXECUTED
             assert not (target_dir / "a.md").exists()
+
+            # Processing marker should have retry_count reset to 0 for async custom actions
+            proc_data = json.loads((target_dir / ".processing").read_text())
+            assert proc_data["retry_count"] == 0
         finally:
             sys.path.remove(str(tmp_path))
             if "async_mod" in sys.modules:

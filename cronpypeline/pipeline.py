@@ -919,9 +919,15 @@ class Pipeline:
 
         # Update processing marker with result data
         if result.success and result.data and "processing" in stage.markers:
+            # Async custom actions are treated as a fresh start (retry_count reset to 0),
+            # matching the normal execution path.
+            new_retry_count = 0 if (
+                stage.action.type == ActionType.CUSTOM
+                and result.data.get("async", False)
+            ) else retry_count + 1
             processing_spec = replace(stage.markers["processing"], content={
                 **stage.markers["processing"].content,
-                "retry_count": retry_count + 1,
+                "retry_count": new_retry_count,
                 **result.data,
             })
             create_marker(processing_spec, target_dir, context=marker_ctx)
