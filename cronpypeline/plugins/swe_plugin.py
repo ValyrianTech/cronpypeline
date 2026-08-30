@@ -1306,12 +1306,15 @@ def _sha_is_ancestor(target_dir: Path, ancestor_sha: str, descendant_ref: str) -
     """
     if not ancestor_sha:
         return False
-    res = subprocess.run(
-        [GIT_BIN, "-C", str(target_dir), "merge-base", "--is-ancestor",
-         ancestor_sha, descendant_ref],
-        capture_output=True, check=False,
-    )  # nosec B603 - git with fixed args
-    return res.returncode == 0
+    try:
+        res = subprocess.run(
+            [GIT_BIN, "-C", str(target_dir), "merge-base", "--is-ancestor",
+             ancestor_sha, descendant_ref],
+            capture_output=True, check=False, timeout=60,
+        )  # nosec B603 - git with fixed args
+        return res.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def _open_issue_count(target_dir: Path) -> int:
@@ -2834,14 +2837,14 @@ def detect_c_doc_sync(context: dict[str, Any]) -> bool:
         return False
 
     # Check integration is ahead of default
-    behind = subprocess.run(
-        [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
-         f"{default_branch}..{INTEGRATION_BRANCH}"],
-        capture_output=True, text=True, check=False,
-    )  # nosec B603 - git with fixed args
     try:
+        behind = subprocess.run(
+            [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
+             f"{default_branch}..{INTEGRATION_BRANCH}"],
+            capture_output=True, text=True, check=False, timeout=60,
+        )  # nosec B603 - git with fixed args
         ahead_by = int((behind.stdout or "").strip() or "0")
-    except ValueError:
+    except (ValueError, subprocess.TimeoutExpired):
         ahead_by = 0
     if ahead_by == 0:
         return False
@@ -3085,14 +3088,14 @@ def _publish_preconditions_met(context: dict[str, Any]) -> bool:
         return False
 
     # Integration must be ahead of default
-    behind = subprocess.run(
-        [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
-         f"{default_branch}..{INTEGRATION_BRANCH}"],
-        capture_output=True, text=True, check=False,
-    )  # nosec B603 - git with fixed args
     try:
+        behind = subprocess.run(
+            [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
+             f"{default_branch}..{INTEGRATION_BRANCH}"],
+            capture_output=True, text=True, check=False, timeout=60,
+        )  # nosec B603 - git with fixed args
         ahead_by = int((behind.stdout or "").strip() or "0")
-    except ValueError:
+    except (ValueError, subprocess.TimeoutExpired):
         ahead_by = 0
     if ahead_by == 0:
         return False
