@@ -328,7 +328,7 @@ class TestRunDiagnostic:
         action = ActionSpec(
             type=ActionType.CUSTOM,
             params={
-                "command": "echo 'Found 3 errors.' && false",
+                "command": "sh -c 'echo Found 3 errors.; exit 1'",
                 "report_dir": str(report_dir),
                 "parser": "cronpypeline.plugins.swe_diagnostics.parse_ruff_output",
                 "report_name": "lint_report_{timestamp}.md",
@@ -338,11 +338,32 @@ class TestRunDiagnostic:
 
         result = run_diagnostic(action, ctx)
 
-        assert result.success is True  # diagnostic itself succeeded
+        assert result.success is False  # command exited non-zero
         report_path = Path(result.data["report_path"])
         assert report_path.exists()
         content = report_path.read_text()
         assert "FAIL" in content
+
+    def test_successful_command_returns_success(self, tmp_path):
+        """A command that exits 0 should return success=True."""
+        report_dir = tmp_path / ".SWE" / "reports" / "lint"
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "command": "echo 'No issues found.'",
+                "report_dir": str(report_dir),
+                "parser": "cronpypeline.plugins.swe_diagnostics.parse_ruff_output",
+                "report_name": "lint_report_{timestamp}.md",
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = run_diagnostic(action, ctx)
+
+        assert result.success is True
 
     def test_no_parser_writes_raw_output(self, tmp_path):
         """When no parser is specified, raw stdout should be in the report."""

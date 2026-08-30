@@ -403,7 +403,7 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
     update_latest_symlink(report_dir, "latest.md", report_name)
 
     return ActionResult(
-        success=True,
+        success=exit_code == 0,
         stdout=stdout,
         stderr=stderr,
         data={
