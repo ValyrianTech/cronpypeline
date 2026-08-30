@@ -730,6 +730,7 @@ Custom triggers and actions for the SWE pipeline:
 - `reset_issue_status` — action: resets issue status to "open" after failure (updates YAML frontmatter)
 - `sync_session_mode` — pre_tick hook: syncs `.SWE/github_session.json` to the pipeline `mode_file`
 - `run_lint_autofix` — action: runs a lint autofix command (default `ruff check --fix .`), parses the fixed-count, writes a timestamped report, and commits changes. The command is executed via an argument list (`shell=False` using `shlex.split()`) rather than a shell, so commands relying on shell features (pipes, redirection, `&&`, etc.) must be wrapped in `sh -c '...'`; invalid/unparseable commands return an ACTION_FAILED result.
+- `run_a9_dep_audit` — action: runs the pip-audit dependency scanner via `run_diagnostic`, then parses the output and creates dependency-audit issues in the issue store. It proceeds to create dependency-audit issues even when the pip-audit command exits non-zero (the normal case when vulnerabilities are found), and reports success after creating the issues — the goal is the created issues, not a clean audit.
 
 Git is invoked via `shutil.which("git")` (resolved to an absolute path, falling back to `"git"`), so the binary location is detected at runtime rather than hardcoded. Git commands are run with a timeout (default 60 seconds), so a hung git command cannot block the pipeline indefinitely.
 
@@ -747,6 +748,8 @@ Diagnostic report action handler and output parsers:
 - Output parsers: `parse_pytest_output`, `parse_ruff_output`, `parse_mypy_output`, `parse_pydocstyle_output`, `parse_vulture_output`, `parse_coverage_output`, `parse_bandit_output`, `parse_pip_audit_output`, `parse_radon_output`
 
 `run_diagnostic` shell-quotes template variables (`target`, `target_dir`, `workspace_dir`, and flattened target config values) with `shlex.quote()` before substituting them into the diagnostic command. Command config values (e.g. `test_cmd`, `lint_cmd`, `typecheck_cmd`, `security_cmd`, `deadcode_cmd`, `build_cmd`, `dep_audit_cmd`, `coverage_cmd`) are validated to reject shell metacharacters, and commands are executed via an argument list (`shell=False`). If template substitution fails (missing key, bad format, etc.), an error result is returned instead of silently running the unformatted command.
+
+`run_diagnostic` returns `success=False` when the underlying diagnostic command exits with a non-zero exit code (e.g. a linter finding errors, a test suite failing, a security scanner finding vulnerabilities) — the report file is still written regardless. When the command exits 0, it returns `success=True`.
 
 > **⚠️ Breaking change:** `run_diagnostic` commands now run with `shell=False`, so any existing diagnostic command that relies on shell features — pipes, redirections, `&&`, `;`, command substitution (`$(...)`), globbing, or env-var expansion — must be wrapped in `sh -c '...'` (e.g. `"command": "pytest -q | tee out.txt"` must become `"command": "sh -c 'pytest -q | tee out.txt'"`).
 
