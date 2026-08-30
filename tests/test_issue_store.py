@@ -366,10 +366,9 @@ class TestCreateIssue:
         issue_file = tmp_path / ".SWE" / "issues" / "42.md"
         assert issue_file.exists()
 
-    def test_create_issue_sanitizes_path_traversal(self, tmp_path):
-        create_issue(tmp_path, {"id": "../../evil", "status": "open"})
-        issues_dir = tmp_path / ".SWE" / "issues"
-        assert (issues_dir / "..-..-evil.md").exists()
+    def test_create_issue_rejects_path_traversal(self, tmp_path):
+        with pytest.raises(ValueError, match="Issue id contains '..'"):
+            create_issue(tmp_path, {"id": "../../evil", "status": "open"})
         assert not (tmp_path / "evil.md").exists()
         assert not (tmp_path.parent / "evil.md").exists()
 
@@ -447,8 +446,24 @@ class TestIssueFilename:
     def test_slashes_replaced_with_hyphen(self):
         assert issue_filename("foo/bar") == "foo-bar"
 
-    def test_path_traversal_sanitized(self):
-        assert issue_filename("../../evil") == "..-..-evil"
+    def test_path_traversal_rejected(self):
+        with pytest.raises(ValueError, match="Issue id contains '..'"):
+            issue_filename("../../evil")
+
+    def test_dotdot_rejected(self):
+        with pytest.raises(ValueError, match="Issue id contains '..'"):
+            issue_filename("..")
+
+    def test_embedded_dotdot_rejected(self):
+        with pytest.raises(ValueError, match="Issue id contains '..'"):
+            issue_filename("foo..bar")
+
+    def test_triple_dot_rejected(self):
+        with pytest.raises(ValueError, match="Issue id contains '..'"):
+            issue_filename("foo...bar")
+
+    def test_single_dot_allowed(self):
+        assert issue_filename("foo.bar") == "foo.bar"
 
     def test_absolute_path_sanitized(self):
         assert issue_filename("/etc/passwd") == "etc-passwd"
