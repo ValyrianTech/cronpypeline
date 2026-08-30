@@ -310,9 +310,11 @@ class TestQueueFixAgent:
         mock_handler = MagicMock()
         mock_handler.execute.side_effect = ValueError("boom")
 
-        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler):
-            with pytest.raises(ValueError, match="boom"):
-                queue_fix_agent(action, ctx)
+        with (
+            patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
+            pytest.raises(ValueError, match="boom"),
+        ):
+            queue_fix_agent(action, ctx)
 
         marker = ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
         assert not marker.exists()
