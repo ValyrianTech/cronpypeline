@@ -729,7 +729,7 @@ Custom triggers and actions for the SWE pipeline:
 - `sync_session_mode` — pre_tick hook: syncs `.SWE/github_session.json` to the pipeline `mode_file`
 - `run_lint_autofix` — action: runs a lint autofix command (default `ruff check --fix .`), parses the fixed-count, writes a timestamped report, and commits changes. The command is executed via an argument list (`shell=False` using `shlex.split()`) rather than a shell, so commands relying on shell features (pipes, redirection, `&&`, etc.) must be wrapped in `sh -c '...'`; invalid/unparseable commands return an ACTION_FAILED result.
 
-Git is invoked via `shutil.which("git")` (resolved to an absolute path, falling back to `"git"`), so the binary location is detected at runtime rather than hardcoded.
+Git is invoked via `shutil.which("git")` (resolved to an absolute path, falling back to `"git"`), so the binary location is detected at runtime rather than hardcoded. Git commands are run with a timeout (default 60 seconds), so a hung git command cannot block the pipeline indefinitely.
 
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
 

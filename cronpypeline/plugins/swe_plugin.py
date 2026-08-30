@@ -448,18 +448,26 @@ def reset_issue_status(action: ActionSpec, context: TickContext) -> tuple[bool, 
     return False, f"Issue {issue_id} not found"
 
 
-def _git(repo_dir: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _git(repo_dir: Path, *args: str, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess[str]:
     """Run a git command in the given repo directory.
 
     :param repo_dir: Target repo directory.
     :param args: Git command arguments.
     :param check: If True, raise on non-zero exit.
+    :param timeout: Timeout in seconds for the git command.
     :returns: CompletedProcess result.
     """
-    return subprocess.run(  # pragma: no cover - coverage.py artifact with multi-line return
-        [GIT_BIN, "-C", str(repo_dir), *args],
-        capture_output=True, text=True, check=check,
-    )  # nosec B603 - args are controlled by the plugin
+    try:
+        return subprocess.run(
+            [GIT_BIN, "-C", str(repo_dir), *args],
+            capture_output=True, text=True, check=check, timeout=timeout,
+        )  # nosec B603 - args are controlled by the plugin
+    except subprocess.TimeoutExpired as e:
+        raise subprocess.TimeoutExpired(
+            cmd=e.cmd, timeout=timeout,
+            output=(e.stdout or b"").decode() if isinstance(e.stdout, bytes) else e.stdout,
+            stderr=(e.stderr or b"").decode() if isinstance(e.stderr, bytes) else e.stderr,
+        ) from e
 
 
 def ensure_phase_a_branch(repo_dir: Path, verbose: bool = False) -> bool:
@@ -473,7 +481,7 @@ def ensure_phase_a_branch(repo_dir: Path, verbose: bool = False) -> bool:
     """
     try:
         _git(repo_dir, "rev-parse", "--git-dir")
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
 
     try:
@@ -486,7 +494,7 @@ def ensure_phase_a_branch(repo_dir: Path, verbose: bool = False) -> bool:
                 _git(repo_dir, "checkout", PHASE_A_BRANCH)
             else:
                 _git(repo_dir, "checkout", "-b", PHASE_A_BRANCH)
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
 
     gitignore = repo_dir / ".gitignore"
@@ -534,10 +542,10 @@ def commit_phase_a_change(
         env["GIT_COMMITTER_EMAIL"] = PHASE_A_GIT_AUTHOR_EMAIL
         subprocess.run(
             [GIT_BIN, "-C", str(repo_dir), "commit", "-m", message],
-            check=True, env=env, capture_output=True, text=True,
+            check=True, env=env, capture_output=True, text=True, timeout=60,
         )  # nosec B603 - static args
         return _git(repo_dir, "rev-parse", "HEAD").stdout.strip()
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
 
 
@@ -1276,7 +1284,10 @@ def integration_head_sha(target_dir: Path, default_branch: str) -> str | None:
     :returns: SHA string, or None if neither branch resolves.
     """
     for ref in (INTEGRATION_BRANCH, default_branch):
-        res = _git(target_dir, "rev-parse", "--verify", ref, check=False)
+        try:
+            res = _git(target_dir, "rev-parse", "--verify", ref, check=False)
+        except subprocess.TimeoutExpired:
+            return None
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip()
     return None
@@ -1295,12 +1306,15 @@ def _sha_is_ancestor(target_dir: Path, ancestor_sha: str, descendant_ref: str) -
     """
     if not ancestor_sha:
         return False
-    res = subprocess.run(
-        [GIT_BIN, "-C", str(target_dir), "merge-base", "--is-ancestor",
-         ancestor_sha, descendant_ref],
-        capture_output=True, check=False,
-    )  # nosec B603 - git with fixed args
-    return res.returncode == 0
+    try:
+        res = subprocess.run(
+            [GIT_BIN, "-C", str(target_dir), "merge-base", "--is-ancestor",
+             ancestor_sha, descendant_ref],
+            capture_output=True, check=False, timeout=60,
+        )  # nosec B603 - git with fixed args
+        return res.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def _open_issue_count(target_dir: Path) -> int:
@@ -2823,14 +2837,14 @@ def detect_c_doc_sync(context: dict[str, Any]) -> bool:
         return False
 
     # Check integration is ahead of default
-    behind = subprocess.run(
-        [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
-         f"{default_branch}..{INTEGRATION_BRANCH}"],
-        capture_output=True, text=True, check=False,
-    )  # nosec B603 - git with fixed args
     try:
+        behind = subprocess.run(
+            [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
+             f"{default_branch}..{INTEGRATION_BRANCH}"],
+            capture_output=True, text=True, check=False, timeout=60,
+        )  # nosec B603 - git with fixed args
         ahead_by = int((behind.stdout or "").strip() or "0")
-    except ValueError:
+    except (ValueError, subprocess.TimeoutExpired):
         ahead_by = 0
     if ahead_by == 0:
         return False
@@ -2899,7 +2913,7 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
     # Checkout integration branch
     try:
         _git(target_dir, "checkout", INTEGRATION_BRANCH)
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return ActionResult(success=False, stderr=f"Failed to checkout {INTEGRATION_BRANCH}")
 
     prompt = _build_doc_sync_prompt(target_dir, repo_name, default_branch, sha, pr_exists)
@@ -3074,14 +3088,14 @@ def _publish_preconditions_met(context: dict[str, Any]) -> bool:
         return False
 
     # Integration must be ahead of default
-    behind = subprocess.run(
-        [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
-         f"{default_branch}..{INTEGRATION_BRANCH}"],
-        capture_output=True, text=True, check=False,
-    )  # nosec B603 - git with fixed args
     try:
+        behind = subprocess.run(
+            [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
+             f"{default_branch}..{INTEGRATION_BRANCH}"],
+            capture_output=True, text=True, check=False, timeout=60,
+        )  # nosec B603 - git with fixed args
         ahead_by = int((behind.stdout or "").strip() or "0")
-    except ValueError:
+    except (ValueError, subprocess.TimeoutExpired):
         ahead_by = 0
     if ahead_by == 0:
         return False

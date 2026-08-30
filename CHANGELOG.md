@@ -41,6 +41,7 @@
 - The issue store's YAML frontmatter parser (_parse_value) now correctly parses boolean values (true/false/yes/no) and null values (null/none/~) instead of treating them as truthy strings. This fixes config toggles like enabled: false being treated as truthy when read from issue frontmatter.
 - The issue store's YAML frontmatter parser (parse_frontmatter) now correctly handles quoted values containing colons (e.g. `title: "Fix: Login bug"`), instead of truncating the value at the first colon.
 - The SWE plugin now normalizes naive datetime strings to UTC when parsing timestamps from GitHub session files, review issue frontmatter, and queued markers (doc_sync, pr_review), preventing comparison errors and incorrect behavior when naive datetimes are compared against timezone-aware datetimes.
+- The SWE plugin's `_git` helper now enforces a timeout (default 60 seconds) on git subprocess calls, so a hung git command can no longer block the pipeline indefinitely. On timeout a `TimeoutExpired` is raised (with stdout/stderr decoded to str), and callers (`ensure_phase_a_branch`, `commit_phase_a_change`, `run_c_doc_sync`) now handle `TimeoutExpired` gracefully.
 
 ### Security
 - Addressed bandit findings: added nosec annotations for intentional subprocess/shell usage, resolved git binary via shutil.which, and validated HTTP URL schemes.
