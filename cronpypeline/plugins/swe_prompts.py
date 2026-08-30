@@ -437,7 +437,7 @@ def queue_coder_agent(action: ActionSpec, context: TickContext) -> ActionResult:
         },
     )
     result = handler.execute(queue_action, context)
-    if result.success and not result.dry_run:
+    if result.success:
         result.data = {**result.data, "async": True}
     return result
 
@@ -488,7 +488,7 @@ def queue_review_agent(action: ActionSpec, context: TickContext) -> ActionResult
         },
     )
     result = handler.execute(queue_action, context)
-    if result.success and not result.dry_run:
+    if result.success:
         result.data = {**result.data, "async": True}
     return result
 
