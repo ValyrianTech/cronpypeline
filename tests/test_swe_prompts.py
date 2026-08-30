@@ -514,6 +514,41 @@ class TestQueueCoderAgent:
         entry = json.loads(Path(result.data["queue_file"]).read_text())
         assert "The bug occurs when using {'key': 'value'}" in entry["content"]
 
+    def test_queue_failure_returns_error(self, tmp_path):
+        target_dir = tmp_path / "repo"
+        target_dir.mkdir()
+        create_issue(target_dir, {
+            "id": 42,
+            "source": "dep-audit",
+            "type": "bug",
+            "status": "open",
+            "repo": "org/repo",
+        }, body="Fix the crash in foo()")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "callable": "cronpypeline.plugins.swe_prompts.queue_coder_agent",
+                "issue_id": 42,
+                "agent": "CoderAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=False, stderr="queue failed")
+
+        with (
+            patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="abc1234567\n")
+            result = queue_coder_agent(action, ctx)
+
+        assert result.success is False
+        assert result.stderr == "queue failed"
+
 
 class TestQueueReviewAgent:
     """Tests for queue_review_agent custom action callable."""
@@ -566,6 +601,31 @@ class TestQueueReviewAgent:
         result = queue_review_agent(action, ctx)
         assert result.success is True
         assert result.dry_run is True
+
+    def test_queue_failure_returns_error(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "callable": "cronpypeline.plugins.swe_prompts.queue_review_agent",
+                "agent": "ReviewAgent",
+                "queue_dir": str(tmp_path / "queue"),
+                "cycle_number": 1,
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=False, stderr="queue failed")
+
+        with (
+            patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="abc1234567\n")
+            result = queue_review_agent(action, ctx)
+
+        assert result.success is False
+        assert result.stderr == "queue failed"
 
 
 class TestBuildFixPromptExtraInstructions:
