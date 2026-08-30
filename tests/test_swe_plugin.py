@@ -511,6 +511,35 @@ class TestGitHelper:
         result = _git(tmp_path, "bad-command", check=False)
         assert result.returncode != 0
 
+    def test_git_raises_timeout_expired(self, tmp_path):
+        with patch(
+            "cronpypeline.plugins.swe_plugin.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=60),
+        ):
+            with pytest.raises(subprocess.TimeoutExpired):
+                _git(tmp_path, "status")
+
+    def test_git_passes_timeout_to_subprocess_run(self, tmp_path):
+        mock_result = subprocess.CompletedProcess(args=["git"], returncode=0, stdout="", stderr="")
+        with patch(
+            "cronpypeline.plugins.swe_plugin.subprocess.run",
+            return_value=mock_result,
+        ) as mock_run:
+            _git(tmp_path, "status", timeout=30)
+        assert mock_run.call_args.kwargs["timeout"] == 30
+
+    def test_git_decodes_bytes_output_in_timeout(self, tmp_path):
+        with patch(
+            "cronpypeline.plugins.swe_plugin.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(
+                cmd=["git"], timeout=60, output=b"some output", stderr=b"some error",
+            ),
+        ):
+            with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+                _git(tmp_path, "status")
+        assert exc_info.value.stdout == "some output"
+        assert exc_info.value.stderr == "some error"
+
 
 # ─── ensure_phase_a_branch ──────────────────────────────────────────────────
 
@@ -559,6 +588,13 @@ class TestEnsurePhaseABranch:
         result = ensure_phase_a_branch(tmp_path)
         assert result is True
 
+    def test_returns_false_on_timeout(self, tmp_path):
+        with patch(
+            "cronpypeline.plugins.swe_plugin._git",
+            side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=60),
+        ):
+            assert ensure_phase_a_branch(tmp_path) is False
+
 
 # ─── commit_phase_a_change ──────────────────────────────────────────────────
 
@@ -600,6 +636,13 @@ class TestCommitPhaseAChange:
         )
         # b.txt should still be uncommitted
         assert "b.txt" in staged.stdout or (tmp_path / "b.txt").exists()
+
+    def test_returns_none_on_timeout(self, tmp_path):
+        with patch(
+            "cronpypeline.plugins.swe_plugin._git",
+            side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=60),
+        ):
+            assert commit_phase_a_change(tmp_path, "timeout") is None
 
 
 # ─── detect_lint_autofix ────────────────────────────────────────────────────
@@ -3223,8 +3266,29 @@ class TestRunCDocSyncCheckoutFailure:
         result = run_c_doc_sync(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
 
+    def test_checkout_timeout_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        ctx = _make_tick_context(target, default_branch="main")
 
-class TestRunCPrPublishPushFailure:
+        def fake_git(repo_dir, *args, **kwargs):
+            if args and args[0] == "checkout":
+                raise subprocess.TimeoutExpired(cmd=["git"], timeout=60)
+            if args and args[0] == "rev-parse":
+                return subprocess.CompletedProcess(args=["git"], returncode=0, stdout="abcdef\n", stderr="")
+            raise AssertionError(f"Unexpected git call: {args}")  # pragma: no cover
+
+        with patch("cronpypeline.plugins.swe_plugin._git", side_effect=fake_git):
+            result = run_c_doc_sync(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "Failed to checkout" in result.stderr
     def test_push_failure_returns_failure(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
