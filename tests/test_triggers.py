@@ -203,6 +203,24 @@ class TestQueueEmptyTrigger:
         trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="queue")
         assert evaluate_trigger(trigger, tmp_path) is False
 
+    def test_fires_when_queue_dir_none(self, tmp_path):
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir=None)
+        assert evaluate_trigger(trigger, tmp_path) is True
+
+    def test_does_not_fire_when_queue_dir_none_and_base_dir_has_files(self, tmp_path):
+        (tmp_path / "somefile.txt").touch()
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir=None)
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_fires_when_queue_dir_empty_string(self, tmp_path):
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="")
+        assert evaluate_trigger(trigger, tmp_path) is True
+
+    def test_does_not_fire_when_queue_dir_empty_string_and_base_dir_has_files(self, tmp_path):
+        (tmp_path / "somefile.txt").touch()
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="")
+        assert evaluate_trigger(trigger, tmp_path) is False
+
 
 class TestAndCombinator:
     """and: fire if all conditions are true."""
