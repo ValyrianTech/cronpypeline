@@ -673,7 +673,8 @@ def _closing_loop_instructions(repo_dir: Path, task_dir: Path,
 
 def _build_coder_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
                         branch: str, issue: Issue, test_cmd: str,
-                        dep_audit_cmd: str, coverage_cmd: str = "") -> str:
+                        dep_audit_cmd: str, coverage_cmd: str = "",
+                        coverage_target: float = COVERAGE_TARGET) -> str:
     """Prompt for a dependency-vulnerability (security) fix.
 
     :param repo_dir: Target repo directory.
@@ -684,6 +685,7 @@ def _build_coder_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
     :param test_cmd: Test command string.
     :param dep_audit_cmd: Dependency audit command string.
     :param coverage_cmd: Coverage command string.
+    :param coverage_target: Coverage percentage to require.
     :returns: Prompt text string.
     """
     subject = f"fix: {issue.id}"
@@ -695,7 +697,7 @@ def _build_coder_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
             f"     cd {repo_dir} && {coverage_cmd}\n\n"
             f"Your fix MUST NOT reduce coverage. If your changes introduce new "
             f"uncovered lines, you MUST write tests to cover them. The final "
-            f"coverage must be at least {COVERAGE_TARGET:.0f}%.\n\n"
+            f"coverage must be at least {coverage_target:.0f}%.\n\n"
         )
 
     verif_lines: list[str] = []
@@ -706,7 +708,7 @@ def _build_coder_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
     if coverage_cmd:
         verif_lines.append(
             f"{len(verif_lines) + 1}. Coverage MUST stay at or above "
-            f"{COVERAGE_TARGET:.0f}% (write tests for any new code you add):\n"
+            f"{coverage_target:.0f}% (write tests for any new code you add):\n"
             f"     cd {repo_dir} && {coverage_cmd}"
         )
 
@@ -735,7 +737,8 @@ def _build_coder_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
 
 def _build_coverage_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
                            branch: str, issue: Issue, test_cmd: str,
-                           coverage_cmd: str) -> str:
+                           coverage_cmd: str,
+                           coverage_target: float = COVERAGE_TARGET) -> str:
     """Prompt for a test-coverage fix (write tests to reach the target).
 
     :param repo_dir: Target repo directory.
@@ -745,6 +748,7 @@ def _build_coverage_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
     :param issue: Coverage issue to fix.
     :param test_cmd: Test command string.
     :param coverage_cmd: Coverage command string.
+    :param coverage_target: Coverage percentage to require.
     :returns: Prompt text string.
     """
     subject = f"test: {issue.id}"
@@ -771,7 +775,7 @@ def _build_coverage_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
         f"{issue.body.strip()}\n\n"
         f"## Verification (you MUST run these and they MUST pass)\n\n"
         f"IMPORTANT: `cd` into the repo first for every command.\n"
-        f"1. Coverage MUST reach {COVERAGE_TARGET:.0f}%:\n"
+        f"1. Coverage MUST reach {coverage_target:.0f}%:\n"
         f"     cd {repo_dir} && {coverage_cmd}\n"
         f"2. The test suite MUST stay green:\n"
         f"     cd {repo_dir} && {test_cmd}\n\n"
@@ -934,6 +938,7 @@ def run_select(repo_dir: Path, repo_name: str, target_config: dict[str, Any],
     coverage_cmd = (target_config.get("coverage_cmd") or "").strip() or (
         ".venv/bin/pytest --cov=. --cov-report=term-missing -q"
     )
+    coverage_target = float(target_config.get("coverage_threshold", COVERAGE_TARGET))
 
     date_bucket = datetime.now(timezone.utc).strftime("%Y%m%d")
     task_dir = (TASKS_DIR / date_bucket / f"{date_bucket}_{_safe_slug(repo_name)}_{task_id}")
@@ -965,11 +970,12 @@ def run_select(repo_dir: Path, repo_name: str, target_config: dict[str, Any],
             return False
         if issue_type == "coverage":
             prompt = _build_coverage_prompt(
-                repo_dir, repo_name, task_dir, branch, issue, test_cmd, coverage_cmd)
+                repo_dir, repo_name, task_dir, branch, issue, test_cmd,
+                coverage_cmd, coverage_target)
         else:
             prompt = _build_coder_prompt(
                 repo_dir, repo_name, task_dir, branch, issue,
-                test_cmd, dep_audit_cmd, coverage_cmd)
+                test_cmd, dep_audit_cmd, coverage_cmd, coverage_target)
         stage = "C2"
 
     task = {
@@ -986,6 +992,7 @@ def run_select(repo_dir: Path, repo_name: str, target_config: dict[str, Any],
         "test_cmd": test_cmd,
         "dep_audit_cmd": dep_audit_cmd,
         "coverage_cmd": coverage_cmd,
+        "coverage_target": coverage_target,
         "issues_per_pr": target_config.get("issues_per_pr", 1),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1069,6 +1076,7 @@ def run_gate(repo_dir: Path, task_dir: Path,
 
     test_cmd = task.get("test_cmd", ".venv/bin/pytest -q")
     coverage_cmd = task.get("coverage_cmd", "")
+    coverage_target = float(task.get("coverage_target", COVERAGE_TARGET))
     branch = task.get("branch", _task_branch_name(task["task_id"]))
 
     print(f"  GATE {issue_type} task '{task['task_id']}'")
@@ -1097,9 +1105,9 @@ def run_gate(repo_dir: Path, task_dir: Path,
         cov_code, cov_out, cov_err = _run(coverage_cmd, repo_dir, timeout=900)
         counts = _parse_coverage_output(cov_out + "\n" + cov_err)
         cov_pct = counts.get("coverage_pct", 0.0)
-        type_ok = cov_pct >= COVERAGE_TARGET
+        type_ok = cov_pct >= coverage_target
         tests_green = cov_code == 0
-        type_detail = {"coverage_pct": cov_pct, "coverage_target": COVERAGE_TARGET}
+        type_detail = {"coverage_pct": cov_pct, "coverage_target": coverage_target}
     else:  # generic bug/enhancement
         if coverage_cmd:
             cov_code, cov_out, cov_err = _run(coverage_cmd, repo_dir, timeout=900)
@@ -1107,9 +1115,9 @@ def run_gate(repo_dir: Path, task_dir: Path,
             cov_pct = counts.get("coverage_pct", 0.0)
             type_ok = (cov_pct >= baseline_pct
                        if baseline_pct is not None
-                       else cov_pct >= COVERAGE_TARGET)
+                       else cov_pct >= coverage_target)
             tests_green = cov_code == 0
-            type_detail = {"coverage_pct": cov_pct, "coverage_target": COVERAGE_TARGET}
+            type_detail = {"coverage_pct": cov_pct, "coverage_target": coverage_target}
             if baseline_pct is not None:
                 type_detail["baseline_pct"] = baseline_pct
         else:

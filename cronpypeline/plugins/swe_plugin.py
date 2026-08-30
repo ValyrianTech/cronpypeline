@@ -1267,6 +1267,13 @@ def run_c_issue_fix(action: ActionSpec, context: TickContext) -> ActionResult:
 
 INTEGRATION_BRANCH = "swe-pipeline/integration"
 COVERAGE_TARGET = 100.0
+
+
+def _coverage_target(target_config: dict[str, Any]) -> float:
+    """Return the per-target coverage threshold, defaulting to COVERAGE_TARGET."""
+    return float(target_config.get("coverage_threshold", COVERAGE_TARGET))
+
+
 MAX_REVIEW_GENERATIONS = 3
 MAX_REVIEW_ISSUES_PER_GENERATION = 3
 MAX_PR_REVIEW_CYCLES = 3
@@ -2152,7 +2159,7 @@ def detect_c_coverage_issue(context: dict[str, Any]) -> bool:
     if not _a1_is_pass(target_dir):
         return False
     pct = _a7_coverage_pct(target_dir)
-    if pct is None or pct >= COVERAGE_TARGET:
+    if pct is None or pct >= _coverage_target(target_config):
         return False
 
     # Defer if PR published but not reviewed
@@ -2200,6 +2207,7 @@ def run_c_coverage_issue(action: ActionSpec, context: TickContext) -> ActionResu
         return ActionResult(success=False, stderr="Failed to determine integration head SHA")
     issue_id = f"coverage-{sha[:8]}"
     pct = _a7_coverage_pct(target_dir) or 0.0
+    coverage_target = _coverage_target(target_config)
 
     # Parse per-file coverage gaps from the A7 report
     report = _resolve_latest_report(target_dir, "coverage")
@@ -2224,7 +2232,7 @@ def run_c_coverage_issue(action: ActionSpec, context: TickContext) -> ActionResu
                     "cover": int(fm.group(4)),
                     "missing": fm.group(5).strip() if fm.group(5) else "",
                 })
-            below = [f for f in files if f["cover"] < COVERAGE_TARGET]
+            below = [f for f in files if f["cover"] < coverage_target]
             if below:
                 gap_lines = "\n".join(
                     f"- `{f['file']}` — {f['cover']}% ({f['miss']} missed): {f['missing']}"
@@ -2233,10 +2241,10 @@ def run_c_coverage_issue(action: ActionSpec, context: TickContext) -> ActionResu
         except OSError:
             pass
 
-    title = f"Increase test coverage to {COVERAGE_TARGET:.0f}% (currently {pct:.0f}%)"
+    title = f"Increase test coverage to {coverage_target:.0f}% (currently {pct:.0f}%)"
     body = (
         f"Overall coverage for `{repo_name}` is **{pct:.0f}%**, below the "
-        f"pipeline target of {COVERAGE_TARGET:.0f}%. Add tests so every "
+        f"pipeline target of {coverage_target:.0f}%. Add tests so every "
         f"reachable line/branch is covered. Genuinely unreachable lines may "
         f"be marked with `# pragma: no cover` with a short justification.\n\n"
         f"## Coverage gaps\n\n{gap_lines}\n\n"
@@ -2713,7 +2721,7 @@ def detect_c_review_issue(context: dict[str, Any]) -> bool:
     if not _a1_is_pass(target_dir):
         return False
     pct = _a7_coverage_pct(target_dir)
-    if pct is None or pct < COVERAGE_TARGET:
+    if pct is None or pct < _coverage_target(target_config):
         return False
 
     default_branch = target_config.get("default_branch", "main")
@@ -2829,7 +2837,7 @@ def detect_c_doc_sync(context: dict[str, Any]) -> bool:
     if not _a1_is_pass(target_dir):
         return False
     pct = _a7_coverage_pct(target_dir)
-    if pct is None or pct < COVERAGE_TARGET:
+    if pct is None or pct < _coverage_target(target_config):
         return False
 
     default_branch = target_config.get("default_branch", "main")
@@ -3080,7 +3088,7 @@ def _publish_preconditions_met(context: dict[str, Any]) -> bool:
     if not _a1_is_pass(target_dir):
         return False
     pct = _a7_coverage_pct(target_dir)
-    if pct is None or pct < COVERAGE_TARGET:
+    if pct is None or pct < _coverage_target(target_config):
         return False
 
     default_branch = target_config.get("default_branch", "main")

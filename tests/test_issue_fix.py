@@ -550,6 +550,18 @@ class TestPromptBuilders:
         r = _build_coverage_prompt(tmp_path, "repo", td, "br", Issue(id="1", body="Cover", type="coverage"), "pt", "cov")
         assert "Cover" in r and "cov" in r
 
+    def test_coder_with_custom_coverage_target(self, tmp_path):
+        td = tmp_path / "t"; td.mkdir()
+        r = _build_coder_prompt(tmp_path, "repo", td, "br", Issue(id="1", body="F", type="bug"),
+                                "pt", "pa", "cov", coverage_target=80.0)
+        assert "80%" in r and "100%" not in r
+
+    def test_coverage_prompt_with_custom_target(self, tmp_path):
+        td = tmp_path / "t"; td.mkdir()
+        r = _build_coverage_prompt(tmp_path, "repo", td, "br", Issue(id="1", body="Cover", type="coverage"),
+                                   "pt", "cov", coverage_target=80.0)
+        assert "80%" in r and "100%" not in r
+
     def test_review_prompt(self, tmp_path):
         td = tmp_path / "t"; td.mkdir()
         r = _build_review_prompt(tmp_path, "repo", td, Issue(id="1", body="Review", type="review"))
@@ -895,6 +907,16 @@ class TestRunSelect:
         with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=h):
             assert run_select(t, "repo", {}, _make_tick_context(t)) is True
 
+    def test_coverage_threshold_stored_in_task(self, tmp_path, monkeypatch):
+        t = self._setup(tmp_path, issue_type="coverage")
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        h = MagicMock(); h.execute.return_value = ActionResult(success=True)
+        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=h):
+            assert run_select(t, "repo", {"coverage_threshold": 80.0}, _make_tick_context(t)) is True
+        td = next(iter((tmp_path / "tasks").rglob(TASK_FILE)))
+        task = json.loads(td.read_text())
+        assert task["coverage_target"] == 80.0
+
     def test_review_issue(self, tmp_path, monkeypatch):
         t = self._setup(tmp_path, issue_type="review")
         subprocess.run(["git", "-C", str(t), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
@@ -1059,6 +1081,32 @@ class TestRunGate:
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "TOTAL 100 50 50%\n5 passed", "")):
             assert run_gate(t, td, verbose=True) is False
         assert json.loads((td / GATE_RESULT_FILE).read_text())["passed"] is False
+
+    def test_coverage_custom_target_passes(self, tmp_path):
+        t = self._setup_git_with_branch(tmp_path)
+        (t / "test.txt").write_text("t")
+        subprocess.run(["git", "-C", str(t), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(t), "commit", "-m", "t"], capture_output=True, check=True)
+        td = tmp_path / "t"
+        self._make_task(tmp_path, td, issue_type="coverage", coverage_cmd="cov", coverage_target=80.0)
+        with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "TOTAL 100 20 80%\n5 passed", "")):
+            assert run_gate(t, td, verbose=True) is True
+        gate = json.loads((td / GATE_RESULT_FILE).read_text())
+        assert gate["passed"] is True and gate["coverage_pct"] == 80.0
+        assert gate["coverage_target"] == 80.0
+
+    def test_coverage_custom_target_fails_below_threshold(self, tmp_path):
+        t = self._setup_git_with_branch(tmp_path)
+        (t / "test.txt").write_text("t")
+        subprocess.run(["git", "-C", str(t), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(t), "commit", "-m", "t"], capture_output=True, check=True)
+        td = tmp_path / "t"
+        self._make_task(tmp_path, td, issue_type="coverage", coverage_cmd="cov", coverage_target=90.0)
+        with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "TOTAL 100 20 80%\n5 passed", "")):
+            assert run_gate(t, td, verbose=True) is False
+        gate = json.loads((td / GATE_RESULT_FILE).read_text())
+        assert gate["passed"] is False and gate["coverage_pct"] == 80.0
+        assert gate["coverage_target"] == 90.0
 
     def test_bug_with_coverage_cmd(self, tmp_path):
         t = self._setup_git_with_branch(tmp_path)
