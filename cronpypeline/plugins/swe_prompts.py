@@ -286,16 +286,6 @@ def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
     report_content = report_path.read_text(encoding="utf-8")
     report_name = report_path.name
 
-    # Write deduplication marker (queued_for_{stem}.marker)
-    markers_dir = context.target_dir / ".SWE" / "markers"
-    markers_dir.mkdir(parents=True, exist_ok=True)
-    dedup_marker = markers_dir / f"queued_for_{report_path.stem}.marker"
-    dedup_marker.write_text(
-        f"queued at {datetime.now(timezone.utc).isoformat()} "
-        f"against report {report_name}\n",
-        encoding="utf-8",
-    )
-
     # Build prompt with report content + commit/delete/completion instructions
     repo_name = context.target
     target_dir = context.target_dir
@@ -367,7 +357,20 @@ You are on branch `{PHASE_A_BRANCH}`. After making your changes:
         },
     )
     result = handler.execute(queue_action, context)
-    if result.success and not result.dry_run:
+    if not result.success:
+        return result
+
+    # Write deduplication marker only after successful queue
+    markers_dir = context.target_dir / ".SWE" / "markers"
+    markers_dir.mkdir(parents=True, exist_ok=True)
+    dedup_marker = markers_dir / f"queued_for_{report_path.stem}.marker"
+    dedup_marker.write_text(
+        f"queued at {datetime.now(timezone.utc).isoformat()} "
+        f"against report {report_name}\n",
+        encoding="utf-8",
+    )
+
+    if not result.dry_run:
         result.data = {**result.data, "async": True}
     return result
 

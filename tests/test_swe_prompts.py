@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cronpypeline.actions import TickContext
+from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.issue_store import create_issue, get_issue
 from cronpypeline.plugins.swe_prompts import (
@@ -246,6 +246,76 @@ class TestQueueFixAgent:
         assert "cd" in entry["prompt"]
         assert "pytest -q" in entry["prompt"]
         assert "ruff check ." in entry["prompt"]
+
+    def test_dedup_marker_written_on_success(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        result = queue_fix_agent(action, ctx)
+        assert result.success is True
+
+        marker = ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
+        assert marker.exists()
+        content = marker.read_text()
+        assert "report.md" in content
+
+    def test_dedup_marker_not_written_on_queue_failure(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        mock_handler = MagicMock()
+        mock_handler.execute.return_value = ActionResult(success=False, stderr="queue failed")
+
+        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler):
+            result = queue_fix_agent(action, ctx)
+
+        assert result.success is False
+        marker = ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
+        assert not marker.exists()
+
+    def test_dedup_marker_not_written_when_execute_raises(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        mock_handler = MagicMock()
+        mock_handler.execute.side_effect = ValueError("boom")
+
+        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler):
+            with pytest.raises(ValueError, match="boom"):
+                queue_fix_agent(action, ctx)
+
+        marker = ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
+        assert not marker.exists()
 
 
 class TestQueueCoderAgent:
