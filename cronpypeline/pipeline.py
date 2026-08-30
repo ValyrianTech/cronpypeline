@@ -926,6 +926,32 @@ class Pipeline:
             })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
+        # Create produced markers
+        for marker_spec in stage.action.produces:
+            create_marker(marker_spec, target_dir, context=marker_ctx)
+
+        # Create completion marker for sync actions (command, subprocess, custom)
+        # Skip if the marker is a symlink with no target — the action created it
+        # (e.g. run_diagnostic creates the symlink as part of its work).
+        if (
+            stage.action.type != ActionType.QUEUE_AGENT
+            and "completion" in stage.markers
+            and not (result.data or {}).get("async", False)
+            and not (
+                stage.markers["completion"].type == MarkerType.SYMLINK
+                and stage.markers["completion"].target is None
+                and marker_exists(stage.markers["completion"], target_dir, context=marker_ctx)
+            )
+        ):
+            create_marker(stage.markers["completion"], target_dir, context=marker_ctx)
+            # Clear rejection marker only when the work is actually completed
+            if "rejection" in stage.markers:
+                delete_marker(stage.markers["rejection"], target_dir, context=marker_ctx)
+
+        # Invalidate markers from other stages
+        for inv_spec in stage.invalidates:
+            delete_marker(inv_spec, target_dir, context=marker_ctx)
+
         return TickResult(
             target=target,
             stage_id=stage.id,
