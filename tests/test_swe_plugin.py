@@ -1716,6 +1716,14 @@ class TestShaIsAncestor:
         subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "init"], capture_output=True, check=True)
         assert _sha_is_ancestor(tmp_path, "0" * 40, "main") is False
 
+    def test_returns_false_on_timeout(self, tmp_path):
+        subprocess.run(["git", "init", "-b", "main", str(tmp_path)], capture_output=True, check=True)
+        with patch(
+            "cronpypeline.plugins.swe_plugin.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=60),
+        ):
+            assert _sha_is_ancestor(tmp_path, "abc123", "main") is False
+
 
 # ─── _build_pr_body ─────────────────────────────────────────────────────────
 
