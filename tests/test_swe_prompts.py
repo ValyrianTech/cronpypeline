@@ -319,6 +319,100 @@ class TestQueueFixAgent:
         marker = ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker"
         assert not marker.exists()
 
+    def test_dedup_marker_write_failure_returns_error_and_removes_queue_entry(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        queue_file = tmp_path / "queue" / "FixAgent_20240101_120000.json"
+
+        def mock_execute(queue_action, context):
+            # Actually write the queue file so the fallback path of the
+            # patched write_text is exercised for non-marker writes.
+            queue_file.parent.mkdir(parents=True, exist_ok=True)
+            queue_file.write_text(json.dumps({"agent": "FixAgent"}))
+            return ActionResult(
+                success=True,
+                data={"queue_file": str(queue_file)},
+            )
+
+        mock_handler = MagicMock()
+        mock_handler.execute.side_effect = mock_execute
+
+        real_write_text = Path.write_text
+
+        def failing_write_text(self, data, encoding=None):
+            if self == ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker":
+                raise OSError("disk full")
+            return real_write_text(self, data, encoding=encoding)
+
+        with (
+            patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
+            patch.object(Path, "write_text", new=failing_write_text),
+        ):
+            result = queue_fix_agent(action, ctx)
+
+        assert result.success is False
+        assert "dedup marker" in result.stderr
+        assert "disk full" in result.stderr
+        assert not queue_file.exists()
+
+    def test_dedup_marker_write_failure_returns_error_when_cleanup_fails(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
+
+        queue_file = tmp_path / "queue" / "FixAgent_20240101_120000.json"
+
+        def mock_execute(queue_action, context):
+            # Actually write the queue file so the fallback path of the
+            # patched write_text is exercised for non-marker writes.
+            queue_file.parent.mkdir(parents=True, exist_ok=True)
+            queue_file.write_text(json.dumps({"agent": "FixAgent"}))
+            return ActionResult(
+                success=True,
+                data={"queue_file": str(queue_file)},
+            )
+
+        mock_handler = MagicMock()
+        mock_handler.execute.side_effect = mock_execute
+
+        real_write_text = Path.write_text
+
+        def failing_write_text(self, data, encoding=None):
+            if self == ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker":
+                raise OSError("disk full")
+            return real_write_text(self, data, encoding=encoding)
+
+        with (
+            patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
+            patch.object(Path, "write_text", new=failing_write_text),
+            patch.object(Path, "unlink", side_effect=OSError("unlink failed")),
+        ):
+            result = queue_fix_agent(action, ctx)
+
+        assert result.success is False
+        assert "dedup marker" in result.stderr
+        assert "disk full" in result.stderr
+
 
 class TestQueueCoderAgent:
     """Tests for queue_coder_agent custom action callable."""
