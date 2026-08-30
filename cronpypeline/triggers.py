@@ -136,7 +136,7 @@ def _validate_queue_dir(base_dir: Path, queue_dir: str) -> Path:
     """
     p = Path(queue_dir)
     if ".." in p.parts:
-        raise ValueError(f"Trigger path contains '..' or is absolute: {queue_dir}")
+        raise ValueError(f"Trigger path contains '..': {queue_dir}")
     if p.is_absolute():
         resolved = p.resolve()
     else:

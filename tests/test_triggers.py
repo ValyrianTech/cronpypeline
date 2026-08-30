@@ -174,7 +174,7 @@ class TestQueueEmptyTrigger:
 
     def test_dotdot_queue_dir_raises_value_error(self, tmp_path):
         trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="../outside")
-        with pytest.raises(ValueError, match="contains '\\.\\.' or is absolute"):
+        with pytest.raises(ValueError, match="contains '\\.\\.'"):
             evaluate_trigger(trigger, tmp_path)
 
     def test_absolute_queue_dir_outside_base_raises_value_error(self, tmp_path):
