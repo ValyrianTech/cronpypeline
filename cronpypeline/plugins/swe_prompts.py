@@ -370,8 +370,7 @@ You are on branch `{PHASE_A_BRANCH}`. After making your changes:
         encoding="utf-8",
     )
 
-    if not result.dry_run:
-        result.data = {**result.data, "async": True}
+    result.data = {**result.data, "async": True}
     return result
 
 
