@@ -5273,7 +5273,8 @@ class TestRunDiagnosticWrappers:
         venv = str(target / ".venv" / "bin" / "bandit")
         assert captured["action"].params["command"] == f"{venv} -r repo -f txt"
 
-    def test_run_a5_bandit_venv_binary_without_target(self, tmp_path):
+    def test_run_a5_bandit_venv_binary_uses_target_name(self, tmp_path):
+        """target_dir exists, so the target name is used."""
         target = _make_target_dir(tmp_path)
         (target / ".venv" / "bin").mkdir(parents=True)
         (target / ".venv" / "bin" / "bandit").write_text("")
@@ -5283,6 +5284,14 @@ class TestRunDiagnosticWrappers:
             run_a5_bandit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         venv = str(target / ".venv" / "bin" / "bandit")
         assert captured["action"].params["command"] == f"{venv} -r repo -f txt"
+
+    def test_run_a5_bandit_venv_binary_without_target_dir(self, tmp_path):
+        """target_dir does not exist, so the target falls back to '.'."""
+        ctx = _make_tick_context(tmp_path)
+        captured, fake = self._capture()
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
+            run_a5_bandit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert captured["action"].params["command"] == "bandit -r . -f txt"
 
     def test_run_a6_vulture_venv_binary(self, tmp_path):
         target = _make_target_dir(tmp_path)
