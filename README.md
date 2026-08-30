@@ -353,6 +353,8 @@ The filesystem is the source of truth — no database, no in-memory state:
 
 Trigger `path` values for the file-based triggers (`file_missing`, `file_exists`, `file_older_than`, `marker_state`) must be relative and cannot contain `..` segments or absolute paths; `_validate_trigger_path` rejects path traversal (`..` segments), absolute paths, and any path that resolves outside the workspace/base directory (e.g. via symlinks), raising a `ValueError` for invalid paths instead of silently resolving them.
 
+The `queue_dir` value for the `queue_empty` trigger is validated the same way via `_validate_queue_dir`, which rejects `..` segments, absolute or relative paths that resolve outside the base directory (including via symlinks), raising a `ValueError` for invalid paths.
+
 **Operators for `marker_state`:** `eq`, `ne`, `lt`, `lte`, `gt`, `gte`
 
 **Example:**
