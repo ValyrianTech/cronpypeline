@@ -542,7 +542,7 @@ def commit_phase_a_change(
         env["GIT_COMMITTER_EMAIL"] = PHASE_A_GIT_AUTHOR_EMAIL
         subprocess.run(
             [GIT_BIN, "-C", str(repo_dir), "commit", "-m", message],
-            check=True, env=env, capture_output=True, text=True,
+            check=True, env=env, capture_output=True, text=True, timeout=60,
         )  # nosec B603 - static args
         return _git(repo_dir, "rev-parse", "HEAD").stdout.strip()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):

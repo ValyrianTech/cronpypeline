@@ -644,6 +644,27 @@ class TestCommitPhaseAChange:
         ):
             assert commit_phase_a_change(tmp_path, "timeout") is None
 
+    def test_commit_passes_timeout_to_subprocess_run(self, tmp_path):
+        self._init_repo(tmp_path)
+        (tmp_path / "new.txt").write_text("new")
+
+        def fake_run(args, **kwargs):
+            if "diff" in args:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="new.txt", stderr="")
+            if "rev-parse" in args:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="abc123\n", stderr="")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        with patch(
+            "cronpypeline.plugins.swe_plugin.subprocess.run",
+            side_effect=fake_run,
+        ) as mock_run:
+            commit_phase_a_change(tmp_path, "test: commit with timeout")
+
+        commit_calls = [c for c in mock_run.call_args_list if "commit" in c.args[0]]
+        assert commit_calls, "no git commit subprocess.run call captured"
+        assert commit_calls[-1].kwargs["timeout"] == 60
+
 
 # ─── detect_lint_autofix ────────────────────────────────────────────────────
 
