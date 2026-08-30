@@ -5318,7 +5318,19 @@ class TestRunA9DepAudit:
         with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
                    return_value=self._mock_result(success=False)):
             result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["issues_created"] == 2  # pip is skipped as tooling
+        assert (target / ".SWE" / "issues" / "dep-audit-requests-pysec-2023-74.md").exists()
+        assert (target / ".SWE" / "issues" / "dep-audit-weirdlib-ghsa-1234-5678.md").exists()
+
+    def test_returns_early_when_status_not_fail(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result(success=False, status="PASS")):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
+        assert not list((target / ".SWE" / "issues").glob("dep-audit-*.md"))
 
     def test_returns_early_on_dry_run(self, tmp_path):
         target = _make_target_dir(tmp_path)

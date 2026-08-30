@@ -2468,7 +2468,7 @@ def run_a9_dep_audit(action: ActionSpec, context: TickContext) -> ActionResult:
     )
 
     result = run_diagnostic(action, context)
-    if not result.success or context.dry_run:
+    if context.dry_run:
         return result
 
     stdout = result.stdout or ""
@@ -2542,6 +2542,7 @@ def run_a9_dep_audit(action: ActionSpec, context: TickContext) -> ActionResult:
 
     if result.data:
         result.data["issues_created"] = issues_created
+    result.success = True
     return result
 
 
