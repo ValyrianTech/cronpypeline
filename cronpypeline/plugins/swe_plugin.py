@@ -1284,7 +1284,10 @@ def integration_head_sha(target_dir: Path, default_branch: str) -> str | None:
     :returns: SHA string, or None if neither branch resolves.
     """
     for ref in (INTEGRATION_BRANCH, default_branch):
-        res = _git(target_dir, "rev-parse", "--verify", ref, check=False)
+        try:
+            res = _git(target_dir, "rev-parse", "--verify", ref, check=False)
+        except subprocess.TimeoutExpired:
+            return None
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip()
     return None

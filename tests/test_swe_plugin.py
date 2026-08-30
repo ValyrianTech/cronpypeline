@@ -1649,6 +1649,14 @@ class TestIntegrationHeadSha:
         sha = integration_head_sha(tmp_path, "main")
         assert sha is None
 
+    def test_returns_none_on_git_timeout(self, tmp_path):
+        with patch(
+            "cronpypeline.plugins.swe_plugin._git",
+            side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=60),
+        ):
+            sha = integration_head_sha(tmp_path, "main")
+        assert sha is None
+
 
 # ─── _sha_is_ancestor ────────────────────────────────────────────────────────
 
