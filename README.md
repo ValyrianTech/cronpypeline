@@ -734,6 +734,8 @@ Custom triggers and actions for the SWE pipeline:
 
 Git is invoked via `shutil.which("git")` (resolved to an absolute path, falling back to `"git"`), so the binary location is detected at runtime rather than hardcoded. Git commands are run with a timeout (default 60 seconds), so a hung git command cannot block the pipeline indefinitely.
 
+The SWE pipeline's test-coverage target is configurable per-target via a `coverage_threshold` key in the target's registry config (defaulting to 100%). The threshold drives the `C-coverage` stage (a coverage issue is created when coverage falls below it), the `C-review`/`C-doc-sync`/`C-publish` gates (which only proceed once coverage meets the threshold), and the issue-fix plugin's SELECT/GATE coverage verification (the threshold is stored on the task at SELECT time and enforced at GATE time).
+
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
 
 Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency). The frontmatter parser handles booleans (true/false/yes/no) and null values (null/none/~) in addition to integers, floats, lists, and strings; quoted values containing colons (e.g. `title: "Fix: Login bug"`) are parsed correctly.

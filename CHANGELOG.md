@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- The SWE pipeline's test-coverage target is now configurable per-target via a `coverage_threshold` key in the target's registry config (defaulting to 100%). The threshold drives the `C-coverage` stage (a coverage issue is created when coverage falls below it), the `C-review`/`C-doc-sync`/`C-publish` gates (which only proceed once coverage meets the threshold), and the issue-fix plugin's SELECT/GATE coverage verification (the threshold is stored on the task at SELECT time and enforced at GATE time).
+
 ### Changed
 - `_build_queue_handler` in the SWE prompt builders now raises a `ValueError` when `queue_dir` is missing or empty, instead of silently defaulting to an empty string (which previously resolved to the current working directory). This affects the `queue_fix_agent`, `queue_coder_agent`, and `queue_review_agent` actions, which now require `queue_dir` to be configured either in the stage action params or in the pipeline's top-level `action_handler` config.
 
