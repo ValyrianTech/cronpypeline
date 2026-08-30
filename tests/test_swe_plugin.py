@@ -1985,6 +1985,13 @@ class TestDetectCCoverageIssue:
         ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
         assert detect_c_coverage_issue(ctx) is False
 
+    def test_does_not_fire_with_custom_threshold(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_passing(target, pct=90.0)
+        self._setup_git(target)
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main", "coverage_threshold": 80.0}}
+        assert detect_c_coverage_issue(ctx) is False
+
     def test_does_not_fire_when_no_coverage_report(self, tmp_path):
         target = _make_target_dir(tmp_path)
         _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
@@ -2060,6 +2067,24 @@ class TestRunCCoverageIssue:
         issue_file = target / ".SWE" / "issues" / f"{result.data['issue_id']}.md"
         assert issue_file.exists()
 
+    def test_creates_coverage_issue_with_custom_threshold(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 90.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        ctx = _make_tick_context(target, default_branch="main", coverage_threshold=80.0)
+        result = run_c_coverage_issue(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        issue_file = target / ".SWE" / "issues" / f"{result.data['issue_id']}.md"
+        content = issue_file.read_text()
+        assert "80%" in content
+        assert "100%" not in content
+
 
 # ─── detect_c_review_issue ──────────────────────────────────────────────────
 
@@ -2083,6 +2108,14 @@ class TestDetectCReviewIssue:
         self._setup_passing_with_coverage(target)
         self._setup_git(target)
         ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_review_issue(ctx) is True
+
+    def test_fires_with_custom_threshold(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 90.0%\n")
+        self._setup_git(target)
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main", "coverage_threshold": 80.0}}
         assert detect_c_review_issue(ctx) is True
 
     def test_does_not_fire_when_coverage_below_target(self, tmp_path):
