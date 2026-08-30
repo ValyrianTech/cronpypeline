@@ -515,7 +515,7 @@ class Pipeline:
         # (e.g. agent finished and produced completion) should not trigger re-queue.
         for ss in target_state.stage_states.values():
             if ss.is_stale and ss.is_processing and not ss.is_complete:
-                return self._handle_stale(ss, target, target_dir, target_config, dry_run, verbose)
+                return self._handle_stale(ss, target, target_dir, target_config, target_state, active_stages, dry_run, verbose)
 
         # Find first actionable stage whose trigger condition is met
         trigger_context = {
@@ -830,6 +830,8 @@ class Pipeline:
         target: str,
         target_dir: Path,
         target_config: dict[str, Any],
+        target_state: TargetState,
+        active_stages: list[Stage],
         dry_run: bool,
         verbose: bool,
     ) -> TickResult:
@@ -839,6 +841,8 @@ class Pipeline:
         :param target: Target name.
         :param target_dir: Target directory path.
         :param target_config: Per-target configuration dict.
+        :param target_state: State of the target being processed.
+        :param active_stages: Mode-filtered list of active stages.
         :param dry_run: Whether this is a dry run.
         :param verbose: Whether verbose output is enabled.
         :returns: TickResult — either GAVE_UP, DRY_RUN, ACTION_EXECUTED, or
@@ -958,12 +962,43 @@ class Pipeline:
         for inv_spec in stage.invalidates:
             delete_marker(inv_spec, target_dir, context=marker_ctx)
 
+        # Handle chaining
+        chained: list[str] = []
+        if (
+            stage.chain
+            and stage.action.type != ActionType.QUEUE_AGENT
+            and not (result.data or {}).get("async", False)
+        ):
+            chained_result = self._try_chain(target, target_dir, target_config, target_state, active_stages, dry_run, verbose, stage)
+            if chained_result:
+                final_stage_id, chained, failed_stage_id, failed_result = chained_result
+                if failed_stage_id is not None:
+                    detail = failed_result.stderr or failed_result.stdout if failed_result else None
+                    return TickResult(
+                        target=target,
+                        stage_id=failed_stage_id,
+                        status=TickResultStatus.ACTION_FAILED,
+                        message=f"Chained stage {failed_stage_id} failed: {detail}" if detail else f"Chained stage {failed_stage_id} failed",
+                        stdout=failed_result.stdout if failed_result else "",
+                        stderr=failed_result.stderr if failed_result else "",
+                        chained_stages=chained,
+                        failed_chained_stages=[failed_stage_id],
+                    )
+                return TickResult(
+                    target=target,
+                    stage_id=final_stage_id,
+                    status=TickResultStatus.ACTION_EXECUTED,
+                    message="Chained through stages",
+                    chained_stages=chained,
+                )
+
         return TickResult(
             target=target,
             stage_id=stage.id,
             status=TickResultStatus.ACTION_EXECUTED,
             message=f"Re-queued stale stage (retry {retry_count + 1})",
             stdout=result.stdout,
+            chained_stages=chained,
         )
 
     def status(self, targets: list[str] | None = None) -> dict[str, Any]:
