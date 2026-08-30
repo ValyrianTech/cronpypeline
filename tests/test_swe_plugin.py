@@ -3318,6 +3318,9 @@ class TestRunCDocSyncCheckoutFailure:
             result = run_c_doc_sync(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
         assert "Failed to checkout" in result.stderr
+
+
+class TestRunCPrPublishPushFailure:
     def test_push_failure_returns_failure(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
