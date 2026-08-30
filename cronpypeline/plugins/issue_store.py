@@ -356,7 +356,10 @@ def issue_filename(issue_id: Any) -> str:
     :param issue_id: Issue identifier to sanitize.
     :returns: Safe filename string, or ``"issue"`` if sanitization yields empty.
     """
-    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", str(issue_id)).strip("-")
+    s = str(issue_id)
+    if ".." in s:
+        raise ValueError(f"Issue id contains '..': {issue_id!r}")
+    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", s).strip("-")
     if not safe_id:
         safe_id = "issue"
     return safe_id
