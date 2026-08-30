@@ -140,7 +140,7 @@
         "type": "custom",
         "params": {
           "callable": "cronpypeline.plugins.swe_plugin.run_lint_autofix",
-          "command": "ruff check --fix ."
+          "command": ".venv/bin/ruff check --fix ."
         }
       },
       "chain": true
