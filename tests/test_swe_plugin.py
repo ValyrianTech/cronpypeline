@@ -51,6 +51,7 @@ from cronpypeline.plugins.swe_plugin import (
     _open_issue_count,
     _ordinal_suffix,
     _parse_pip_audit_vulnerabilities,
+    _parse_utc_datetime,
     _read_batch_marker,
     _read_github_session,
     _resolve_latest_report,
@@ -1007,6 +1008,14 @@ class TestDetectB1IssueGathering:
     def test_fires_when_checked_at_invalid(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         session = {"active": False, "completed": False, "checked_at": "bad-date"}
+        (target / ".SWE" / "github_session.json").write_text(json.dumps(session))
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_b1_issue_gathering(ctx) is True
+
+    def test_fires_when_checked_at_naive(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        session = {"active": False, "completed": False, "checked_at": "2025-01-01T00:00:00"}
         (target / ".SWE" / "github_session.json").write_text(json.dumps(session))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
@@ -2619,6 +2628,14 @@ class TestDetectCPrReview:
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "delivery": "open_pr"}}
         assert detect_c_pr_review(ctx) is True
 
+    def test_fires_when_queued_marker_naive(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        (target / ".SWE" / "pr_review_queued.json").write_text(json.dumps({"queued_at": "2025-01-01T00:00:00"}))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "delivery": "open_pr"}}
+        assert detect_c_pr_review(ctx) is True
+
     def test_does_not_fire_when_queued_marker_recent(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
@@ -2763,6 +2780,15 @@ class TestDetectCDocSync:
         self._setup_git(target)
         old_time = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
         (target / ".SWE" / "doc_sync_queued.json").write_text(json.dumps({"queued_at": old_time}))
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert detect_c_doc_sync(ctx) is True
+
+    def test_fires_when_queued_marker_naive(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        self._setup_git(target)
+        (target / ".SWE" / "doc_sync_queued.json").write_text(json.dumps({"queued_at": "2025-01-01T00:00:00"}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_doc_sync(ctx) is True
@@ -5209,6 +5235,24 @@ class TestRunA9DepAudit:
         assert result.data["parsed"]["status"] == "FAIL"
 
 
+class TestParseUtcDatetime:
+    def test_aware_datetime_returns_utc(self):
+        result = _parse_utc_datetime("2025-01-01T00:00:00+00:00")
+        assert result is not None
+        assert result.tzinfo == timezone.utc
+
+    def test_naive_datetime_normalized_to_utc(self):
+        result = _parse_utc_datetime("2025-01-01T00:00:00")
+        assert result is not None
+        assert result.tzinfo == timezone.utc
+
+    def test_invalid_string_returns_none(self):
+        assert _parse_utc_datetime("not-a-date") is None
+
+    def test_none_returns_none(self):
+        assert _parse_utc_datetime(None) is None
+
+
 class TestCountDoneReviewIssuesSinceDt:
     def _issue(self, target, name, created_at):
         path = target / ".SWE" / "issues" / name
@@ -5221,6 +5265,16 @@ class TestCountDoneReviewIssuesSinceDt:
         self._issue(target, "review-old00000.md", "2024-01-01T00:00:00+00:00")
         self._issue(target, "review-bad00000.md", "not-a-date")
         assert _count_done_review_issues(target, since_dt=since) == 2
+
+    def test_counts_naive_created_at_normalized_to_utc(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        since = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        create_issue(
+            target,
+            issue_data={"id": "review-abc12345", "status": "done", "type": "review", "created_at": "2025-06-01T00:00:00"},
+            body="# Review",
+        )
+        assert _count_done_review_issues(target, since_dt=since) == 1
 
 
 class TestFindPreviousReviewShaSinceDt:
@@ -5245,6 +5299,16 @@ class TestFindPreviousReviewShaSinceDt:
             "---\nstatus: done\ntype: review\n---\n# Review\n"
         )
         assert _find_previous_review_sha(target, since_dt=since) is None
+
+    def test_finds_sha_with_naive_created_at(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        since = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        create_issue(
+            target,
+            issue_data={"id": "review-abc12345", "status": "done", "type": "review", "created_at": "2025-06-01T00:00:00"},
+            body="# Review",
+        )
+        assert _find_previous_review_sha(target, since_dt=since) == "abc12345"
 
 
 # ─── _ordinal_suffix ────────────────────────────────────────────────────────
@@ -5329,6 +5393,19 @@ class TestComputeReviewGeneration:
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="abc12345\n", stderr="")
             gen, prev, exceeded = _compute_review_generation(target, {}, "main")
+        assert gen == 2
+        assert prev == "abc12345"
+        assert exceeded is False
+
+    def test_naive_session_start_normalized_to_utc(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._write_session(target, started_at="2025-01-01T00:00:00")
+        create_issue(
+            target,
+            issue_data={"id": "review-abc12345", "status": "done", "type": "review", "created_at": "2025-06-01T00:00:00+00:00"},
+            body="# Review",
+        )
+        gen, prev, exceeded = _compute_review_generation(target, {}, "main")
         assert gen == 2
         assert prev == "abc12345"
         assert exceeded is False

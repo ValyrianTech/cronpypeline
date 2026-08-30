@@ -43,6 +43,21 @@ REVIEW_RANKING_MARKER = f"{SWE_SUBDIR}/markers/review_ranked.json"
 GIT_BIN = shutil.which("git") or "git"
 
 
+def _parse_utc_datetime(s: str) -> datetime | None:
+    """Parse an ISO datetime string, normalizing naive datetimes to UTC.
+
+    :param s: ISO datetime string.
+    :returns: Timezone-aware datetime in UTC, or None if unparseable.
+    """
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, TypeError):
+        return None
+
+
 def detect_open_issue(context: dict[str, Any]) -> bool:
     """Trigger: detect if there's an open issue to work on.
 
@@ -894,13 +909,11 @@ def detect_b1_issue_gathering(context: dict[str, Any]) -> bool:
         # Idle check state — re-check only after interval
         checked_at = session.get("checked_at", "")
         if checked_at:
-            try:
-                last = datetime.fromisoformat(checked_at)
+            last = _parse_utc_datetime(checked_at)
+            if last is not None:
                 ago = (datetime.now(timezone.utc) - last).total_seconds()
                 if ago < GITHUB_RECHECK_SECONDS:
                     return False
-            except ValueError:
-                pass
 
     token = _load_github_token(target_config)
     if not token:
@@ -2551,12 +2564,9 @@ def _count_done_review_issues(
         if since_dt is not None:
             cm = re.search(r"(?m)^created_at:\s*(.+)", head)
             if cm:
-                try:
-                    created = datetime.fromisoformat(cm.group(1).strip())
-                    if created < since_dt:
-                        continue
-                except ValueError:
-                    pass
+                created = _parse_utc_datetime(cm.group(1).strip())
+                if created is not None and created < since_dt:
+                    continue
         count += 1
     return count
 
@@ -2595,14 +2605,13 @@ def _find_previous_review_sha(
         if since_dt is not None:
             cm = re.search(r"(?m)^created_at:\s*(.+)", head)
             if cm:
-                try:
-                    created = datetime.fromisoformat(cm.group(1).strip())
-                    if created < since_dt or (best_created is not None and created <= best_created):
-                        continue
-                    best_created = created
-                    best_path = path
-                except ValueError:
+                created = _parse_utc_datetime(cm.group(1).strip())
+                if created is None:
                     continue
+                if created < since_dt or (best_created is not None and created <= best_created):
+                    continue
+                best_created = created
+                best_path = path
             else:
                 continue
         else:
@@ -2642,10 +2651,7 @@ def _compute_review_generation(
 
     if github_session is not None and github_session.get("active"):
         session_start = github_session.get("started_at", "")
-        try:
-            session_start_dt = datetime.fromisoformat(session_start)
-        except (ValueError, TypeError):
-            session_start_dt = None
+        session_start_dt = _parse_utc_datetime(session_start)
         done_reviews = _count_done_review_issues(target_dir, since_dt=session_start_dt)
         review_gen = done_reviews + 1
         review_gen = max(review_gen, 2)
@@ -2858,12 +2864,13 @@ def detect_c_doc_sync(context: dict[str, Any]) -> bool:
     if queued_marker.exists():
         try:
             data = json.loads(queued_marker.read_text(encoding="utf-8"))
-            queued_at = datetime.fromisoformat(data.get("queued_at", ""))
-            age_mins = (datetime.now(timezone.utc) - queued_at).total_seconds() / 60
-            if age_mins > 30:
-                queued_marker.unlink(missing_ok=True)
-            else:
-                return False
+            queued_at = _parse_utc_datetime(data.get("queued_at", ""))
+            if queued_at is not None:
+                age_mins = (datetime.now(timezone.utc) - queued_at).total_seconds() / 60
+                if age_mins > 30:
+                    queued_marker.unlink(missing_ok=True)
+                else:
+                    return False
         except (OSError, json.JSONDecodeError, ValueError):
             queued_marker.unlink(missing_ok=True)
 
@@ -3245,12 +3252,13 @@ def detect_c_pr_review(context: dict[str, Any]) -> bool:
     if queued_marker.exists():
         try:
             data = json.loads(queued_marker.read_text(encoding="utf-8"))
-            queued_at = datetime.fromisoformat(data.get("queued_at", ""))
-            age_mins = (datetime.now(timezone.utc) - queued_at).total_seconds() / 60
-            if age_mins > 30:
-                queued_marker.unlink(missing_ok=True)
-            else:
-                return False
+            queued_at = _parse_utc_datetime(data.get("queued_at", ""))
+            if queued_at is not None:
+                age_mins = (datetime.now(timezone.utc) - queued_at).total_seconds() / 60
+                if age_mins > 30:
+                    queued_marker.unlink(missing_ok=True)
+                else:
+                    return False
         except (OSError, json.JSONDecodeError, ValueError):
             queued_marker.unlink(missing_ok=True)
 
