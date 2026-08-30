@@ -515,9 +515,8 @@ class TestGitHelper:
         with patch(
             "cronpypeline.plugins.swe_plugin.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=60),
-        ):
-            with pytest.raises(subprocess.TimeoutExpired):
-                _git(tmp_path, "status")
+        ), pytest.raises(subprocess.TimeoutExpired):
+            _git(tmp_path, "status")
 
     def test_git_passes_timeout_to_subprocess_run(self, tmp_path):
         mock_result = subprocess.CompletedProcess(args=["git"], returncode=0, stdout="", stderr="")
@@ -534,9 +533,8 @@ class TestGitHelper:
             side_effect=subprocess.TimeoutExpired(
                 cmd=["git"], timeout=60, output=b"some output", stderr=b"some error",
             ),
-        ):
-            with pytest.raises(subprocess.TimeoutExpired) as exc_info:
-                _git(tmp_path, "status")
+        ), pytest.raises(subprocess.TimeoutExpired) as exc_info:
+            _git(tmp_path, "status")
         assert exc_info.value.stdout == "some output"
         assert exc_info.value.stderr == "some error"
 
