@@ -5282,7 +5282,7 @@ class TestRunDiagnosticWrappers:
         with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic", side_effect=fake):
             run_a5_bandit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         venv = str(target / ".venv" / "bin" / "bandit")
-        assert captured["action"].params["command"] == f"{venv} -r . -f txt"
+        assert captured["action"].params["command"] == f"{venv} -r repo -f txt"
 
     def test_run_a6_vulture_venv_binary(self, tmp_path):
         target = _make_target_dir(tmp_path)
