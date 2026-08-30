@@ -1078,13 +1078,19 @@ def run_gate(repo_dir: Path, task_dir: Path,
     # Measure baseline coverage on integration branch for non-coverage issues
     baseline_pct: float | None = None
     if issue_type != "coverage" and coverage_cmd:
-        _git(repo_dir, "checkout", INTEGRATION_BRANCH, check=False)
+        checkout = _git(repo_dir, "checkout", INTEGRATION_BRANCH, check=False)
+        if checkout.returncode != 0:
+            print(f"  WARNING: failed to checkout {INTEGRATION_BRANCH} for baseline "
+                  f"coverage measurement: {checkout.stderr or checkout.stdout}")
         _, base_out, base_err = _run(coverage_cmd, repo_dir, timeout=900)
         base_counts = _parse_coverage_output(base_out + "\n" + base_err)
         baseline_pct = base_counts.get("coverage_pct", 0.0)
 
     # Verify on the task branch
-    _git(repo_dir, "checkout", branch, check=False)
+    checkout = _git(repo_dir, "checkout", branch, check=False)
+    if checkout.returncode != 0:
+        print(f"  WARNING: failed to checkout task branch {branch} for verification: "
+              f"{checkout.stderr or checkout.stdout}")
 
     type_detail: dict[str, Any] = {}
     if issue_type == "coverage":
