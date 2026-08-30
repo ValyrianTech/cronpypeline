@@ -448,18 +448,26 @@ def reset_issue_status(action: ActionSpec, context: TickContext) -> tuple[bool, 
     return False, f"Issue {issue_id} not found"
 
 
-def _git(repo_dir: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _git(repo_dir: Path, *args: str, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess[str]:
     """Run a git command in the given repo directory.
 
     :param repo_dir: Target repo directory.
     :param args: Git command arguments.
     :param check: If True, raise on non-zero exit.
+    :param timeout: Timeout in seconds for the git command.
     :returns: CompletedProcess result.
     """
-    return subprocess.run(  # pragma: no cover - coverage.py artifact with multi-line return
-        [GIT_BIN, "-C", str(repo_dir), *args],
-        capture_output=True, text=True, check=check,
-    )  # nosec B603 - args are controlled by the plugin
+    try:
+        return subprocess.run(
+            [GIT_BIN, "-C", str(repo_dir), *args],
+            capture_output=True, text=True, check=check, timeout=timeout,
+        )  # nosec B603 - args are controlled by the plugin
+    except subprocess.TimeoutExpired as e:
+        raise subprocess.TimeoutExpired(
+            cmd=e.cmd, timeout=timeout,
+            output=(e.stdout or b"").decode() if isinstance(e.stdout, bytes) else e.stdout,
+            stderr=(e.stderr or b"").decode() if isinstance(e.stderr, bytes) else e.stderr,
+        ) from e
 
 
 def ensure_phase_a_branch(repo_dir: Path, verbose: bool = False) -> bool:
@@ -473,7 +481,7 @@ def ensure_phase_a_branch(repo_dir: Path, verbose: bool = False) -> bool:
     """
     try:
         _git(repo_dir, "rev-parse", "--git-dir")
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
 
     try:
@@ -486,7 +494,7 @@ def ensure_phase_a_branch(repo_dir: Path, verbose: bool = False) -> bool:
                 _git(repo_dir, "checkout", PHASE_A_BRANCH)
             else:
                 _git(repo_dir, "checkout", "-b", PHASE_A_BRANCH)
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
 
     gitignore = repo_dir / ".gitignore"
@@ -537,7 +545,7 @@ def commit_phase_a_change(
             check=True, env=env, capture_output=True, text=True,
         )  # nosec B603 - static args
         return _git(repo_dir, "rev-parse", "HEAD").stdout.strip()
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
 
 
@@ -2899,7 +2907,7 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
     # Checkout integration branch
     try:
         _git(target_dir, "checkout", INTEGRATION_BRANCH)
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return ActionResult(success=False, stderr=f"Failed to checkout {INTEGRATION_BRANCH}")
 
     prompt = _build_doc_sync_prompt(target_dir, repo_name, default_branch, sha, pr_exists)
