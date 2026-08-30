@@ -946,7 +946,7 @@ class Pipeline:
         if (
             stage.action.type != ActionType.QUEUE_AGENT
             and "completion" in stage.markers
-            and not (result.data or {}).get("async", False)
+            and not result.data.get("async", False)
             and not (
                 stage.markers["completion"].type == MarkerType.SYMLINK
                 and stage.markers["completion"].target is None
@@ -967,7 +967,7 @@ class Pipeline:
         if (
             stage.chain
             and stage.action.type != ActionType.QUEUE_AGENT
-            and not (result.data or {}).get("async", False)
+            and not result.data.get("async", False)
         ):
             chained_result = self._try_chain(target, target_dir, target_config, target_state, active_stages, dry_run, verbose, stage)
             if chained_result:
