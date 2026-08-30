@@ -1250,6 +1250,23 @@ class TestTickStaleHandling:
         assert result.status == TickResultStatus.ACTION_EXECUTED
         assert (target_dir / "a.md").exists()
 
+    def test_stale_sync_action_deletes_processing_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_sync_stage(workspace)
+        assert (target_dir / ".processing").exists()
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (target_dir / "a.md").exists()
+        assert not (target_dir / ".processing").exists()
+
+        status = pipeline.status(targets=["my-repo"])
+        stage_status = status["my-repo"]["A0"]
+        assert stage_status["complete"] is True
+        assert stage_status["processing"] is False
+
     def test_stale_sync_action_creates_produces_markers(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()

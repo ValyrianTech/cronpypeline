@@ -921,20 +921,29 @@ class Pipeline:
                 stderr=result.stderr,
             )
 
-        # Update processing marker with result data
-        if result.success and result.data and "processing" in stage.markers:
-            # Async custom actions are treated as a fresh start (retry_count reset to 0),
-            # matching the normal execution path.
-            new_retry_count = 0 if (
-                stage.action.type == ActionType.CUSTOM
-                and result.data.get("async", False)
-            ) else retry_count + 1
-            processing_spec = replace(stage.markers["processing"], content={
-                **stage.markers["processing"].content,
-                "retry_count": new_retry_count,
-                **result.data,
-            })
-            create_marker(processing_spec, target_dir, context=marker_ctx)
+        # Update processing marker with result data, or delete it for sync actions
+        if result.success and "processing" in stage.markers:
+            is_async = (
+                stage.action.type == ActionType.QUEUE_AGENT
+                or (stage.action.type == ActionType.CUSTOM and result.data.get("async", False))
+            )
+            if is_async:
+                # Async custom actions are treated as a fresh start (retry_count reset to 0),
+                # matching the normal execution path.
+                new_retry_count = 0 if (
+                    stage.action.type == ActionType.CUSTOM
+                    and result.data.get("async", False)
+                ) else retry_count + 1
+                processing_spec = replace(stage.markers["processing"], content={
+                    **stage.markers["processing"].content,
+                    "retry_count": new_retry_count,
+                    **result.data,
+                })
+                create_marker(processing_spec, target_dir, context=marker_ctx)
+            else:
+                # Sync actions never have processing markers in the normal path.
+                # Delete the leftover processing marker after successful re-execution.
+                delete_marker(stage.markers["processing"], target_dir, context=marker_ctx)
 
         # Create produced markers
         for marker_spec in stage.action.produces:
