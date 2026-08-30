@@ -42,6 +42,7 @@
 - The issue store's YAML frontmatter parser (parse_frontmatter) now correctly handles quoted values containing colons (e.g. `title: "Fix: Login bug"`), instead of truncating the value at the first colon.
 - The SWE plugin now normalizes naive datetime strings to UTC when parsing timestamps from GitHub session files, review issue frontmatter, and queued markers (doc_sync, pr_review), preventing comparison errors and incorrect behavior when naive datetimes are compared against timezone-aware datetimes.
 - The SWE plugin's `_git` helper now enforces a timeout (default 60 seconds) on git subprocess calls, so a hung git command can no longer block the pipeline indefinitely. On timeout a `TimeoutExpired` is raised (with stdout/stderr decoded to str), and callers (`ensure_phase_a_branch`, `commit_phase_a_change`, `run_c_doc_sync`) now handle `TimeoutExpired` gracefully.
+- When a stale sync action (command, subprocess, or custom) is re-executed successfully, the pipeline now creates the stage's produced markers and completion marker, clears the rejection marker, and invalidates other stages' markers — matching the behavior of the normal (non-stale) execution path. Previously, re-executed stale sync actions never created their completion marker, so the stage would be re-triggered on every subsequent tick.
 
 ### Security
 - Addressed bandit findings: added nosec annotations for intentional subprocess/shell usage, resolved git binary via shutil.which, and validated HTTP URL schemes.

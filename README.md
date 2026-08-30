@@ -451,6 +451,8 @@ Each stage has a `timeout_minutes` config. If a task's processing marker is olde
 
 In dry-run mode, the pipeline reports what it would do — "Would re-queue stale stage X" or "Would give up on stale stage X (retry N >= max M)" — without actually deleting the processing marker or re-queueing. When the re-executed (re-queued) action fails, the pipeline returns `ACTION_FAILED` (instead of `ACTION_EXECUTED`), runs the stage's `on_fail` action if configured, and reports the failure message.
 
+On successful re-execution of a sync action (command, subprocess, or custom), the pipeline now creates the stage's produced markers and completion marker, clears the rejection marker, and invalidates other stages' markers — consistent with the normal execution path — so the stage is not re-triggered on subsequent ticks.
+
 **Queue-file-based staleness**: If the processing marker contains a `queue_file` field, staleness is detected immediately when the queue file is gone (agent finished without producing completion) — no waiting for the timeout.
 
 ### Retries and give-up
