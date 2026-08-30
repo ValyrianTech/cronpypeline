@@ -172,6 +172,21 @@ class TestQueueEmptyTrigger:
         trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir=str(tmp_path / "nonexistent_queue"))
         assert evaluate_trigger(trigger, tmp_path) is True
 
+    def test_absolute_queue_dir_within_base_is_accepted(self, tmp_path):
+        """An absolute queue_dir path that stays within the base directory is accepted.
+
+        Unlike ``_validate_trigger_path`` (which rejects absolute paths),
+        ``_validate_queue_dir`` deliberately allows absolute paths as long as they
+        resolve within the base directory.
+        """
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir=str(queue_dir))
+        assert evaluate_trigger(trigger, tmp_path) is True
+
+        (queue_dir / "task1.json").write_text("{}")
+        assert evaluate_trigger(trigger, tmp_path) is False
+
     def test_dotdot_queue_dir_raises_value_error(self, tmp_path):
         trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="../outside")
         with pytest.raises(ValueError, match="contains '\\.\\.'"):
