@@ -175,6 +175,48 @@ class TestCLIMain:
         assert exit_code == 0
         assert not (workspace / "my-repo" / "a.md").exists()
 
+    def test_cli_reset_target_path_traversal(self, tmp_path, capsys):
+        """--reset-target with a path traversal target should error."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        exit_code = main(["--config", str(config_file), "--reset-target", "../../etc"])
+        assert exit_code == 1
+        assert "Error" in capsys.readouterr().err
+
+    def test_cli_reset_stage_path_traversal(self, tmp_path, capsys):
+        """--reset-stage with a path traversal target should error."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        exit_code = main([
+            "--config", str(config_file),
+            "--target", "../../etc",
+            "--reset-stage", "A0",
+        ])
+        assert exit_code == 1
+        assert "Error" in capsys.readouterr().err
+
+    def test_cli_tick_path_traversal(self, tmp_path, capsys):
+        """Normal tick with a path traversal target should error."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        exit_code = main(["--config", str(config_file), "--target", "../../etc"])
+        assert exit_code == 1
+        assert "Error" in capsys.readouterr().err
+
+    def test_cli_tick_all_path_traversal(self, tmp_path, capsys):
+        """--all with a malicious target name should error."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        config_data = json.loads(config_file.read_text())
+        config_data["targets"] = {"type": "static", "items": ["../../etc"]}
+        config_file.write_text(json.dumps(config_data))
+        exit_code = main(["--config", str(config_file), "--all"])
+        assert exit_code == 1
+        assert "Error" in capsys.readouterr().err
+
+    def test_cli_status_path_traversal(self, tmp_path, capsys):
+        """--status with a path traversal target should error."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        exit_code = main(["--config", str(config_file), "--target", "../../etc", "--status"])
+        assert exit_code == 1
+        assert "Error" in capsys.readouterr().err
+
     def test_cli_all_targets_action_failed_returns_error(self, tmp_path):
         """--all with a failing action should return error code 1."""
         config_file, workspace = self._make_config_file(tmp_path)

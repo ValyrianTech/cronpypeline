@@ -9,7 +9,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from cronpypeline.pipeline import Pipeline, TickResultStatus
+from cronpypeline.pipeline import Pipeline, TickResultStatus, _validate_target_name
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -99,13 +99,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         targets = None
         if args.target:
             targets = [args.target]
-        status = pipeline.status(targets)
+        try:
+            status = pipeline.status(targets)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
         print(json.dumps(status, indent=2))
         return 0
 
     # Handle --reset-stage
     if args.reset_stage:
         target = args.target or "."
+        try:
+            _validate_target_name(target)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
         target_dir = pipeline.workspace_dir / target
         for stage in pipeline.config.stages:
             if stage.id == args.reset_stage:
@@ -118,6 +127,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Handle --reset-target
     if args.reset_target:
+        try:
+            _validate_target_name(args.reset_target)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
         target_dir = pipeline.workspace_dir / args.reset_target
         for stage in pipeline.config.stages:
             from cronpypeline.markers import delete_marker
@@ -128,7 +142,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Normal tick execution
     if args.all:
-        results = pipeline.tick_all(dry_run=args.dry_run, verbose=args.verbose)
+        try:
+            results = pipeline.tick_all(dry_run=args.dry_run, verbose=args.verbose)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
         for result in results:
             print(result)
         # Return non-zero if any action failed
@@ -136,11 +154,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         return 0
     else:
-        result = pipeline.tick(
-            target=args.target,
-            dry_run=args.dry_run,
-            verbose=args.verbose,
-        )
+        try:
+            result = pipeline.tick(
+                target=args.target,
+                dry_run=args.dry_run,
+                verbose=args.verbose,
+            )
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
         print(result)
         if result.status == TickResultStatus.ACTION_FAILED:
             return 1

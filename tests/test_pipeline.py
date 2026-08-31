@@ -17,8 +17,7 @@ from cronpypeline.config import (
     TriggerType,
 )
 from cronpypeline.markers import MarkerType
-from cronpypeline.pipeline import Pipeline, TickResult, TickResultStatus
-
+from cronpypeline.pipeline import Pipeline, TickResult, TickResultStatus, _validate_target_name
 
 def make_simple_config(workspace_dir, stages=None, targets=None):
     """Helper to build a minimal PipelineConfig dict."""
@@ -72,6 +71,112 @@ class TestPipelineCreation:
         config_file.write_text(json.dumps(config_data))
         pipeline = Pipeline.from_config(config_file)
         assert pipeline.config.name == "file-pipeline"
+
+
+class TestValidateTargetName:
+    """Tests for target name path-traversal validation."""
+
+    def _make_pipeline(self, workspace):
+        return Pipeline(PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [],
+        }))
+
+    def test_valid_target_names_pass(self):
+        assert _validate_target_name("my-repo") == "my-repo"
+        assert _validate_target_name("repo1") == "repo1"
+        assert _validate_target_name(".") == "."
+
+    def test_empty_string_rejected(self):
+        with pytest.raises(ValueError):
+            _validate_target_name("")
+
+    def test_whitespace_only_rejected(self):
+        with pytest.raises(ValueError):
+            _validate_target_name("   ")
+
+    def test_dot_dot_rejected(self):
+        with pytest.raises(ValueError):
+            _validate_target_name("../etc")
+
+    def test_absolute_path_rejected(self):
+        with pytest.raises(ValueError):
+            _validate_target_name("/etc/passwd")
+
+    def test_tick_rejects_empty_target(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        pipeline = self._make_pipeline(workspace)
+        with pytest.raises(ValueError):
+            pipeline.tick(target="")
+
+    def test_status_rejects_empty_target(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        pipeline = self._make_pipeline(workspace)
+        with pytest.raises(ValueError):
+            pipeline.status(targets=[""])
+
+    def test_tick_rejects_traversal_target(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        pipeline = self._make_pipeline(workspace)
+        with pytest.raises(ValueError):
+            pipeline.tick(target="../../etc")
+
+    def test_tick_all_rejects_traversal_target(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["../../etc"]},
+            "stages": [],
+        })
+        pipeline = Pipeline(config)
+        with pytest.raises(ValueError):
+            pipeline.tick_all()
+
+    def test_tick_single_rejects_traversal_target(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        pipeline = self._make_pipeline(workspace)
+        with pytest.raises(ValueError):
+            pipeline._tick_single("../../etc", {}, False, False)
+
+    def test_status_rejects_traversal_target(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        pipeline = self._make_pipeline(workspace)
+        with pytest.raises(ValueError):
+            pipeline.status(targets=["../../etc"])
+
+    def test_tick_without_target_rejects_traversal_config(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["../../etc"]},
+            "stages": [],
+        })
+        pipeline = Pipeline(config)
+        with pytest.raises(ValueError):
+            pipeline.tick()
+
+    def test_status_without_targets_rejects_traversal_config(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["../../etc"]},
+            "stages": [],
+        })
+        pipeline = Pipeline(config)
+        with pytest.raises(ValueError):
+            pipeline.status()
 
 
 class TestTickResultStr:
