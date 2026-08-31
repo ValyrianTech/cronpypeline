@@ -9,7 +9,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from cronpypeline.pipeline import Pipeline, TickResultStatus
+from cronpypeline.pipeline import Pipeline, TickResultStatus, _validate_target_name
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -106,6 +106,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Handle --reset-stage
     if args.reset_stage:
         target = args.target or "."
+        try:
+            _validate_target_name(target)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
         target_dir = pipeline.workspace_dir / target
         for stage in pipeline.config.stages:
             if stage.id == args.reset_stage:
@@ -118,6 +123,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Handle --reset-target
     if args.reset_target:
+        try:
+            _validate_target_name(args.reset_target)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
         target_dir = pipeline.workspace_dir / args.reset_target
         for stage in pipeline.config.stages:
             from cronpypeline.markers import delete_marker

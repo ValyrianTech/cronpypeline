@@ -37,6 +37,21 @@ from cronpypeline.targets import load_targets, load_targets_with_config
 from cronpypeline.triggers import evaluate_trigger, resolve_custom_callable
 
 
+def _validate_target_name(target: str) -> str:
+    """Validate a target name to prevent path traversal.
+
+    Rejects names containing '..', absolute paths, or path separators.
+
+    :param target: Target name to validate.
+    :returns: The validated target name.
+    :raises ValueError: If the target name is invalid.
+    """
+    t = Path(target)
+    if ".." in t.parts or t.is_absolute():
+        raise ValueError(f"Invalid target name: {target!r}")
+    return target
+
+
 class TickResultStatus(str, Enum):
     """Status values for a tick result."""
 
@@ -200,8 +215,11 @@ class Pipeline:
         if target is None:
             target_objs = load_targets_with_config(self.config.targets)
             targets = [t.name for t in target_objs]
+            for name in targets:
+                _validate_target_name(name)
             target_config_map = {t.name: t.config for t in target_objs}
         else:
+            _validate_target_name(target)
             targets = [target]
             target_config_map = {target: {}}
             # Try to enrich config from registry
@@ -255,6 +273,8 @@ class Pipeline:
         """
         target_objs = load_targets_with_config(self.config.targets)
         targets = [t.name for t in target_objs]
+        for name in targets:
+            _validate_target_name(name)
         target_config_map = {t.name: t.config for t in target_objs}
 
         self.lock.dry_run = dry_run
@@ -367,6 +387,7 @@ class Pipeline:
         :param verbose: Whether verbose output is enabled.
         :returns: TickResult for the target.
         """
+        _validate_target_name(target)
         target_dir = self.workspace_dir / target
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1018,6 +1039,9 @@ class Pipeline:
         """
         if targets is None:
             targets = load_targets(self.config.targets)
+
+        for name in targets:
+            _validate_target_name(name)
 
         current_mode = self._get_current_mode()
         active_stages = []
