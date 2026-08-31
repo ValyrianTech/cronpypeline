@@ -17,7 +17,13 @@ from cronpypeline.config import (
     TriggerType,
 )
 from cronpypeline.markers import MarkerType
-from cronpypeline.pipeline import Pipeline, TickResult, TickResultStatus, _validate_target_name
+from cronpypeline.pipeline import (
+    Pipeline,
+    TickResult,
+    TickResultStatus,
+    _validate_target_name,
+)
+
 
 def make_simple_config(workspace_dir, stages=None, targets=None):
     """Helper to build a minimal PipelineConfig dict."""
