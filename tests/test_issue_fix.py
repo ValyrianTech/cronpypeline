@@ -599,6 +599,19 @@ class TestPromptBuilders:
         r = _build_review_prompt(repo_dir, "repo", td, Issue(id="1", body="Review", type="review"))
         assert "cd " + shlex.quote(str(repo_dir)) + " &&" in r
 
+    def test_review_prompt_quotes_repo_name(self, tmp_path):
+        td = tmp_path / "t"; td.mkdir()
+        repo_name = "repo with spaces"
+        r = _build_review_prompt(tmp_path, repo_name, td, Issue(id="1", body="Review", type="review"))
+        assert "issue_store file " + shlex.quote(repo_name) + " " in r
+        assert f"issue_store file {repo_name} " not in r
+
+    def test_review_prompt_quotes_repo_name_with_special_chars(self, tmp_path):
+        td = tmp_path / "t"; td.mkdir()
+        repo_name = "repo;rm -rf /"
+        r = _build_review_prompt(tmp_path, repo_name, td, Issue(id="1", body="Review", type="review"))
+        assert "issue_store file " + shlex.quote(repo_name) + " " in r
+
 
 class TestQueueAgent:
     def test_success(self, tmp_path):

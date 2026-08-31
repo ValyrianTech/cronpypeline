@@ -817,7 +817,7 @@ def _build_review_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
         f"## Step 3 — file issues for each finding\n\n"
         f"For every finding, write the issue body to a temp file, then use "
         f"the SWE issue CLI to file it:\n"
-        f"  cd {shlex.quote(str(repo_dir))} && python3 -m cronpypeline.plugins.issue_store file {repo_name} "
+        f"  cd {shlex.quote(str(repo_dir))} && python3 -m cronpypeline.plugins.issue_store file {shlex.quote(repo_name)} "
         f"--type <bug|enhancement|refactor> --title \"<title>\" --body-file /tmp/swe_finding.md\n\n"
         f"Each issue should include the file path, line numbers, and a concrete "
         f"description of the problem and suggested fix.\n\n"
