@@ -13,6 +13,7 @@ or:
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +159,87 @@ def _serialize_stage(stage: Any) -> dict[str, Any]:
     }
 
 
+def _read_json(path: Path) -> dict[str, Any] | None:
+    """Read a JSON file, returning None if missing, unreadable, or not a dict.
+
+    :param path: Path to the JSON file.
+    :returns: Parsed dict, or None.
+    """
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _swe_issue_counts(issues_dir: Path) -> dict[str, int] | None:
+    """Count issues in .SWE/issues/ by frontmatter status.
+
+    :param issues_dir: The .SWE/issues directory.
+    :returns: Mapping of status -> count, or None if no issues.
+    """
+    if not issues_dir.is_dir():
+        return None
+    counts: dict[str, int] = {}
+    for path in issues_dir.glob("*.md"):
+        try:
+            head = path.read_text(encoding="utf-8")[:800]
+        except OSError:
+            continue
+        if not head.startswith("---"):
+            continue
+        m = re.search(r"(?m)^status:\s*(\S+)", head)
+        status = m.group(1) if m else "unknown"
+        counts[status] = counts.get(status, 0) + 1
+    return counts or None
+
+
+def _swe_state(target_dir: Path) -> dict[str, Any] | None:
+    """Read SWE-pipeline plugin state for a target (PR, session, issues).
+
+    These live in plugin-owned files under .SWE/ that the generic marker
+    derivation does not see. Returns None for non-SWE targets.
+
+    :param target_dir: Target repo directory.
+    :returns: Dict with ``pr``, ``session``, and ``issues`` keys, or None.
+    """
+    swe_dir = target_dir / ".SWE"
+    if not swe_dir.is_dir():
+        return None
+
+    pr = None
+    pr_data = _read_json(swe_dir / "pr_published.json")
+    if pr_data is not None:
+        pr = {
+            "pr_number": pr_data.get("pr_number"),
+            "pr_url": pr_data.get("pr_url", ""),
+            "pr_state": pr_data.get("pr_state", "open"),
+            "pr_review_cycles": pr_data.get("pr_review_cycles", 0),
+            "filed_issues": pr_data.get("filed_issues", []),
+            "published_at": pr_data.get("published_at", ""),
+            "merged_at": pr_data.get("merged_at", ""),
+            "closed_at": pr_data.get("closed_at", ""),
+        }
+
+    session = None
+    session_data = _read_json(swe_dir / "github_session.json")
+    if session_data is not None:
+        session = {
+            "active": bool(session_data.get("active")),
+            "issue_id": session_data.get("issue_id", ""),
+            "github_number": session_data.get("github_number"),
+            "completed": bool(session_data.get("completed")),
+        }
+
+    issues = _swe_issue_counts(swe_dir / "issues")
+
+    if pr is None and session is None and issues is None:
+        return None
+    return {"pr": pr, "session": session, "issues": issues}
+
+
 # ─── API routes ──────────────────────────────────────────────────────────────
 
 
@@ -277,6 +359,7 @@ def pipeline_status(config: str = Query(...)) -> dict[str, Any]:
             "has_processing": ts.has_processing,
             "next_actionable": first.stage.id if first else None,
             "target_dir_exists": (workspace / target).is_dir(),
+            "swe": _swe_state(workspace / target),
         }
 
     return {

@@ -16,6 +16,12 @@ tick loop checks).
 - Click any stage node for a detail panel (trigger/action type, timeouts,
   retries, processing marker JSON)
 - Mode badge, retry/rejection count badges, target-lock ACTIVE indicator
+- SWE plugin state badges per target (when a `.SWE/` directory exists):
+  PR number + lifecycle state (open / approved / changes requested / merged /
+  rejected, linked to GitHub) from `.SWE/pr_published.json`, active GitHub
+  session badge from `.SWE/github_session.json`, and issue counts by status
+  from `.SWE/issues/*.md` — the detail panel for PR-related stages shows the
+  raw PR/session JSON
 - Auto-refresh via polling every 4 seconds
 
 ## Setup

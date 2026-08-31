@@ -291,6 +291,45 @@ function renderSummary(summary) {
   }).join('');
 }
 
+// SWE plugin state badges (PR / GitHub session / issue counts)
+const PR_STATE_STYLES = {
+  open:               { text: 'PR OPEN',              cls: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40' },
+  approved:           { text: 'PR APPROVED',          cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40' },
+  changes_requested:  { text: 'PR CHANGES REQUESTED', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/40' },
+  merged:             { text: 'PR MERGED',            cls: 'bg-violet-500/15 text-violet-300 border-violet-500/40' },
+  rejected:           { text: 'PR REJECTED',          cls: 'bg-rose-500/15 text-rose-300 border-rose-500/40' },
+};
+
+function sweBadges(swe) {
+  if (!swe) return '';
+  const badges = [];
+
+  if (swe.pr && swe.pr.pr_number) {
+    const style = PR_STATE_STYLES[swe.pr.pr_state] || PR_STATE_STYLES.open;
+    const cycles = swe.pr.pr_review_cycles > 0
+      ? ` · ${swe.pr.pr_review_cycles} review cycle${swe.pr.pr_review_cycles > 1 ? 's' : ''}` : '';
+    const inner = `#${esc(swe.pr.pr_number)} · ${esc(style.text)}${cycles}`;
+    const pill = `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold border ${style.cls}">${inner}</span>`;
+    badges.push(swe.pr.pr_url
+      ? `<a href="${esc(swe.pr.pr_url)}" target="_blank" rel="noopener" class="hover:opacity-80" title="open PR on GitHub">${pill}</a>`
+      : pill);
+  }
+
+  if (swe.session && swe.session.active) {
+    const gh = swe.session.github_number ? ` #${esc(swe.session.github_number)}` : '';
+    badges.push(`<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-indigo-500/15 text-indigo-300 border-indigo-500/40" title="GitHub session issue: ${esc(swe.session.issue_id)}">GH SESSION${gh}</span>`);
+  }
+
+  if (swe.issues) {
+    const parts = Object.entries(swe.issues)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([status, n]) => `${n} ${esc(status)}`);
+    badges.push(`<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-slate-500/10 text-slate-400 border-slate-600" title="issues in .SWE/issues/">issues: ${parts.join(' · ')}</span>`);
+  }
+
+  return badges.join('');
+}
+
 // Pipeline lanes (subway map per target)
 function stageName(sid) {
   const meta = (pipelineMeta?.stages || []).find(s => s.id === sid);
@@ -366,6 +405,7 @@ function renderLanes(status) {
       <div class="flex items-center gap-3 flex-wrap">
         <h3 class="font-bold font-[JetBrains_Mono] text-slate-100"><span class="text-slate-500 font-normal text-xs mr-1">target:</span>${esc(target)}</h3>
         ${procBadge}
+        ${sweBadges(ts.swe)}
         ${dirWarn}
         ${hiddenBadge}
         <div class="flex-1"></div>
@@ -424,6 +464,21 @@ function openPanel(target, stageId) {
   }
   if (st && st.stateless) {
     html += '<p class="text-slate-500 text-xs mt-4">This stage defines no markers — its state is managed by custom plugin logic and is not tracked here.</p>';
+  }
+
+  // PR-related stages: show the plugin-owned PR state from .SWE/pr_published.json
+  const swe = lastStatus?.targets?.[target]?.swe;
+  if (swe && swe.pr && ['C-pr-status', 'C-publish', 'C-pr-review', 'C-pr-title'].includes(stageId)) {
+    html += `<div>
+      <div class="text-xs uppercase tracking-widest text-slate-500 mb-2 mt-4">PR state (.SWE/pr_published.json)</div>
+      <pre class="json-blob">${esc(JSON.stringify(swe.pr, null, 2))}</pre>
+    </div>`;
+  }
+  if (swe && swe.session && ['C-session-terminal', 'C-pr-status', 'B1-fetch-issues'].includes(stageId)) {
+    html += `<div>
+      <div class="text-xs uppercase tracking-widest text-slate-500 mb-2 mt-4">GitHub session (.SWE/github_session.json)</div>
+      <pre class="json-blob">${esc(JSON.stringify(swe.session, null, 2))}</pre>
+    </div>`;
   }
   els.panelBody.innerHTML = html;
 
