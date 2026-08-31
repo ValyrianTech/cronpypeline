@@ -1,8 +1,10 @@
 """Tests for webui SWE plugin state helpers (_swe_state, _read_json, _swe_issue_counts)."""
 
+import importlib
 import json
 import sys
 from pathlib import Path
+from unittest import mock
 
 # webui/ is not a package — add it to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "webui"))
@@ -129,3 +131,16 @@ class TestSweState:
         assert result["pr"]["pr_review_cycles"] == 0
         assert result["pr"]["filed_issues"] == []
         assert result["pr"]["pr_url"] == ""
+
+
+class TestModuleAppFallback:
+    def test_app_none_when_build_raises_non_import_error(self):
+        """Module-level ``app`` should be None when _build_app raises a non-ImportError."""
+        original = app._build_app
+        try:
+            with mock.patch.object(app, "_build_app", side_effect=RuntimeError("boom")):
+                importlib.reload(app)
+            assert app.app is None
+        finally:
+            with mock.patch.object(app, "_build_app", original):
+                importlib.reload(app)

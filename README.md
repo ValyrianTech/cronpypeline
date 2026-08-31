@@ -849,7 +849,7 @@ configs/
 └── vnn_pipeline.json         # Full VNN pipeline example config
 ```
 
-The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) for visualizing pipeline state. The webui module can now be imported without fastapi/pydantic installed — the FastAPI app is built lazily via a `_build_app()` function, and the module-level `app` is `None` when those dependencies are missing (useful for importing helper functions without installing the web stack).
+The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) for visualizing pipeline state. The webui module can now be imported even when the web stack is unavailable or broken — the FastAPI app is built lazily via a `_build_app()` function, and the module-level `app` is `None` when app construction fails for any reason (missing fastapi/pydantic, or any other error during app construction). This is useful for importing helper functions without installing the web stack.
 
 ## Testing
 

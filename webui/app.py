@@ -431,7 +431,7 @@ def _build_app():
 
 try:
     app = _build_app()
-except ImportError:
+except Exception:  # noqa: BLE001
     app = None
 
 
