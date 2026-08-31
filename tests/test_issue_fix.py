@@ -580,6 +580,7 @@ class TestPromptBuilders:
         repo_dir = tmp_path / "repo;rm -rf /"
         r = _build_coder_prompt(repo_dir, "repo", td, "br", Issue(id="1", body="Fix", type="bug"), "pytest", "pip-audit")
         assert "cd " + shlex.quote(str(repo_dir)) + " &&" in r
+        assert f"cd {repo_dir} &&" not in r
 
     def test_coverage_prompt_quotes_repo_dir_with_special_chars(self, tmp_path):
         td = tmp_path / "t"; td.mkdir()
