@@ -1097,8 +1097,17 @@ def run_gate(repo_dir: Path, task_dir: Path,
     # Verify on the task branch
     checkout = _git(repo_dir, "checkout", branch, check=False)
     if checkout.returncode != 0:
-        print(f"  WARNING: failed to checkout task branch {branch} for verification: "
+        print(f"  ERROR: failed to checkout task branch {branch} for verification: "
               f"{checkout.stderr or checkout.stdout}")
+        # Write a failed gate result
+        (task_dir / GATE_RESULT_FILE).write_text(json.dumps({
+            "task_id": task["task_id"],
+            "gated_at": datetime.now(timezone.utc).isoformat(),
+            "issue_type": issue_type,
+            "passed": False,
+            "error": f"Failed to checkout task branch {branch}",
+        }, indent=2), encoding="utf-8")
+        return False
 
     type_detail: dict[str, Any] = {}
     if issue_type == "coverage":

@@ -1219,17 +1219,18 @@ class TestRunGate:
         subprocess.run(["git", "-C", str(t), "add", "-A"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(t), "commit", "-m", "f"], capture_output=True, check=True)
         td = tmp_path / "t"; self._make_task(tmp_path, td)
-        original_git = __import__("cronpypeline.plugins.swe_plugin", fromlist=["_git"])._git
 
         def fake_git(repo, *args, check=True):
-            if args[0] == "checkout" and len(args) > 1 and args[1] == "swe-pipeline/task_t1" and not check:
-                return subprocess.CompletedProcess(["git"], 1, "", "checkout failed")
-            return original_git(repo, *args, check=check)
+            return subprocess.CompletedProcess(["git"], 1, "", "checkout failed")
 
-        with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git), \
-             patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "", "")):
-            assert run_gate(t, td, verbose=True) is True
-        assert "WARNING" in capsys.readouterr().out
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
+            assert run_gate(t, td, verbose=True) is False
+        out = capsys.readouterr().out
+        assert "ERROR" in out
+        gate = json.loads((td / GATE_RESULT_FILE).read_text())
+        assert gate["passed"] is False
+        assert "error" in gate
+        assert "Failed to checkout task branch" in gate["error"]
 
     def test_no_source_issue_id(self, tmp_path):
         t = self._setup_git_with_branch(tmp_path)
