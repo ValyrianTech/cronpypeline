@@ -152,6 +152,32 @@ class TestValidateTargetName:
         with pytest.raises(ValueError):
             pipeline.status(targets=["../../etc"])
 
+    def test_tick_without_target_rejects_traversal_config(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["../../etc"]},
+            "stages": [],
+        })
+        pipeline = Pipeline(config)
+        with pytest.raises(ValueError):
+            pipeline.tick()
+
+    def test_status_without_targets_rejects_traversal_config(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["../../etc"]},
+            "stages": [],
+        })
+        pipeline = Pipeline(config)
+        with pytest.raises(ValueError):
+            pipeline.status()
+
 
 class TestTickResultStr:
     """Tests for TickResult.__str__ formatting."""
