@@ -170,9 +170,8 @@ class TestMain:
         try:
             app.app = mock.Mock()
             fake_uvicorn = mock.Mock()
-            with mock.patch.dict(sys.modules, {"uvicorn": fake_uvicorn}):
-                with mock.patch("sys.argv", ["app.py", "--host", "0.0.0.0", "--port", "9999"]):
-                    app.main()
+            with mock.patch.dict(sys.modules, {"uvicorn": fake_uvicorn}), mock.patch("sys.argv", ["app.py", "--host", "0.0.0.0", "--port", "9999"]):
+                app.main()
             fake_uvicorn.run.assert_called_once()
             args, kwargs = fake_uvicorn.run.call_args
             assert args[0] is app.app
