@@ -3757,11 +3757,20 @@ class TestDetectCPrReviewNoPrNumber:
 
 
 class TestRunCPrStatusNoPrMarker:
-    def test_no_pr_marker_raises_error(self, tmp_path):
+    def test_no_pr_marker_returns_failure(self, tmp_path):
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target, slug="owner/repo")
-        with pytest.raises(FileNotFoundError):
-            run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "PR marker file not found"
+
+    def test_missing_pr_marker_file_returns_failure_with_stderr(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, slug="owner/repo")
+        result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert isinstance(result, ActionResult)
+        assert result.success is False
+        assert "marker file not found" in result.stderr
 
 
 class TestRunCPrStatusNoToken:

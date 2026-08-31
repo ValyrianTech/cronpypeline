@@ -1921,6 +1921,8 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     target_dir = context.target_dir
     target_config = context.target_config
     pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
+    if not pr_marker.exists():
+        return ActionResult(success=False, stderr="PR marker file not found")
     pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
     pr_number = pr_data["pr_number"]
 
