@@ -2913,7 +2913,7 @@ class TestModeFile:
         result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.ACTION_EXECUTED
 
-    def test_no_mode_file_all_stages_active(self, tmp_path):
+    def test_no_mode_file_modes_restricted_stages_skipped(self, tmp_path):
         """Without mode_file configured, stages with modes restrictions are skipped."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
