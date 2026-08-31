@@ -787,6 +787,8 @@ Custom action callables that build prompts programmatically and queue agents:
 
 These queue builder actions require a `queue_dir` to be configured, either in the stage action params or in the pipeline's top-level `action_handler` config. If `queue_dir` is missing or empty, a `ValueError` is raised.
 
+The issue-fix plugin's prompt builders (`_build_coder_prompt`, `_build_coverage_prompt`, `_build_review_prompt`, and the closing-loop instructions) shell-quote the repository directory path with `shlex.quote()` before embedding it in generated prompts (e.g. `cd {repo_dir} && ...`), preventing command injection when the repo directory path contains spaces or shell metacharacters.
+
 **SWE pipeline config**: A full example config is available at `configs/swe_pipeline.json` with all SWE stages (A1–A9 diagnostics, fix agents, B1, C-select/gate/code/publish/pr-review/pr-status/session-terminal/stale).
 
 #### VNN pipeline plugin (`cronpypeline.plugins.vnn_plugin`)
