@@ -1107,6 +1107,11 @@ def run_gate(repo_dir: Path, task_dir: Path,
             "passed": False,
             "error": f"Failed to checkout task branch {branch}",
         }, indent=2), encoding="utf-8")
+        if source_issue_id:
+            for i in load_issues(repo_dir):
+                if str(i.id) == source_issue_id:
+                    _finalize_issue_outcome(i, repo_dir, passed=False, verbose=verbose)
+                    break
         return False
 
     type_detail: dict[str, Any] = {}
