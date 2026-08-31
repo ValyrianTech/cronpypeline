@@ -175,6 +175,24 @@ class TestCLIMain:
         assert exit_code == 0
         assert not (workspace / "my-repo" / "a.md").exists()
 
+    def test_cli_reset_target_path_traversal(self, tmp_path, capsys):
+        """--reset-target with a path traversal target should error."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        exit_code = main(["--config", str(config_file), "--reset-target", "../../etc"])
+        assert exit_code == 1
+        assert "Error" in capsys.readouterr().err
+
+    def test_cli_reset_stage_path_traversal(self, tmp_path, capsys):
+        """--reset-stage with a path traversal target should error."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        exit_code = main([
+            "--config", str(config_file),
+            "--target", "../../etc",
+            "--reset-stage", "A0",
+        ])
+        assert exit_code == 1
+        assert "Error" in capsys.readouterr().err
+
     def test_cli_all_targets_action_failed_returns_error(self, tmp_path):
         """--all with a failing action should return error code 1."""
         config_file, workspace = self._make_config_file(tmp_path)
