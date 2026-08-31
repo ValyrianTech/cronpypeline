@@ -3393,15 +3393,19 @@ def sync_session_mode(context: dict[str, Any], mode_file: str | None = None) -> 
     if session_file.exists():
         try:
             session_data = json.loads(session_file.read_text())
-            if session_data.get("active") is True:
+            # A completed session is no longer active
+            if session_data.get("active") is True and session_data.get("completed") is not True:
                 mode = "github"
+            # Write mode file even when skipping the tick
+            mode_path.parent.mkdir(parents=True, exist_ok=True)
+            mode_path.write_text(json.dumps({"mode": mode}))
             # Skip tick entirely if the session is completed
             if session_data.get("completed") is True:
                 return False
         except (json.JSONDecodeError, OSError):
             pass
 
-    # Write mode file
+    # Write mode file (for the non-session-file path)
     mode_path.parent.mkdir(parents=True, exist_ok=True)
     mode_path.write_text(json.dumps({"mode": mode}))
 

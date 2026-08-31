@@ -5676,10 +5676,20 @@ class TestRunCReviewIssueGenerations:
 class TestSyncSessionModeCompleted:
     def test_completed_session_returns_false(self, tmp_path):
         target = _make_target_dir(tmp_path)
-        (target / ".SWE" / "github_session.json").write_text(json.dumps({"active": True, "completed": True}))
+        (target / ".SWE" / "github_session.json").write_text(json.dumps({"active": False, "completed": True}))
         mode_file = tmp_path / "mode.json"
         ctx = {"target_dir": str(target), "target_config": {"mode_file": str(mode_file)}}
         assert sync_session_mode(ctx) is False
+        assert json.loads(mode_file.read_text()) == {"mode": "default"}
+
+    def test_completed_previously_active_session_writes_default(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(json.dumps({"active": True, "completed": True}))
+        mode_file = tmp_path / "mode.json"
+        mode_file.write_text(json.dumps({"mode": "github"}))
+        ctx = {"target_dir": str(target), "target_config": {"mode_file": str(mode_file)}}
+        assert sync_session_mode(ctx) is False
+        assert json.loads(mode_file.read_text()) == {"mode": "default"}
 
 
 # ─── run_c_pr_status: already-handled cycle limit + not-all-done ─────────────
