@@ -581,6 +581,27 @@ class TestPromptBuilders:
         r = _build_coder_prompt(repo_dir, "repo", td, "br", Issue(id="1", body="Fix", type="bug"), "pytest", "pip-audit")
         assert "cd " + shlex.quote(str(repo_dir)) + " &&" in r
 
+    def test_coverage_prompt_quotes_repo_dir_with_special_chars(self, tmp_path):
+        td = tmp_path / "t"; td.mkdir()
+        repo_dir = tmp_path / "repo;rm -rf /"
+        r = _build_coverage_prompt(repo_dir, "repo", td, "br", Issue(id="1", body="Cover", type="coverage"), "pt", "cov")
+        assert "cd " + shlex.quote(str(repo_dir)) + " &&" in r
+        assert f"cd {repo_dir} &&" not in r
+
+    def test_review_prompt_quotes_repo_dir_with_special_chars(self, tmp_path):
+        td = tmp_path / "t"; td.mkdir()
+        repo_dir = tmp_path / "repo;rm -rf /"
+        r = _build_review_prompt(repo_dir, "repo", td, Issue(id="1", body="Review", type="review"))
+        assert "cd " + shlex.quote(str(repo_dir)) + " &&" in r
+        assert f"cd {repo_dir} &&" not in r
+
+    def test_closing_loop_quotes_repo_dir_with_special_chars(self, tmp_path):
+        td = tmp_path / "t"; td.mkdir()
+        repo_dir = tmp_path / "repo;rm -rf /"
+        r = _closing_loop_instructions(repo_dir, td, "fix: i1")
+        assert "cd " + shlex.quote(str(repo_dir)) + " &&" in r
+        assert f"cd {repo_dir} &&" not in r
+
     def test_coverage_prompt_quotes_repo_dir(self, tmp_path):
         td = tmp_path / "t"; td.mkdir()
         repo_dir = tmp_path / "repo with spaces"
