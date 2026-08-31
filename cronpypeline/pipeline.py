@@ -40,7 +40,7 @@ from cronpypeline.triggers import evaluate_trigger, resolve_custom_callable
 def _validate_target_name(target: str) -> str:
     """Validate a target name to prevent path traversal.
 
-    Rejects names containing '..', absolute paths, or path separators.
+    Rejects names containing '..' segments or absolute paths.
 
     :param target: Target name to validate.
     :returns: The validated target name.
