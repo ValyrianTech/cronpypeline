@@ -657,7 +657,7 @@ def _closing_loop_instructions(repo_dir: Path, task_dir: Path,
     return (
         f"## Closing the loop (do this LAST, after verification passes)\n\n"
         f"1. Commit your work on the task branch. Run exactly:\n"
-        f"     cd {repo_dir} && git add -A && "
+        f"     cd {shlex.quote(str(repo_dir))} && git add -A && "
         f"git -c user.name='{GIT_AUTHOR_NAME}' "
         f"-c user.email='{GIT_AUTHOR_EMAIL}' "
         f"commit -m \"{commit_subject}\"\n"
@@ -694,7 +694,7 @@ def _build_coder_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
         coverage_block = (
             f"## Before you start: record baseline coverage\n\n"
             f"Run the coverage command to know the starting point:\n\n"
-            f"     cd {repo_dir} && {coverage_cmd}\n\n"
+            f"     cd {shlex.quote(str(repo_dir))} && {coverage_cmd}\n\n"
             f"Your fix MUST NOT reduce coverage. If your changes introduce new "
             f"uncovered lines, you MUST write tests to cover them. The final "
             f"coverage must be at least {coverage_target:.0f}%.\n\n"
@@ -703,13 +703,13 @@ def _build_coder_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
     verif_lines: list[str] = []
     verif_lines.append(
         f"1. The test suite MUST stay green:\n"
-        f"     cd {repo_dir} && {test_cmd}"
+        f"     cd {shlex.quote(str(repo_dir))} && {test_cmd}"
     )
     if coverage_cmd:
         verif_lines.append(
             f"{len(verif_lines) + 1}. Coverage MUST stay at or above "
             f"{coverage_target:.0f}% (write tests for any new code you add):\n"
-            f"     cd {repo_dir} && {coverage_cmd}"
+            f"     cd {shlex.quote(str(repo_dir))} && {coverage_cmd}"
         )
 
     return (
@@ -762,7 +762,7 @@ def _build_coverage_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
         f"## Step 1: measure current coverage FIRST\n\n"
         f"The coverage gaps listed in the issue below may be stale. Before you "
         f"write any tests, run the coverage command to see the REAL gaps:\n\n"
-        f"     cd {repo_dir} && {coverage_cmd}\n\n"
+        f"     cd {shlex.quote(str(repo_dir))} && {coverage_cmd}\n\n"
         f"Use the output from THAT run as your target.\n\n"
         f"## First: plan with the Progress tool\n\n"
         f"After measuring current coverage, use the **Progress** tool to record "
@@ -776,9 +776,9 @@ def _build_coverage_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
         f"## Verification (you MUST run these and they MUST pass)\n\n"
         f"IMPORTANT: `cd` into the repo first for every command.\n"
         f"1. Coverage MUST reach {coverage_target:.0f}%:\n"
-        f"     cd {repo_dir} && {coverage_cmd}\n"
+        f"     cd {shlex.quote(str(repo_dir))} && {coverage_cmd}\n"
         f"2. The test suite MUST stay green:\n"
-        f"     cd {repo_dir} && {test_cmd}\n\n"
+        f"     cd {shlex.quote(str(repo_dir))} && {test_cmd}\n\n"
         + _closing_loop_instructions(repo_dir, task_dir, subject)
     )
 
@@ -813,11 +813,11 @@ def _build_review_prompt(repo_dir: Path, repo_name: str, task_dir: Path,
         f"- **Security**: Injection risks, hardcoded secrets, unsafe deserialization\n"
         f"- **Maintainability**: Dead code, duplicated logic, unclear APIs\n\n"
         f"Use RunCommand to explore the repo structure if needed:\n"
-        f"  cd {repo_dir} && find . -name '*.py' -not -path './.venv/*' | head -30\n\n"
+        f"  cd {shlex.quote(str(repo_dir))} && find . -name '*.py' -not -path './.venv/*' | head -30\n\n"
         f"## Step 3 — file issues for each finding\n\n"
         f"For every finding, write the issue body to a temp file, then use "
         f"the SWE issue CLI to file it:\n"
-        f"  cd {repo_dir} && python3 -m cronpypeline.plugins.issue_store file {repo_name} "
+        f"  cd {shlex.quote(str(repo_dir))} && python3 -m cronpypeline.plugins.issue_store file {repo_name} "
         f"--type <bug|enhancement|refactor> --title \"<title>\" --body-file /tmp/swe_finding.md\n\n"
         f"Each issue should include the file path, line numbers, and a concrete "
         f"description of the problem and suggested fix.\n\n"
