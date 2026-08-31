@@ -88,6 +88,14 @@ class TestValidateTargetName:
         assert _validate_target_name("repo1") == "repo1"
         assert _validate_target_name(".") == "."
 
+    def test_empty_string_rejected(self):
+        with pytest.raises(ValueError):
+            _validate_target_name("")
+
+    def test_whitespace_only_rejected(self):
+        with pytest.raises(ValueError):
+            _validate_target_name("   ")
+
     def test_dot_dot_rejected(self):
         with pytest.raises(ValueError):
             _validate_target_name("../etc")
@@ -95,6 +103,20 @@ class TestValidateTargetName:
     def test_absolute_path_rejected(self):
         with pytest.raises(ValueError):
             _validate_target_name("/etc/passwd")
+
+    def test_tick_rejects_empty_target(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        pipeline = self._make_pipeline(workspace)
+        with pytest.raises(ValueError):
+            pipeline.tick(target="")
+
+    def test_status_rejects_empty_target(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        pipeline = self._make_pipeline(workspace)
+        with pytest.raises(ValueError):
+            pipeline.status(targets=[""])
 
     def test_tick_rejects_traversal_target(self, tmp_path):
         workspace = tmp_path / "workspace"
