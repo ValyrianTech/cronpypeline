@@ -1219,6 +1219,7 @@ class TestRunGate:
         subprocess.run(["git", "-C", str(t), "add", "-A"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(t), "commit", "-m", "f"], capture_output=True, check=True)
         td = tmp_path / "t"; self._make_task(tmp_path, td)
+        _write_issue(t / ".SWE" / "issues", "iss-1", status="triaged")
 
         def fake_git(repo, *args, check=True):
             return subprocess.CompletedProcess(["git"], 1, "", "checkout failed")
@@ -1231,6 +1232,9 @@ class TestRunGate:
         assert gate["passed"] is False
         assert "error" in gate
         assert "Failed to checkout task branch" in gate["error"]
+        issue_text = (t / ".SWE" / "issues" / "iss-1.md").read_text()
+        assert "triaged" not in issue_text
+        assert "open" in issue_text
 
     def test_no_source_issue_id(self, tmp_path):
         t = self._setup_git_with_branch(tmp_path)
