@@ -247,6 +247,28 @@ class TestQueueFixAgent:
         assert "pytest -q" in entry["prompt"]
         assert "ruff check ." in entry["prompt"]
 
+    def test_quotes_cd_path_when_target_has_spaces(self, tmp_path):
+        report_path = tmp_path / "report.md"
+        report_path.write_text("FAIL report")
+
+        action = ActionSpec(
+            type=ActionType.CUSTOM,
+            params={
+                "report_path": str(report_path),
+                "agent": "FixAgent",
+                "queue_dir": str(tmp_path / "queue"),
+            },
+        )
+        ctx = TickContext(target="repo with space", workspace_dir=tmp_path, dry_run=False)
+
+        result = queue_fix_agent(action, ctx)
+        assert result.success is True
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+
+        target_dir = tmp_path / "repo with space"
+        assert f"cd '{target_dir}' && git add -A" in entry["prompt"]
+        assert f"cd {target_dir} && git add -A" not in entry["prompt"]
+
     def test_dedup_marker_written_on_success(self, tmp_path):
         report_path = tmp_path / "report.md"
         report_path.write_text("FAIL report")

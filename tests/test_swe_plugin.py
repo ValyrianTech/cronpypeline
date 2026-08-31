@@ -28,6 +28,7 @@ from cronpypeline.plugins.swe_plugin import (
     _build_doc_sync_prompt,
     _build_pr_body,
     _build_pr_review_prompt,
+    _build_pr_title_prompt,
     _close_and_comment_github_issue,
     _compute_review_generation,
     _count_done_review_issues,
@@ -1790,6 +1791,12 @@ class TestBuildDocSyncPrompt:
         prompt = _build_doc_sync_prompt(target, "repo", "main", "abc12345", pr_exists=False)
         assert "doc_sync.json" in prompt
 
+    def test_quotes_target_dir_with_spaces(self, tmp_path):
+        target = tmp_path / "repo with space"
+        prompt = _build_doc_sync_prompt(target, "repo", "main", "abc12345", pr_exists=False)
+        assert f"cd '{target}'" in prompt
+        assert f"cd {target}" not in prompt
+
 
 # ─── _build_pr_review_prompt ────────────────────────────────────────────────
 
@@ -1868,6 +1875,32 @@ class TestBuildPrReviewPrompt:
             review_cycle=3, max_cycles=5,
         )
         assert "3rd" in prompt
+
+    def test_quotes_target_dir_with_spaces(self, tmp_path):
+        target = tmp_path / "repo with space"
+        prompt = _build_pr_review_prompt(
+            target, "repo", "main", "abc123def456", 42, "owner", "repo",
+        )
+        assert f"cd '{target}'" in prompt
+        assert f"cd {target}" not in prompt
+
+
+# ─── _build_pr_title_prompt ─────────────────────────────────────────────────
+
+
+class TestBuildPrTitlePrompt:
+    def test_builds_basic_prompt(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        prompt = _build_pr_title_prompt(target, "repo", "main", "abc123def456")
+        assert "pull request title" in prompt
+        assert INTEGRATION_BRANCH in prompt
+        assert "pr_title.json" in prompt
+
+    def test_quotes_target_dir_with_spaces(self, tmp_path):
+        target = tmp_path / "repo with space"
+        prompt = _build_pr_title_prompt(target, "repo", "main", "abc123def456")
+        assert f"cd '{target}'" in prompt
+        assert f"cd {target}" not in prompt
 
 
 # ─── _count_done_review_issues ──────────────────────────────────────────────
