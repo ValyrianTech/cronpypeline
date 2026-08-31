@@ -736,7 +736,7 @@ Custom triggers and actions for the SWE pipeline:
 - `detect_agent_forgot_marker` — trigger: fires when queue is empty + git commits exist but no completion marker
 - `cleanup_git_branch` — action: cleans up git branches after failure
 - `reset_issue_status` — action: resets issue status to "open" after failure (updates YAML frontmatter)
-- `sync_session_mode` — pre_tick hook: syncs `.SWE/github_session.json` to the pipeline `mode_file`
+- `sync_session_mode` — pre_tick hook: syncs `.SWE/github_session.json` to the pipeline `mode_file`. An active (non-completed) session sets the mode to `"github"`; a completed session (even one still marked `active`) is treated as inactive and sets the mode to `"default"`. The mode file is always written (even when the tick is skipped because the session is completed), so it never goes stale.
 - `run_lint_autofix` — action: runs a lint autofix command (default `ruff check --fix .`), parses the fixed-count, writes a timestamped report, and commits changes. The command is executed via an argument list (`shell=False` using `shlex.split()`) rather than a shell, so commands relying on shell features (pipes, redirection, `&&`, etc.) must be wrapped in `sh -c '...'`; invalid/unparseable commands return an ACTION_FAILED result.
 - `run_a9_dep_audit` — action: runs the pip-audit dependency scanner via `run_diagnostic`, then parses the output and creates dependency-audit issues in the issue store. It proceeds to create dependency-audit issues even when the pip-audit command exits non-zero (the normal case when vulnerabilities are found), and reports success after creating the issues — the goal is the created issues, not a clean audit.
 
