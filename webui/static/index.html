@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cronpypeline dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-[#0a0e17] text-slate-200 min-h-screen font-[Inter]">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-40 backdrop-blur-md bg-[#0a0e17]/80 border-b border-slate-800">
+    <div class="max-w-[1600px] mx-auto px-6 py-4 flex items-center gap-6 flex-wrap">
+      <div class="flex items-center gap-3">
+        <div class="logo-orb"></div>
+        <h1 class="text-xl font-bold tracking-tight font-[JetBrains_Mono]">cron<span class="text-cyan-400">py</span>peline</h1>
+      </div>
+
+      <select id="config-select"
+              class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm font-[JetBrains_Mono] text-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer hover:border-slate-500 transition-colors">
+      </select>
+
+      <div id="pipeline-name" class="text-sm text-slate-400 font-[JetBrains_Mono]"></div>
+      <div id="mode-badge" class="hidden px-2.5 py-1 rounded-full text-xs font-semibold bg-violet-500/15 text-violet-300 border border-violet-500/30"></div>
+
+      <div class="flex-1"></div>
+
+      <div id="conn-status" class="flex items-center gap-2 text-xs text-slate-500">
+        <span id="conn-dot" class="conn-dot"></span>
+        <span id="conn-label">connecting…</span>
+      </div>
+
+      <!-- Enable/disable toggle -->
+      <div id="toggle-wrap" class="flex items-center gap-3 hidden">
+        <span id="toggle-label" class="text-xs font-semibold uppercase tracking-widest text-slate-400"></span>
+        <button id="toggle-btn" class="toggle-track" role="switch" aria-checked="false" title="Enable / disable pipeline">
+          <span class="toggle-thumb"></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-[1600px] mx-auto px-6 py-8">
+
+    <!-- Error banner -->
+    <div id="error-banner" class="hidden mb-6 rounded-xl border border-rose-500/40 bg-rose-500/10 px-5 py-4 text-rose-300 text-sm font-[JetBrains_Mono]"></div>
+
+    <!-- Disabled banner -->
+    <div id="disabled-banner" class="hidden mb-6 rounded-xl border border-amber-500/40 bg-amber-500/10 px-5 py-4 text-amber-300 text-sm flex items-center gap-3">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 9v6m4-6v6M5 12a7 7 0 1114 0 7 7 0 01-14 0z"/></svg>
+      <span>Pipeline is <strong>disabled</strong> — ticks exit immediately without doing work.</span>
+    </div>
+
+    <!-- Summary cards -->
+    <section id="summary" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6"></section>
+
+    <!-- View options -->
+    <div id="view-options" class="hidden flex items-center justify-end gap-3 mb-4">
+      <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none hover:text-slate-200 transition-colors">
+        <input type="checkbox" id="hide-pending" class="accent-cyan-500 cursor-pointer">
+        Hide pending stages
+      </label>
+    </div>
+
+    <!-- Pipeline lanes -->
+    <section id="lanes" class="space-y-6"></section>
+
+    <!-- Empty state -->
+    <div id="empty-state" class="hidden text-center py-24 text-slate-600">
+      <div class="text-6xl mb-4">⛅</div>
+      <p class="text-lg">No pipeline data</p>
+      <p id="empty-detail" class="text-sm mt-2 font-[JetBrains_Mono]"></p>
+    </div>
+  </main>
+
+  <!-- Stage detail panel -->
+  <div id="panel-overlay" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 hidden opacity-0 transition-opacity duration-300"></div>
+  <aside id="detail-panel" class="fixed top-0 right-0 h-full w-[420px] max-w-full bg-[#0e1422] border-l border-slate-800 z-50 translate-x-full transition-transform duration-300 ease-out overflow-y-auto shadow-2xl">
+    <div class="p-6">
+      <div class="flex items-start justify-between mb-1">
+        <div>
+          <div id="panel-stage-id" class="text-xs font-[JetBrains_Mono] text-cyan-400 mb-1"></div>
+          <h2 id="panel-title" class="text-lg font-bold leading-tight"></h2>
+        </div>
+        <button id="panel-close" class="text-slate-500 hover:text-slate-200 transition-colors text-2xl leading-none px-2">&times;</button>
+      </div>
+      <div id="panel-target" class="text-xs text-slate-500 font-[JetBrains_Mono] mb-5"></div>
+      <div id="panel-state-badge" class="mb-6"></div>
+      <div id="panel-body" class="space-y-4 text-sm"></div>
+    </div>
+  </aside>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
