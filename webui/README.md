@@ -47,7 +47,7 @@ CRONPYPELINE_CONFIGS_DIR=/path/to/configs uvicorn app:app --port 8600
 
 Then open http://127.0.0.1:8600
 
-The module can be imported without fastapi/pydantic installed — the FastAPI app is built lazily via `_build_app()`, and the module-level `app` is `None` when those dependencies are missing (useful for importing helper functions without installing the web stack).
+The module can be imported even when the web stack is unavailable or broken — the FastAPI app is built lazily via `_build_app()`, and the module-level `app` is `None` when app construction fails for any reason (missing fastapi/pydantic, or any other error during app construction). This is useful for importing helper functions without installing the web stack.
 
 ## Notes
 
