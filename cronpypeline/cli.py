@@ -99,7 +99,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         targets = None
         if args.target:
             targets = [args.target]
-        status = pipeline.status(targets)
+        try:
+            status = pipeline.status(targets)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
         print(json.dumps(status, indent=2))
         return 0
 
@@ -138,7 +142,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Normal tick execution
     if args.all:
-        results = pipeline.tick_all(dry_run=args.dry_run, verbose=args.verbose)
+        try:
+            results = pipeline.tick_all(dry_run=args.dry_run, verbose=args.verbose)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
         for result in results:
             print(result)
         # Return non-zero if any action failed
@@ -146,11 +154,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         return 0
     else:
-        result = pipeline.tick(
-            target=args.target,
-            dry_run=args.dry_run,
-            verbose=args.verbose,
-        )
+        try:
+            result = pipeline.tick(
+                target=args.target,
+                dry_run=args.dry_run,
+                verbose=args.verbose,
+            )
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
         print(result)
         if result.status == TickResultStatus.ACTION_FAILED:
             return 1
