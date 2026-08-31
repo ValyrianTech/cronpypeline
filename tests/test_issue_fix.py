@@ -602,6 +602,13 @@ class TestPromptBuilders:
         assert "cd " + shlex.quote(str(repo_dir)) + " &&" in r
         assert f"cd {repo_dir} &&" not in r
 
+    def test_closing_loop_quotes_commit_subject(self, tmp_path):
+        td = tmp_path / "t"; td.mkdir()
+        commit_subject = 'fix: issue"$;rm -rf /'
+        r = _closing_loop_instructions(tmp_path, td, commit_subject)
+        assert "commit -m " + shlex.quote(commit_subject) in r
+        assert f'commit -m "{commit_subject}"' not in r
+
     def test_coverage_prompt_quotes_repo_dir(self, tmp_path):
         td = tmp_path / "t"; td.mkdir()
         repo_dir = tmp_path / "repo with spaces"
