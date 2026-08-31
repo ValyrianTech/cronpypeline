@@ -47,6 +47,8 @@ CRONPYPELINE_CONFIGS_DIR=/path/to/configs uvicorn app:app --port 8600
 
 Then open http://127.0.0.1:8600
 
+The module can be imported without fastapi/pydantic installed — the FastAPI app is built lazily via `_build_app()`, and the module-level `app` is `None` when those dependencies are missing (useful for importing helper functions without installing the web stack).
+
 ## Notes
 
 - The dashboard never executes pipeline actions and never acquires the pipeline
