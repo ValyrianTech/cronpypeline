@@ -9,6 +9,7 @@ Provides:
 - `queue_review_agent`: Custom action that builds a review prompt and queues it.
 """
 
+import shlex
 import shutil
 import subprocess  # nosec B404 - subprocess is used by design to run git commands for prompt building
 from datetime import datetime, timezone
@@ -320,7 +321,7 @@ After OpenCode finishes, verify the result with RunCommand. IMPORTANT: you MUST 
     if verify_commands:
         prompt += "Run exactly:\n"
         for cmd in verify_commands:
-            prompt += f"  cd {target_dir} && {cmd}\n"
+            prompt += f"  cd {shlex.quote(str(target_dir))} && {cmd}\n"
     prompt += "\n"
 
     prompt += f"""
@@ -329,7 +330,7 @@ After OpenCode finishes, verify the result with RunCommand. IMPORTANT: you MUST 
 You are on branch `{PHASE_A_BRANCH}`. After making your changes:
 
 1. Commit your changes:
-   cd {target_dir} && git add -A && \\
+   cd {shlex.quote(str(target_dir))} && git add -A && \\
    git -c user.name='{PHASE_A_GIT_AUTHOR_NAME}' \\
    -c user.email='{PHASE_A_GIT_AUTHOR_EMAIL}' \\
    commit -m "{commit_message}"
