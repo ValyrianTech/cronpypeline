@@ -442,6 +442,8 @@ With `repos.json`:
 }
 ```
 
+Target names are validated to prevent path traversal. Target names containing `..` segments or absolute paths are rejected with a `ValueError`. This validation applies to `tick()`, `tick_all()`, `status()`, and the CLI `--reset-stage`/`--reset-target` options.
+
 ## Failure handling
 
 Unhandled exceptions during a tick are caught and reported as an `ACTION_FAILED` `TickResult` with the correct target name, `stage_id=None`, and the traceback captured in `stderr`.
@@ -537,6 +539,8 @@ Options:
   --reset-stage ID      Delete a stage's completion marker to force re-run
   --reset-target NAME   Clear all markers for a target (nuclear reset)
 ```
+
+`--reset-stage` and `--reset-target` validate the target name and return exit code 1 with an error message if the target name contains path traversal (e.g. `..` segments or absolute paths).
 
 ## Plugin system
 
