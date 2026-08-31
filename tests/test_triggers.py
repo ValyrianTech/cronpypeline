@@ -471,6 +471,54 @@ class TestMarkerStateEdgeCases:
         with pytest.raises(ValueError, match="Unknown operator"):
             evaluate_trigger(trigger, tmp_path)
 
+    def test_lt_type_mismatch_returns_false(self, tmp_path):
+        """String field vs int expected with 'lt' should return False, not raise TypeError."""
+        (tmp_path / "task.json").write_text(json.dumps({"status": "open"}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="status",
+            op="lt",
+            value=3,
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_lte_type_mismatch_returns_false(self, tmp_path):
+        """String field vs int expected with 'lte' should return False, not raise TypeError."""
+        (tmp_path / "task.json").write_text(json.dumps({"status": "open"}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="status",
+            op="lte",
+            value=3,
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_gt_type_mismatch_returns_false(self, tmp_path):
+        """String field vs int expected with 'gt' should return False, not raise TypeError."""
+        (tmp_path / "task.json").write_text(json.dumps({"status": "open"}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="status",
+            op="gt",
+            value=3,
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_gte_type_mismatch_returns_false(self, tmp_path):
+        """String field vs int expected with 'gte' should return False, not raise TypeError."""
+        (tmp_path / "task.json").write_text(json.dumps({"status": "open"}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="status",
+            op="gte",
+            value=3,
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
 
 class TestEvaluateTriggerUnknownType:
     """Tests for evaluate_trigger with unknown trigger type."""

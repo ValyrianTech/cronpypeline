@@ -109,14 +109,18 @@ def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
         return field_value == expected
     elif op == "ne":
         return field_value != expected
-    elif op == "lt":
-        return field_value < expected
-    elif op == "lte":
-        return field_value <= expected
-    elif op == "gt":
-        return field_value > expected
-    elif op == "gte":
-        return field_value >= expected
+    elif op in ("lt", "lte", "gt", "gte"):
+        try:
+            if op == "lt":
+                return field_value < expected
+            elif op == "lte":
+                return field_value <= expected
+            elif op == "gt":
+                return field_value > expected
+            else:
+                return field_value >= expected
+        except TypeError:
+            return False
     else:
         raise ValueError(f"Unknown operator: {op}")
 
