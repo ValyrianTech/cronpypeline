@@ -660,7 +660,7 @@ def _closing_loop_instructions(repo_dir: Path, task_dir: Path,
         f"     cd {shlex.quote(str(repo_dir))} && git add -A && "
         f"git -c user.name='{GIT_AUTHOR_NAME}' "
         f"-c user.email='{GIT_AUTHOR_EMAIL}' "
-        f"commit -m \"{commit_subject}\"\n"
+        f"commit -m {shlex.quote(commit_subject)}\n"
         f"2. Write a completion marker so the SWE pipeline runs its verification "
         f"gate on the next tick. Write a short summary of what you changed and "
         f"whether verification passed into this file:\n"
