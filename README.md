@@ -345,7 +345,7 @@ The filesystem is the source of truth — no database, no in-memory state:
 | `file_missing` | Fire if file doesn't exist | `path` |
 | `file_exists` | Fire if file exists | `path` |
 | `file_older_than` | Fire if file is older than N minutes | `path`, `minutes` |
-| `marker_state` | Fire based on JSON marker field value | `path`, `field`, `op`, `value` |
+| `marker_state` | Fire based on JSON marker field value (ordering ops return false on type mismatch) | `path`, `field`, `op`, `value` |
 | `queue_empty` | Fire if action queue directory is empty | `queue_dir` |
 | `custom` | User-provided Python callable | `callable` |
 | `and` | All conditions must be true | `conditions` (array of triggers) |
@@ -356,6 +356,8 @@ Trigger `path` values for the file-based triggers (`file_missing`, `file_exists`
 The `queue_dir` value for the `queue_empty` trigger is validated the same way via `_validate_queue_dir`, which rejects `..` segments, absolute or relative paths that resolve outside the base directory (including via symlinks), raising a `ValueError` for invalid paths.
 
 **Operators for `marker_state`:** `eq`, `ne`, `lt`, `lte`, `gt`, `gte`
+
+For the ordering operators (`lt`, `lte`, `gt`, `gte`), if the JSON field value's type does not match the expected value's type (e.g. comparing a string field against an integer value), the trigger returns `False` rather than raising an error.
 
 **Example:**
 
