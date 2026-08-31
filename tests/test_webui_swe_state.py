@@ -7,7 +7,7 @@ from pathlib import Path
 # webui/ is not a package — add it to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "webui"))
 
-import app  # noqa: E402
+import app
 
 
 class TestReadJson:
