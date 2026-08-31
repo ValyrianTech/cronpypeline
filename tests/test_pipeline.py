@@ -2914,7 +2914,7 @@ class TestModeFile:
         assert result.status == TickResultStatus.ACTION_EXECUTED
 
     def test_no_mode_file_all_stages_active(self, tmp_path):
-        """Without mode_file configured, all stages should be active."""
+        """Without mode_file configured, stages with modes restrictions are skipped."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
@@ -2935,10 +2935,10 @@ class TestModeFile:
         })
         pipeline = Pipeline(config)
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert result.status == TickResultStatus.NO_WORK
 
     def test_mode_file_missing_treats_as_no_mode(self, tmp_path):
-        """Missing mode_file should be treated as no mode restriction."""
+        """Missing mode_file means no mode is set, so modes-restricted stages are skipped."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
@@ -2960,7 +2960,7 @@ class TestModeFile:
         })
         pipeline = Pipeline(config)
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert result.status == TickResultStatus.NO_WORK
 
     def test_multiple_modes_match(self, tmp_path):
         """Stage active in multiple modes should match one of them."""
@@ -3856,7 +3856,7 @@ class TestTickModeFiltering:
         assert result.stage_id == "A0"
 
     def test_mode_file_invalid_json_returns_none(self, tmp_path):
-        """Invalid JSON in mode_file should result in None mode (all stages active)."""
+        """Invalid JSON in mode_file results in None mode, so modes-restricted stages are skipped."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
@@ -3882,8 +3882,8 @@ class TestTickModeFiltering:
         })
         pipeline = Pipeline(config)
         result = pipeline.tick(target="my-repo", dry_run=True)
-        # With None mode, stage.modes check is skipped, so A0 should be actionable
-        assert result.status == TickResultStatus.DRY_RUN
+        # With None mode, the stage's modes restriction is not met, so A0 is skipped
+        assert result.status == TickResultStatus.NO_WORK
 
 
 class TestTickTargetStateNone:
@@ -4790,6 +4790,61 @@ class TestTickInnerMultiTargetModeFiltering:
         # A0 is filtered out (mode=default, current=github), A1 should be actionable
         assert result.status == TickResultStatus.DRY_RUN
         assert result.stage_id == "A1"
+
+    def test_multi_target_no_mode_file_modes_stage_skipped(self, tmp_path):
+        """Stages with modes restrictions should be skipped when no mode_file is configured."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo-a").mkdir()
+        (workspace / "repo-b").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo-a", "repo-b"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Modes Only",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "modes": ["github"],
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(dry_run=True)
+        # A0 has modes restriction but no mode is set, so it should be skipped
+        assert result.status == TickResultStatus.NO_WORK
+
+    def test_multi_target_missing_mode_file_modes_stage_skipped(self, tmp_path):
+        """Stages with modes restrictions should be skipped when mode_file is missing."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo-a").mkdir()
+        (workspace / "repo-b").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "mode_file": str(tmp_path / "nonexistent_mode.json"),
+            "targets": {"type": "static", "items": ["repo-a", "repo-b"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Modes Only",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "modes": ["github"],
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(dry_run=True)
+        # A0 has modes restriction but mode_file is missing (None mode), so it should be skipped
+        assert result.status == TickResultStatus.NO_WORK
 
 
 class TestTickQueueAgentProcessingData:
