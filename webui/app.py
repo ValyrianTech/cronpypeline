@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -435,7 +436,18 @@ except Exception:  # noqa: BLE001
     app = None
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Run the dashboard server.
+
+    Exits with a non-zero code if the app could not be built (e.g. missing
+    fastapi/pydantic).
+    """
+    global CONFIGS_DIR
+
+    if app is None:
+        print("cronpypeline dashboard requires fastapi and pydantic. Install them with: pip install fastapi pydantic", file=sys.stderr)
+        raise SystemExit(1)
+
     import uvicorn
 
     parser = argparse.ArgumentParser(description="cronpypeline dashboard")
@@ -446,3 +458,7 @@ if __name__ == "__main__":
 
     CONFIGS_DIR = Path(args.configs_dir).resolve()
     uvicorn.run(app, host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()

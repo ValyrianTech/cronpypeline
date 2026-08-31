@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 # webui/ is not a package — add it to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "webui"))
 
@@ -144,3 +146,56 @@ class TestModuleAppFallback:
         finally:
             with mock.patch.object(app, "_build_app", original):
                 importlib.reload(app)
+
+
+class TestMain:
+    def test_main_exits_when_app_none(self, capsys):
+        """main() should exit with code 1 when app is None."""
+        original = app.app
+        try:
+            app.app = None
+            with pytest.raises(SystemExit) as excinfo:
+                app.main()
+            assert excinfo.value.code == 1
+            captured = capsys.readouterr()
+            assert "fastapi" in captured.err
+            assert "pydantic" in captured.err
+        finally:
+            app.app = original
+
+    def test_main_runs_uvicorn_when_app_available(self):
+        """main() should call uvicorn.run when app is not None."""
+        original = app.app
+        original_configs_dir = app.CONFIGS_DIR
+        try:
+            app.app = mock.Mock()
+            fake_uvicorn = mock.Mock()
+            with mock.patch.dict(sys.modules, {"uvicorn": fake_uvicorn}):
+                with mock.patch("sys.argv", ["app.py", "--host", "0.0.0.0", "--port", "9999"]):
+                    app.main()
+            fake_uvicorn.run.assert_called_once()
+            args, kwargs = fake_uvicorn.run.call_args
+            assert args[0] is app.app
+            assert kwargs["host"] == "0.0.0.0"
+            assert kwargs["port"] == 9999
+        finally:
+            app.app = original
+            app.CONFIGS_DIR = original_configs_dir
+
+    def test_main_block_runs_when_module_executed_as_script(self, capsys):
+        """The `if __name__ == "__main__"` block should call main()."""
+        import runpy
+        module_path = str(Path(__file__).resolve().parent.parent / "webui" / "app.py")
+        original_argv = sys.argv
+        original_app = app.app
+        try:
+            app.app = None
+            sys.argv = ["app.py"]
+            with pytest.raises(SystemExit) as excinfo:
+                runpy.run_path(module_path, run_name="__main__")
+            assert excinfo.value.code == 1
+            captured = capsys.readouterr()
+            assert "fastapi" in captured.err
+        finally:
+            sys.argv = original_argv
+            app.app = original_app
