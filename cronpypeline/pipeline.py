@@ -331,7 +331,7 @@ class Pipeline:
             for stage in self.config.stages:
                 if not stage.enabled:
                     continue
-                if stage.modes and current_mode is not None and current_mode not in stage.modes:
+                if stage.modes and (current_mode is None or current_mode not in stage.modes):
                     continue
                 active_stages.append(stage)
             state = PipelineState(workspace_dir=self.workspace_dir, stages=active_stages, target_lock=self.config.target_lock)
@@ -440,7 +440,7 @@ class Pipeline:
         for stage in self.config.stages:
             if not stage.enabled:
                 continue
-            if stage.modes and current_mode is not None and current_mode not in stage.modes:
+            if stage.modes and (current_mode is None or current_mode not in stage.modes):
                 continue
             active_stages.append(stage)
 
@@ -1019,7 +1019,16 @@ class Pipeline:
         if targets is None:
             targets = load_targets(self.config.targets)
 
-        state = PipelineState(workspace_dir=self.workspace_dir, stages=self.config.stages)
+        current_mode = self._get_current_mode()
+        active_stages = []
+        for stage in self.config.stages:
+            if not stage.enabled:
+                continue
+            if stage.modes and (current_mode is None or current_mode not in stage.modes):
+                continue
+            active_stages.append(stage)
+
+        state = PipelineState(workspace_dir=self.workspace_dir, stages=active_stages)
         state.derive(targets)
 
         result = {}

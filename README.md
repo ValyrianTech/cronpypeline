@@ -251,6 +251,8 @@ When a chained stage's action fails, the chain stops and the tick returns a `Tic
 
 A pipeline can define a `mode_file` — a JSON file with `{"mode": "some_mode"}`. Stages with a `modes` list are only active when the current mode is in that list. Stages without `modes` are always active. This enables runtime behavior switching (e.g. "default" vs "github session" mode) without changing the config.
 
+When no mode is set (no `mode_file` configured, the mode file is missing, or the file contains invalid JSON), the current mode is treated as `None`. In that case, stages with a `modes` restriction are SKIPPED — a stage with a `modes` list is only active when the current mode is explicitly set to one of its allowed modes. Only stages without a `modes` restriction remain active when no mode is set.
+
 ```json
 {"mode": "github"}
 ```
