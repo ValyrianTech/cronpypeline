@@ -195,13 +195,13 @@ def _host_matches(host: str, pattern: str) -> bool:
     return fnmatch.fnmatchcase(host.lower(), pattern.lower())
 
 
-def _validate_ssrf(url: str, params: dict) -> tuple[str | None, str | None]:
+def _validate_ssrf(url: str, params: dict) -> tuple[list[str] | None, str | None]:
     """Validate a URL against SSRF protections.
 
-    Returns a tuple of (validated_ip, error_message). On success, validated_ip
-    is the resolved IP address (or None if resolve_private_ip is disabled) and
-    error_message is None. On failure, validated_ip is None and error_message
-    describes the failure.
+    Returns a tuple of (validated_ips, error_message). On success, validated_ips
+    is a list of resolved public IP addresses (or None if resolve_private_ip is
+    disabled) and error_message is None. On failure, validated_ips is None and
+    error_message describes the failure.
     """
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname
@@ -225,13 +225,15 @@ def _validate_ssrf(url: str, params: dict) -> tuple[str | None, str | None]:
             infos = socket.getaddrinfo(host, None)
         except socket.gaierror:
             return None, f"Could not resolve host: {host!r}"
+        public_ips = []
         for info in infos:
             ip = str(info[4][0])
             if _is_private_ip(ip):
                 return None, f"SSRF blocked: host {host!r} resolves to private IP {ip!r}"
-        # All resolved IPs are public - return the first one for connection pinning
-        if infos:
-            return str(infos[0][4][0]), None
+            public_ips.append(ip)
+        # All resolved IPs are public - return all of them for connection pinning
+        if public_ips:
+            return public_ips, None
 
     return None, None
 
@@ -240,17 +242,25 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
     """HTTPConnection that connects to a pre-validated IP address."""
 
     def __init__(self, host: str, port: int | None = None, timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT,  # type: ignore[attr-defined]
-                 source_address: tuple[str, int] | None = None, blocksize: int = 8192, *, validated_ip: str | None = None) -> None:
-        self._validated_ip = validated_ip
+                 source_address: tuple[str, int] | None = None, blocksize: int = 8192, *, validated_ips: list[str] | None = None) -> None:
+        self._validated_ips = validated_ips
         super().__init__(host, port, timeout, source_address, blocksize=blocksize)
 
     def connect(self) -> None:
-        """Connect to the validated IP instead of re-resolving the hostname."""
+        """Connect to a validated IP instead of re-resolving the hostname."""
         sys.audit("http.client.connect", self, self.host, self.port)
-        connect_host = self._validated_ip or self.host
-        self.sock = self._create_connection(  # type: ignore[attr-defined]
-            (connect_host, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
-        )
+        connect_hosts = self._validated_ips or [self.host]
+        last_err = None
+        for connect_host in connect_hosts:
+            try:
+                self.sock = self._create_connection(  # type: ignore[attr-defined]
+                    (connect_host, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
+                )
+                break
+            except OSError as e:
+                last_err = e
+        if self.sock is None:
+            raise last_err
         try:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError as e:
@@ -265,19 +275,27 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 
     def __init__(self, host: str, port: int | None = None, key_file: str | None = None, cert_file: str | None = None,
                  timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT, source_address: tuple[str, int] | None = None,  # type: ignore[attr-defined]
-                 blocksize: int = 8192, *, context: ssl.SSLContext | None = None, check_hostname: bool | None = None, validated_ip: str | None = None) -> None:
-        self._validated_ip = validated_ip
+                 blocksize: int = 8192, *, context: ssl.SSLContext | None = None, check_hostname: bool | None = None, validated_ips: list[str] | None = None) -> None:
+        self._validated_ips = validated_ips
         super().__init__(host, port, key_file, cert_file, timeout,
                          source_address, blocksize=blocksize,
                          context=context, check_hostname=check_hostname)
 
     def connect(self) -> None:
-        """Connect to the validated IP and do TLS with the original hostname."""
+        """Connect to a validated IP and do TLS with the original hostname."""
         sys.audit("http.client.connect", self, self.host, self.port)
-        connect_host = self._validated_ip or self.host
-        self.sock = self._create_connection(  # type: ignore[attr-defined]
-            (connect_host, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
-        )
+        connect_hosts = self._validated_ips or [self.host]
+        last_err = None
+        for connect_host in connect_hosts:
+            try:
+                self.sock = self._create_connection(  # type: ignore[attr-defined]
+                    (connect_host, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
+                )
+                break
+            except OSError as e:
+                last_err = e
+        if self.sock is None:
+            raise last_err
         try:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError as e:
@@ -294,11 +312,11 @@ class _PinnedHTTPHandler(urllib.request.HTTPHandler):
     """HTTPHandler that pins connections to a pre-validated IP address."""
 
     def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
-        validated_ip = getattr(req, "_validated_ip", None)
-        if validated_ip:
+        validated_ips = getattr(req, "_validated_ips", None)
+        if validated_ips:
             return self.do_open(
                 lambda host, timeout=None, **kwargs: _PinnedHTTPConnection(
-                    host, timeout=timeout, validated_ip=validated_ip, **kwargs
+                    host, timeout=timeout, validated_ips=validated_ips, **kwargs
                 ),
                 req,
             )
@@ -309,11 +327,11 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
     """HTTPSHandler that pins connections to a pre-validated IP address."""
 
     def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
-        validated_ip = getattr(req, "_validated_ip", None)
-        if validated_ip:
+        validated_ips = getattr(req, "_validated_ips", None)
+        if validated_ips:
             return self.do_open(
                 lambda host, timeout=None, **kwargs: _PinnedHTTPSConnection(
-                    host, timeout=timeout, validated_ip=validated_ip, **kwargs
+                    host, timeout=timeout, validated_ips=validated_ips, **kwargs
                 ),
                 req,
                 context=self._context,  # type: ignore[attr-defined]
@@ -637,7 +655,7 @@ class HttpRequestActionHandler(ActionHandler):
                 )
 
             # Validate SSRF for the current URL
-            validated_ip, ssrf_error = _validate_ssrf(current_url, params)
+            validated_ips, ssrf_error = _validate_ssrf(current_url, params)
             if ssrf_error is not None:
                 return ActionResult(
                     success=False,
@@ -646,7 +664,7 @@ class HttpRequestActionHandler(ActionHandler):
                 )
 
             req = urllib.request.Request(current_url, data=data, method=method, headers=headers)
-            setattr(req, "_validated_ip", validated_ip)  # type: ignore[attr-defined]
+            setattr(req, "_validated_ips", validated_ips)  # type: ignore[attr-defined]
 
             try:
                 with _HTTP_OPENER.open(req, timeout=timeout) as resp:  # nosec B310 - URL scheme is validated to http/https only just above

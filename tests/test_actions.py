@@ -1976,12 +1976,13 @@ class TestPinnedConnections:
     # --- _PinnedHTTPConnection ---
 
     def test_http_connection_connects_to_validated_ip(self):
-        conn = _PinnedHTTPConnection("example.com", 80, timeout=5, validated_ip="93.184.216.34")
+        conn = _PinnedHTTPConnection("example.com", 80, timeout=5, validated_ips=["93.184.216.34"])
         sock = self._mock_sock()
         create = MagicMock(return_value=sock)
         conn._create_connection = create
         conn.connect()
         create.assert_called_once_with(("93.184.216.34", 80), 5, None)
+        assert conn._validated_ips == ["93.184.216.34"]
 
     def test_http_connection_falls_back_to_host(self):
         conn = _PinnedHTTPConnection("example.com", 80, timeout=5)
@@ -1992,14 +1993,14 @@ class TestPinnedConnections:
         create.assert_called_once_with(("example.com", 80), 5, None)
 
     def test_http_connection_swallows_enoprotoopt(self):
-        conn = _PinnedHTTPConnection("example.com", 80, validated_ip="93.184.216.34")
+        conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34"])
         sock = self._mock_sock()
         sock.setsockopt.side_effect = OSError(errno.ENOPROTOOPT, "Protocol not available")
         conn._create_connection = MagicMock(return_value=sock)
         conn.connect()
 
     def test_http_connection_reraises_other_oserror(self):
-        conn = _PinnedHTTPConnection("example.com", 80, validated_ip="93.184.216.34")
+        conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34"])
         sock = self._mock_sock()
         sock.setsockopt.side_effect = OSError(errno.EINVAL, "Invalid argument")
         conn._create_connection = MagicMock(return_value=sock)
@@ -2007,7 +2008,7 @@ class TestPinnedConnections:
             conn.connect()
 
     def test_http_connection_tunnel(self):
-        conn = _PinnedHTTPConnection("example.com", 80, validated_ip="93.184.216.34")
+        conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34"])
         conn._tunnel_host = "proxy.example.com"
         sock = self._mock_sock()
         conn._create_connection = MagicMock(return_value=sock)
@@ -2015,10 +2016,28 @@ class TestPinnedConnections:
             conn.connect()
         tunnel.assert_called_once_with()
 
+    def test_http_connection_tries_multiple_ips(self):
+        conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34", "93.184.216.35"])
+        sock = self._mock_sock()
+        create = MagicMock(side_effect=[OSError("unreachable"), sock])
+        conn._create_connection = create
+        conn.connect()
+        assert create.call_count == 2
+        assert create.call_args_list[0][0][0] == ("93.184.216.34", 80)
+        assert create.call_args_list[1][0][0] == ("93.184.216.35", 80)
+        assert conn.sock is sock
+
+    def test_http_connection_raises_last_error_when_all_fail(self):
+        conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34", "93.184.216.35"])
+        create = MagicMock(side_effect=[OSError("first"), OSError("second")])
+        conn._create_connection = create
+        with pytest.raises(OSError, match="second"):
+            conn.connect()
+
     # --- _PinnedHTTPSConnection ---
 
     def test_https_connection_connects_to_validated_ip(self):
-        conn = _PinnedHTTPSConnection("example.com", 443, timeout=5, validated_ip="93.184.216.34")
+        conn = _PinnedHTTPSConnection("example.com", 443, timeout=5, validated_ips=["93.184.216.34"])
         ctx = self._mock_https_context()
         conn._context = ctx
         sock = self._mock_sock()
@@ -2027,6 +2046,7 @@ class TestPinnedConnections:
         conn.connect()
         create.assert_called_once_with(("93.184.216.34", 443), 5, None)
         ctx.wrap_socket.assert_called_once_with(sock, server_hostname="example.com")
+        assert conn._validated_ips == ["93.184.216.34"]
 
     def test_https_connection_falls_back_to_host(self):
         conn = _PinnedHTTPSConnection("example.com", 443, timeout=5)
@@ -2040,7 +2060,7 @@ class TestPinnedConnections:
         ctx.wrap_socket.assert_called_once_with(sock, server_hostname="example.com")
 
     def test_https_connection_swallows_enoprotoopt(self):
-        conn = _PinnedHTTPSConnection("example.com", 443, validated_ip="93.184.216.34")
+        conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34"])
         ctx = self._mock_https_context()
         conn._context = ctx
         sock = self._mock_sock()
@@ -2049,7 +2069,7 @@ class TestPinnedConnections:
         conn.connect()
 
     def test_https_connection_reraises_other_oserror(self):
-        conn = _PinnedHTTPSConnection("example.com", 443, validated_ip="93.184.216.34")
+        conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34"])
         ctx = self._mock_https_context()
         conn._context = ctx
         sock = self._mock_sock()
@@ -2059,7 +2079,7 @@ class TestPinnedConnections:
             conn.connect()
 
     def test_https_connection_tunnel_uses_tunnel_host_for_sni(self):
-        conn = _PinnedHTTPSConnection("example.com", 443, validated_ip="93.184.216.34")
+        conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34"])
         ctx = self._mock_https_context()
         conn._context = ctx
         conn._tunnel_host = "proxy.example.com"
@@ -2070,19 +2090,42 @@ class TestPinnedConnections:
         tunnel.assert_called_once_with()
         ctx.wrap_socket.assert_called_once_with(sock, server_hostname="proxy.example.com")
 
+    def test_https_connection_tries_multiple_ips(self):
+        conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34", "93.184.216.35"])
+        ctx = self._mock_https_context()
+        conn._context = ctx
+        sock = self._mock_sock()
+        create = MagicMock(side_effect=[OSError("unreachable"), sock])
+        conn._create_connection = create
+        conn.connect()
+        assert create.call_count == 2
+        assert create.call_args_list[0][0][0] == ("93.184.216.34", 443)
+        assert create.call_args_list[1][0][0] == ("93.184.216.35", 443)
+        assert conn.sock is ctx.wrap_socket.return_value
+        ctx.wrap_socket.assert_called_once_with(sock, server_hostname="example.com")
+
+    def test_https_connection_raises_last_error_when_all_fail(self):
+        conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34", "93.184.216.35"])
+        ctx = self._mock_https_context()
+        conn._context = ctx
+        create = MagicMock(side_effect=[OSError("first"), OSError("second")])
+        conn._create_connection = create
+        with pytest.raises(OSError, match="second"):
+            conn.connect()
+
     # --- _PinnedHTTPHandler / _PinnedHTTPSHandler ---
 
     def test_http_handler_pins_when_validated_ip(self):
         handler = _PinnedHTTPHandler()
         req = urllib.request.Request("http://example.com/")
-        req._validated_ip = "93.184.216.34"
+        req._validated_ips = ["93.184.216.34"]
         with patch.object(_PinnedHTTPHandler, "do_open", return_value=MagicMock()) as do_open:
             handler.http_open(req)
         do_open.assert_called_once()
         factory = do_open.call_args[0][0]
         conn = factory("example.com")
         assert isinstance(conn, _PinnedHTTPConnection)
-        assert conn._validated_ip == "93.184.216.34"
+        assert conn._validated_ips == ["93.184.216.34"]
 
     def test_http_handler_delegates_without_validated_ip(self):
         handler = _PinnedHTTPHandler()
@@ -2096,7 +2139,7 @@ class TestPinnedConnections:
     def test_https_handler_pins_when_validated_ip(self):
         handler = _PinnedHTTPSHandler()
         req = urllib.request.Request("https://example.com/")
-        req._validated_ip = "93.184.216.34"
+        req._validated_ips = ["93.184.216.34"]
         with patch.object(_PinnedHTTPSHandler, "do_open", return_value=MagicMock()) as do_open:
             handler.https_open(req)
         do_open.assert_called_once()
@@ -2105,7 +2148,7 @@ class TestPinnedConnections:
         assert do_open.call_args[1]["check_hostname"] is handler._check_hostname
         conn = factory("example.com")
         assert isinstance(conn, _PinnedHTTPSConnection)
-        assert conn._validated_ip == "93.184.216.34"
+        assert conn._validated_ips == ["93.184.216.34"]
 
     def test_https_handler_delegates_without_validated_ip(self):
         handler = _PinnedHTTPSHandler()
@@ -2125,7 +2168,17 @@ class TestPinnedConnections:
         ):
             ip, err = _validate_ssrf("http://example.com/", {})
         assert err is None
-        assert ip == "93.184.216.34"
+        assert ip == ["93.184.216.34"]
+
+    def test_validate_ssrf_returns_all_public_ips(self):
+        infos = [
+            ("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80)),
+            ("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.35", 80)),
+        ]
+        with patch("cronpypeline.actions.socket.getaddrinfo", return_value=infos):
+            ips, err = _validate_ssrf("http://example.com/", {})
+        assert err is None
+        assert ips == ["93.184.216.34", "93.184.216.35"]
 
     def test_validate_ssrf_returns_none_ip_when_disabled(self):
         ip, err = _validate_ssrf("http://127.0.0.1/", {"resolve_private_ip": False})
@@ -2148,12 +2201,15 @@ class TestPinnedConnections:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
         req = mock_urlopen.call_args[0][0]
-        assert req._validated_ip == "93.184.216.34"
+        assert req._validated_ips == ["93.184.216.34"]
 
     def test_execute_does_not_set_validated_ip_when_disabled(self, tmp_path):
         action = ActionSpec(
@@ -2174,4 +2230,4 @@ class TestPinnedConnections:
 
         assert result.success is True
         req = mock_urlopen.call_args[0][0]
-        assert req._validated_ip is None
+        assert req._validated_ips is None
