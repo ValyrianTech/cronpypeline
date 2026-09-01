@@ -939,7 +939,7 @@ class TestGhApiRedirectProtection:
     def test_no_redirect_handler_returns_none(self):
         from cronpypeline.plugins import swe_plugin
 
-        handler = swe_plugin._NoRedirectHandler()
+        handler = swe_plugin.NoRedirectHandler()
         assert handler.redirect_request(None, None, 302, "Found", {}, "https://evil.example/") is None
 
     def test_gh_opener_used_instead_of_urlopen(self):

@@ -19,7 +19,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request
 
-from cronpypeline.actions import ActionResult, ActionSpec, TickContext
+from cronpypeline.actions import ActionResult, ActionSpec, NoRedirectHandler, TickContext
 from cronpypeline.plugins.issue_store import (
     create_issue,
     issue_filename,
@@ -44,24 +44,7 @@ REVIEW_RANKING_MARKER = f"{SWE_SUBDIR}/markers/review_ranked.json"
 GIT_BIN = shutil.which("git") or "git"
 
 
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """HTTP redirect handler that prevents automatic redirect following."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        """Prevent automatic redirect following by always returning None.
-
-        :param req: The original request being redirected.
-        :param fp: File-like object for the response body.
-        :param code: HTTP status code that triggered the redirect.
-        :param msg: HTTP status message.
-        :param headers: Response headers.
-        :param newurl: URL the request would be redirected to.
-        :returns: Always ``None`` to suppress automatic redirect handling.
-        """
-        return None
-
-
-_GH_OPENER = urllib.request.build_opener(_NoRedirectHandler())
+_GH_OPENER = urllib.request.build_opener(NoRedirectHandler())
 
 
 def _parse_utc_datetime(s: str) -> datetime | None:
