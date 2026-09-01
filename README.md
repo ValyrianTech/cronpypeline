@@ -398,7 +398,7 @@ For the ordering operators (`lt`, `lte`, `gt`, `gte`), if the JSON field value's
 - `{target_config}` — full per-target config dict
 - Any flattened target config key (e.g. `{slug}`, `{test_cmd}`, `{coverage_threshold}`) — available when using a registry target spec
 
-Template variables substituted into commands (`command`-type actions) are shell-quoted with `shlex.quote()` before substitution, and commands are executed without a shell (via an argument list built with `shlex.split()`, i.e. `shell=False`), preventing command injection when a value (e.g. a target name or path) contains shell metacharacters. If template substitution fails (missing key, bad format, etc.), an error is raised rather than silently falling back to the unformatted template.
+Template variables substituted into commands (`command`-type actions) are shell-quoted with `shlex.quote()` before substitution, and commands are executed without a shell (via an argument list built with `shlex.split()`, i.e. `shell=False`), preventing command injection when a value (e.g. a target name or path) contains shell metacharacters. If template substitution fails (missing key, bad format, etc.), an error is raised rather than silently falling back to the unformatted template. The `cwd` parameter for `command` and `subprocess` actions must resolve within the workspace directory; a `cwd` that escapes the workspace (via `..` segments, absolute paths, or symlinks) is rejected with an `ACTION_FAILED` result (`success=False` with stderr `"cwd escapes workspace directory: {cwd}"`).
 
 ### Marker specs
 
@@ -552,6 +552,8 @@ Built-in:
 - **subprocess**: Runs a Python script as a subprocess
 - **http_request**: Makes HTTP requests via `urllib` with auth token resolution
 - **custom**: Calls a user-provided Python callable
+
+The `command` and `subprocess` handlers validate that the `cwd` parameter resolves within the pipeline's workspace directory; a `cwd` that escapes the workspace (via `..` segments, absolute paths, or symlinks) is rejected with an `ACTION_FAILED` result (`success=False` with stderr `"cwd escapes workspace directory: {cwd}"`).
 
 A `custom` action callable (referenced via `params.callable`) receives `(action, context)` and may return a full `ActionResult` object (including a `data` dict), which is passed through unchanged. Returning `data: {"async": true}` signals that the action is asynchronous: the pipeline defers completion marker creation to the external agent and creates a processing marker instead.
 

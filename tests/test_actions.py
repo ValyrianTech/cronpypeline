@@ -241,6 +241,31 @@ class TestCommandActionHandler:
             handler.execute(action, ctx)
         assert mock_run.call_args.kwargs["timeout"] == 300
 
+    def test_cwd_escaping_workspace_is_rejected(self, tmp_path):
+        """A cwd outside the workspace directory must be rejected."""
+        outside = str(tmp_path.parent / "outside")
+        action = ActionSpec(
+            type=ActionType.COMMAND,
+            params={"command": "echo hello", "cwd": outside},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = CommandActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is False
+        assert "cwd escapes workspace directory" in result.stderr
+
+    def test_cwd_subdirectory_of_workspace_works(self, tmp_path):
+        """A cwd that is a subdirectory of the workspace works normally."""
+        action = ActionSpec(
+            type=ActionType.COMMAND,
+            params={"command": "pwd", "cwd": str(tmp_path / "subdir")},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = CommandActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is True
+        assert str(tmp_path / "subdir") in result.stdout
+
 
 class TestSubprocessActionHandler:
     """Tests for subprocess action handler."""
@@ -294,6 +319,60 @@ class TestSubprocessActionHandler:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             handler.execute(action, ctx)
         assert mock_run.call_args.kwargs["timeout"] == 300
+
+    def test_cwd_escaping_workspace_is_rejected(self, tmp_path):
+        """A cwd outside the workspace directory must be rejected."""
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": "test.py", "args": [], "cwd": str(tmp_path.parent)},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is False
+        assert "cwd escapes workspace directory" in result.stderr
+
+    def test_cwd_subdirectory_of_workspace_works(self, tmp_path):
+        """A cwd that is a subdirectory of the workspace works normally."""
+        script = tmp_path / "test_script.py"
+        script.write_text("print('subprocess works')\n")
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": str(script), "args": [], "cwd": str(tmp_path / "subdir")},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is True
+        assert "subprocess works" in result.stdout
+
+    def test_cwd_template_substitution(self, tmp_path):
+        """cwd templates are substituted before validation."""
+        script = tmp_path / "test_script.py"
+        script.write_text("import os; print(os.getcwd())\n")
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": str(script), "args": [], "cwd": "{target_dir}"},
+        )
+        ctx = TickContext(target="my-repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is True
+        assert str(ctx.target_dir) in result.stdout
+
+    def test_cwd_template_substitution_failure_returns_error(self, tmp_path):
+        """A cwd template that fails substitution returns an error ActionResult."""
+        script = tmp_path / "test_script.py"
+        script.write_text("print('subprocess works')\n")
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": str(script), "args": [], "cwd": "{missing_var}"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is False
+        assert "Template substitution failed" in result.stderr
 
 
 class TestCustomActionHandler:
@@ -696,6 +775,86 @@ class TestActionHandlerBase:
         action = ActionSpec(type=ActionType.COMMAND, params={})
         with pytest.raises(NotImplementedError):
             base.check_complete(action, ctx)
+
+
+class TestActionHandlerValidateCwd:
+    """Tests for ActionHandler._validate_cwd."""
+
+    def test_returns_none_when_cwd_inside_workspace(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_cwd(str(tmp_path / "subdir"), tmp_path)
+        assert result is None
+
+    def test_returns_none_when_cwd_is_workspace(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_cwd(str(tmp_path), tmp_path)
+        assert result is None
+
+    def test_returns_failure_when_cwd_escapes_workspace(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        outside = str(tmp_path.parent / "outside")
+        result = handler._validate_cwd(outside, tmp_path)
+        assert result is not None
+        assert result.success is False
+        assert result.stderr == f"cwd escapes workspace directory: {outside}"
+
+    def test_symlink_cwd_escaping_workspace_is_rejected(self, tmp_path):
+        """A symlink inside the workspace pointing outside must be rejected."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        outside_dir_actions = tmp_path.parent / "outside_dir_actions"
+        outside_dir_actions.mkdir()
+        (tmp_path / "link").symlink_to(outside_dir_actions, target_is_directory=True)
+        result = handler._validate_cwd(str(tmp_path / "link"), tmp_path)
+        assert result is not None
+        assert result.success is False
+        assert "cwd escapes workspace directory" in result.stderr
+
+    def test_symlink_workspace_dir_accepts_resolved_cwd(self, tmp_path):
+        """A workspace_dir symlink pointing to a real directory accepts cwd inside it."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        real_workspace = tmp_path.parent / "real_workspace"
+        real_workspace.mkdir()
+        workspace_link = tmp_path / "workspace_link"
+        workspace_link.symlink_to(real_workspace, target_is_directory=True)
+        result = handler._validate_cwd(str(real_workspace / "subdir"), workspace_link)
+        assert result is None
+
+    def test_relative_cwd_resolves_against_workspace(self, tmp_path):
+        """A relative cwd like 'subdir' is resolved against the workspace and accepted."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_cwd("subdir", tmp_path)
+        assert result is None
+
+    def test_relative_cwd_escaping_workspace_is_rejected(self, tmp_path):
+        """A relative cwd that would escape the workspace is rejected."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_cwd("../outside", tmp_path)
+        assert result is not None
+        assert result.success is False
+        assert "cwd escapes workspace directory" in result.stderr
+
+    def test_absolute_cwd_inside_workspace_accepted(self, tmp_path):
+        """An absolute cwd inside the workspace is accepted."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_cwd(str(tmp_path / "subdir"), tmp_path)
+        assert result is None
+
+    def test_absolute_cwd_outside_workspace_rejected(self, tmp_path):
+        """An absolute cwd outside the workspace is rejected."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        outside = str(tmp_path.parent / "outside")
+        result = handler._validate_cwd(outside, tmp_path)
+        assert result is not None
+        assert result.success is False
 
 
 class TestSubprocessActionHandlerEdgeCases:

@@ -108,6 +108,28 @@ def format_template(template: str, variables: dict[str, Any]) -> str:
 class ActionHandler:
     """Base class / interface for action handlers."""
 
+    def _validate_cwd(self, cwd: str, workspace_dir: Path) -> ActionResult | None:
+        """Validate that cwd is inside workspace_dir.
+
+        Relative cwd paths are resolved against workspace_dir; absolute cwd
+        paths are resolved as-is.
+
+        :param cwd: The working directory path to validate.
+        :param workspace_dir: The workspace root directory.
+        :returns: An error ActionResult if cwd escapes the workspace, else None.
+        """
+        cwd_path = Path(cwd)
+        if not cwd_path.is_absolute():
+            cwd_path = workspace_dir / cwd_path
+        cwd_path = cwd_path.resolve()
+        workspace_resolved = workspace_dir.resolve()
+        if not cwd_path.is_relative_to(workspace_resolved):
+            return ActionResult(
+                success=False,
+                stderr=f"cwd escapes workspace directory: {cwd}",
+            )
+        return None
+
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
         """Execute the action.
 
@@ -164,6 +186,10 @@ class CommandActionHandler(ActionHandler):
         except ValueError as e:
             return ActionResult(success=False, stderr=str(e))
 
+        result = self._validate_cwd(cwd, context.workspace_dir)
+        if result is not None:
+            return result
+
         timeout = action.timeout_seconds or 300  # Default to 5 minutes
 
         Path(cwd).mkdir(parents=True, exist_ok=True)
@@ -215,6 +241,21 @@ class SubprocessActionHandler(ActionHandler):
         script = action.params.get("script", "")
         args = action.params.get("args", [])
         cwd = action.params.get("cwd", str(context.target_dir))
+
+        cwd_variables = {
+            "target": context.target,
+            "target_dir": str(context.target_dir),
+            "workspace_dir": str(context.workspace_dir),
+        }
+        try:
+            cwd = format_template(cwd, cwd_variables)
+        except ValueError as e:
+            return ActionResult(success=False, stderr=str(e))
+
+        result = self._validate_cwd(cwd, context.workspace_dir)
+        if result is not None:
+            return result
+
         timeout = action.timeout_seconds or 300  # Default to 5 minutes
 
         if script.endswith(".py"):
