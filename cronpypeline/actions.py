@@ -108,6 +108,22 @@ def format_template(template: str, variables: dict[str, Any]) -> str:
 class ActionHandler:
     """Base class / interface for action handlers."""
 
+    def _validate_cwd(self, cwd: str, workspace_dir: Path) -> ActionResult | None:
+        """Validate that cwd is inside workspace_dir.
+
+        :param cwd: The working directory path to validate.
+        :param workspace_dir: The workspace root directory.
+        :returns: An error ActionResult if cwd escapes the workspace, else None.
+        """
+        cwd_path = Path(cwd).resolve()
+        workspace_resolved = workspace_dir.resolve()
+        if not cwd_path.is_relative_to(workspace_resolved):
+            return ActionResult(
+                success=False,
+                stderr=f"cwd escapes workspace directory: {cwd}",
+            )
+        return None
+
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
         """Execute the action.
 
@@ -164,13 +180,9 @@ class CommandActionHandler(ActionHandler):
         except ValueError as e:
             return ActionResult(success=False, stderr=str(e))
 
-        cwd_path = Path(cwd).resolve()
-        workspace_resolved = context.workspace_dir.resolve()
-        if not cwd_path.is_relative_to(workspace_resolved):
-            return ActionResult(
-                success=False,
-                stderr=f"cwd escapes workspace directory: {cwd}",
-            )
+        result = self._validate_cwd(cwd, context.workspace_dir)
+        if result is not None:
+            return result
 
         timeout = action.timeout_seconds or 300  # Default to 5 minutes
 
@@ -224,13 +236,9 @@ class SubprocessActionHandler(ActionHandler):
         args = action.params.get("args", [])
         cwd = action.params.get("cwd", str(context.target_dir))
 
-        cwd_path = Path(cwd).resolve()
-        workspace_resolved = context.workspace_dir.resolve()
-        if not cwd_path.is_relative_to(workspace_resolved):
-            return ActionResult(
-                success=False,
-                stderr=f"cwd escapes workspace directory: {cwd}",
-            )
+        result = self._validate_cwd(cwd, context.workspace_dir)
+        if result is not None:
+            return result
 
         timeout = action.timeout_seconds or 300  # Default to 5 minutes
 
