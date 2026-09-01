@@ -2145,7 +2145,6 @@ class TestPinnedConnections:
         do_open.assert_called_once()
         factory = do_open.call_args[0][0]
         assert do_open.call_args[1]["context"] is handler._context
-        assert do_open.call_args[1]["check_hostname"] is handler._check_hostname
         conn = factory("example.com")
         assert isinstance(conn, _PinnedHTTPSConnection)
         assert conn._validated_ips == ["93.184.216.34"]

@@ -143,7 +143,6 @@ _PRIVATE_V6_NETWORKS = (
     ipaddress.ip_network("fc00::/7"),
     ipaddress.ip_network("fe80::/10"),
     ipaddress.ip_network("ff00::/8"),
-    ipaddress.ip_network("::ffff:0:0/96"),
 )
 
 
@@ -170,6 +169,14 @@ def _is_private_ip(ip_str: str) -> bool:
             return True
         return any(ip in net for net in _PRIVATE_V4_NETWORKS)
 
+    # IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) must be checked via their
+    # embedded IPv4 address.  In Python 3.12+ IPv6Address.is_private returns
+    # True for the entire ::ffff:0:0/96 range, so checking is_private before
+    # extracting the mapped IPv4 would incorrectly block public addresses.
+    mapped = ip.ipv4_mapped
+    if mapped is not None:
+        return _is_private_ip(str(mapped))
+
     if (
         ip.is_private
         or ip.is_loopback
@@ -179,10 +186,6 @@ def _is_private_ip(ip_str: str) -> bool:
         or ip.is_unspecified
     ):
         return True
-
-    mapped = ip.ipv4_mapped
-    if mapped is not None:
-        return _is_private_ip(str(mapped))
 
     return any(ip in net for net in _PRIVATE_V6_NETWORKS)
 
@@ -273,13 +276,13 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     """HTTPSConnection that connects to a pre-validated IP address."""
 
-    def __init__(self, host: str, port: int | None = None, key_file: str | None = None, cert_file: str | None = None,
+    def __init__(self, host: str, port: int | None = None,
                  timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT, source_address: tuple[str, int] | None = None,  # type: ignore[attr-defined]
-                 blocksize: int = 8192, *, context: ssl.SSLContext | None = None, check_hostname: bool | None = None, validated_ips: list[str] | None = None) -> None:
+                 blocksize: int = 8192, *, context: ssl.SSLContext | None = None, validated_ips: list[str] | None = None) -> None:
         self._validated_ips = validated_ips
-        super().__init__(host, port, key_file, cert_file, timeout,
-                         source_address, blocksize=blocksize,
-                         context=context, check_hostname=check_hostname)
+        super().__init__(host, port, timeout=timeout,
+                         source_address=source_address, blocksize=blocksize,
+                         context=context)
 
     def connect(self) -> None:
         """Connect to a validated IP and do TLS with the original hostname."""
@@ -335,7 +338,6 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
                 ),
                 req,
                 context=self._context,  # type: ignore[attr-defined]
-                check_hostname=self._check_hostname,  # type: ignore[attr-defined]
             )
         return super().https_open(req)
 

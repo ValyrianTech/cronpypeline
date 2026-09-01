@@ -698,34 +698,50 @@ class TestBuildApp:
 class TestModuleAppFallback:
     def test_app_none_when_build_raises_non_import_error(self):
         """Module-level ``app`` should be None when _build_app raises a non-ImportError."""
-        original = app._build_app
-        try:
-            with mock.patch.object(app, "_build_app", side_effect=RuntimeError("boom")):
-                importlib.reload(app)
-            assert app.app is None
-        finally:
-            with mock.patch.object(app, "_build_app", original):
-                importlib.reload(app)
-
-    def test_app_none_when_fastapi_missing(self):
-        """Module-level app should be None when fastapi is not installed."""
-        fake_modules = {}
-        for mod_name in ["fastapi", "fastapi.responses", "fastapi.staticfiles", "pydantic"]:
-            fake_mod = types.ModuleType(mod_name)
-            sys.modules[mod_name] = fake_mod
-            fake_modules[mod_name] = fake_mod
-
+        blocker_names = ["fastapi", "fastapi.responses", "fastapi.staticfiles", "pydantic"]
         saved_modules = {}
         try:
-            for mod_name in fake_modules:
-                saved_modules[mod_name] = sys.modules.pop(mod_name, None)
+            for mod_name in blocker_names:
+                saved_modules[mod_name] = sys.modules.get(mod_name)
+                sys.modules[mod_name] = types.ModuleType(mod_name)
+
+            # fastapi.FastAPI() raises RuntimeError; other attrs are dummies
+            def _raise_runtime(*a, **kw):
+                raise RuntimeError("boom")
+            sys.modules["fastapi"].FastAPI = _raise_runtime
+            sys.modules["fastapi"].HTTPException = type("HTTPException", (Exception,), {})
+            sys.modules["fastapi"].Query = lambda *a, **kw: None
+            sys.modules["fastapi.responses"].FileResponse = _raise_runtime
+            sys.modules["fastapi.staticfiles"].StaticFiles = _raise_runtime
+            sys.modules["pydantic"].BaseModel = type("BaseModel", (), {})
 
             importlib.reload(app)
             assert app.app is None
         finally:
-            for mod_name, mod in saved_modules.items():
-                if mod is not None:
-                    sys.modules[mod_name] = mod
+            for mod_name in blocker_names:
+                if saved_modules[mod_name] is not None:
+                    sys.modules[mod_name] = saved_modules[mod_name]
+                else:
+                    sys.modules.pop(mod_name, None)
+            importlib.reload(app)
+
+    def test_app_none_when_fastapi_missing(self):
+        """Module-level app should be None when fastapi is not installed."""
+        blocker_names = ["fastapi", "fastapi.responses", "fastapi.staticfiles", "pydantic"]
+        saved_modules = {}
+        try:
+            for mod_name in blocker_names:
+                saved_modules[mod_name] = sys.modules.get(mod_name)
+                sys.modules[mod_name] = types.ModuleType(mod_name)
+
+            importlib.reload(app)
+            assert app.app is None
+        finally:
+            for mod_name in blocker_names:
+                if saved_modules[mod_name] is not None:
+                    sys.modules[mod_name] = saved_modules[mod_name]
+                else:
+                    sys.modules.pop(mod_name, None)
             importlib.reload(app)
 
 
@@ -767,9 +783,12 @@ class TestMain:
         import runpy
         module_path = str(Path(__file__).resolve().parent.parent / "webui" / "app.py")
         original_argv = sys.argv
-        original_app = app.app
+        blocker_names = ["fastapi", "fastapi.responses", "fastapi.staticfiles", "pydantic"]
+        saved_modules = {}
         try:
-            app.app = None
+            for mod_name in blocker_names:
+                saved_modules[mod_name] = sys.modules.get(mod_name)
+                sys.modules[mod_name] = types.ModuleType(mod_name)
             sys.argv = ["app.py"]
             with pytest.raises(SystemExit) as excinfo:
                 runpy.run_path(module_path, run_name="__main__")
@@ -778,4 +797,8 @@ class TestMain:
             assert "fastapi" in captured.err
         finally:
             sys.argv = original_argv
-            app.app = original_app
+            for mod_name in blocker_names:
+                if saved_modules[mod_name] is not None:
+                    sys.modules[mod_name] = saved_modules[mod_name]
+                else:
+                    sys.modules.pop(mod_name, None)
