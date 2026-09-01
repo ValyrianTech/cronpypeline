@@ -701,6 +701,8 @@ class TestModuleAppFallback:
         blocker_names = ["fastapi", "fastapi.responses", "fastapi.staticfiles", "pydantic"]
         saved_modules = {}
         try:
+            # Pre-populate so the restore branch (saved_modules[mod_name] is not None) runs.
+            sys.modules["fastapi"] = types.ModuleType("fastapi")
             for mod_name in blocker_names:
                 saved_modules[mod_name] = sys.modules.get(mod_name)
                 sys.modules[mod_name] = types.ModuleType(mod_name)
@@ -730,6 +732,8 @@ class TestModuleAppFallback:
         blocker_names = ["fastapi", "fastapi.responses", "fastapi.staticfiles", "pydantic"]
         saved_modules = {}
         try:
+            # Pre-populate so the restore branch (saved_modules[mod_name] is not None) runs.
+            sys.modules["fastapi"] = types.ModuleType("fastapi")
             for mod_name in blocker_names:
                 saved_modules[mod_name] = sys.modules.get(mod_name)
                 sys.modules[mod_name] = types.ModuleType(mod_name)
@@ -786,6 +790,8 @@ class TestMain:
         blocker_names = ["fastapi", "fastapi.responses", "fastapi.staticfiles", "pydantic"]
         saved_modules = {}
         try:
+            # Pre-populate so the restore branch (saved_modules[mod_name] is not None) runs.
+            sys.modules["fastapi"] = types.ModuleType("fastapi")
             for mod_name in blocker_names:
                 saved_modules[mod_name] = sys.modules.get(mod_name)
                 sys.modules[mod_name] = types.ModuleType(mod_name)

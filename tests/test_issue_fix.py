@@ -875,6 +875,28 @@ class TestCleanupStaleTask:
         out = capsys.readouterr().out
         assert "ERROR" in out and "escapes TASKS_DIR" in out
 
+    def test_rmtree_symlink_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
+        """Covers the containment check against a symlink bypassing TASKS_DIR."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
+        outside_dir = tmp_path / "outside" / "t"
+        outside_dir.mkdir(parents=True)
+        (outside_dir / TASK_FILE).write_text(json.dumps({
+            "task_id": "t", "branch": "b", "default_branch": "main",
+            "source_issue_id": "",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        task_dir = tasks_dir / "d" / "link"
+        task_dir.parent.mkdir(parents=True)
+        task_dir.symlink_to(outside_dir, target_is_directory=True)
+        assert _cleanup_stale_task(target, task_dir) is False
+        assert outside_dir.exists()
+        out = capsys.readouterr().out
+        assert "ERROR" in out and "escapes TASKS_DIR" in out
+
 
 # ─── _cleanup_orphaned_task_dirs ─────────────────────────────────────────────
 
