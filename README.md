@@ -380,7 +380,7 @@ For the ordering operators (`lt`, `lte`, `gt`, `gte`), if the JSON field value's
 | `command` | Run a shell command | `command`, `cwd` |
 | `queue_agent` | Drop a file in conversation queue | `agent`, `prompt` or `prompt_template`, `reminder_prompt`, `reminder_prompt_template` |
 | `subprocess` | Run a Python script as subprocess | `script`, `args` |
-| `http_request` | Call an HTTP endpoint | `url`, `method`, `headers`, `body`, `auth_token`, `auth_token_env` |
+| `http_request` | Call an HTTP endpoint | `url`, `method`, `headers`, `body`, `auth_token`, `auth_token_env`, `allowed_hosts`, `blocked_hosts`, `resolve_private_ip` |
 | `custom` | User-provided Python callable | `callable` |
 
 **Common fields:**
