@@ -1350,3 +1350,18 @@ class TestBuildQueueHandler:
         ctx.pipeline = mock_pipeline
         handler = _build_queue_handler({}, ctx)
         assert str(handler.agent_settings_dir) == str(outside)
+
+    def test_pipeline_fallback_queue_dir_outside_workspace(self, tmp_path):
+        """queue_dir from pipeline fallback config outside the workspace is used."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        mock_pipeline = MagicMock()
+        mock_pipeline.config.action_handler.params = {
+            "queue_dir": str(outside),
+        }
+        ctx.pipeline = mock_pipeline
+        handler = _build_queue_handler({}, ctx)
+        assert str(handler.queue_dir) == str(outside)
