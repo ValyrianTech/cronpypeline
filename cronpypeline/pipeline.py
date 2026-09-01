@@ -189,6 +189,12 @@ class Pipeline:
                 config.action_handler.type,
                 config.action_handler.params,
             )
+            from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
+            if isinstance(handler, ConversationQueueHandler):
+                qd = Path(handler.queue_dir).resolve()
+                ws = self.workspace_dir.resolve()
+                if not qd.is_relative_to(ws):
+                    raise ValueError(f"queue_dir escapes workspace: {handler.queue_dir}")
             register_handler(ActionType.QUEUE_AGENT, handler)
 
     @classmethod
