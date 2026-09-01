@@ -945,6 +945,37 @@ class TestCleanupOrphanedTaskDirs:
         _cleanup_orphaned_task_dirs("repo")
         assert td.exists()
 
+    def test_symlink_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
+        outside_dir = tmp_path / "outside" / "t"
+        outside_dir.mkdir(parents=True)
+        date_dir = tasks_dir / "2025-01-01"
+        date_dir.mkdir()
+        task_dir = date_dir / "20250101_repo_iss1"
+        task_dir.symlink_to(outside_dir, target_is_directory=True)
+        _cleanup_orphaned_task_dirs("repo")
+        assert outside_dir.exists()
+        out = capsys.readouterr().out
+        assert "ERROR" in out and "escapes TASKS_DIR" in out
+
+    def test_dotdot_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
+        outside_dir = tmp_path / "outside" / "20250101_repo_iss1"
+        outside_dir.mkdir(parents=True)
+        (tasks_dir / "d").mkdir()
+        task_dir = tasks_dir / "d" / ".." / ".." / "outside" / "20250101_repo_iss1"
+        monkeypatch.setattr(
+            "cronpypeline.plugins.issue_fix._iter_task_dirs", lambda: [task_dir]
+        )
+        _cleanup_orphaned_task_dirs("repo")
+        assert outside_dir.exists()
+        out = capsys.readouterr().out
+        assert "ERROR" in out and "escapes TASKS_DIR" in out
+
 
 # ─── _recover_orphaned_triaged ──────────────────────────────────────────────
 
