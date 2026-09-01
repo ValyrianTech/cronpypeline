@@ -1335,6 +1335,41 @@ class TestBuildQueueHandler:
         handler = _build_queue_handler({"queue_dir": str(workspace / "queue")}, ctx)
         assert handler.agent_settings_dir is None
 
+    def test_relative_agent_settings_dir_resolved_against_workspace(self, tmp_path):
+        """Relative agent_settings_dir is anchored to the workspace directory."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        handler = _build_queue_handler(
+            {"queue_dir": str(workspace / "queue"), "agent_settings_dir": ".SWE/agent_settings"},
+            ctx,
+        )
+        assert str(handler.agent_settings_dir) == str(workspace / ".SWE" / "agent_settings")
+        assert handler.agent_settings_dir.is_absolute()
+
+    def test_relative_agent_settings_dir_with_dotdot_raises(self, tmp_path):
+        """Relative agent_settings_dir containing .. still raises path traversal."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        with pytest.raises(ValueError, match="agent_settings_dir contains path traversal"):
+            _build_queue_handler(
+                {"queue_dir": str(workspace / "queue"), "agent_settings_dir": "../outside"},
+                ctx,
+            )
+
+    def test_absolute_agent_settings_dir_used_as_is(self, tmp_path):
+        """Absolute agent_settings_dir is not modified by resolution."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        agent_settings_dir = tmp_path / "shared" / "agents"
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        handler = _build_queue_handler(
+            {"queue_dir": str(workspace / "queue"), "agent_settings_dir": str(agent_settings_dir)},
+            ctx,
+        )
+        assert str(handler.agent_settings_dir) == str(agent_settings_dir)
+
     def test_agent_settings_dir_from_fallback_allowed(self, tmp_path):
         """agent_settings_dir from pipeline fallback config is validated."""
         workspace = tmp_path / "workspace"
