@@ -62,6 +62,7 @@
 - The `_PinnedHTTPConnection` and `_PinnedHTTPSConnection` classes now raise `OSError('connection failed')` instead of potentially raising `None` when no validated IP connection could be established, fixing a mypy type-safety issue where `raise last_err` could raise `None`.
 
 ### Security
+- The SWE plugin's GitHub API calls (`_gh_api_get_list`, `_gh_api_post`, `_gh_api_patch`, and `run_c_pr_status`) now use a custom HTTP opener built with a `_NoRedirectHandler` (an `urllib.request.HTTPRedirectHandler` subclass whose `redirect_request` always returns `None`), which prevents automatic redirect following. This ensures the `Authorization` header is never sent to a redirected URL, so the authorization token cannot be leaked to an attacker-controlled host via a malicious or compromised GitHub API response.
 - Addressed bandit findings: added nosec annotations for intentional subprocess/shell usage, resolved git binary via shutil.which, and validated HTTP URL schemes.
 - `http_request` action handler now redacts URLs (removes userinfo and query params) in result data to avoid leaking sensitive information.
 - Template-substituted variables (`target`, `target_dir`, `workspace_dir`, and target config values) are now shell-quoted with `shlex.quote()` before substitution into `command`-type actions and `run_diagnostic` commands, preventing command injection when values contain shell metacharacters.
