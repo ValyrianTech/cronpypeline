@@ -1326,9 +1326,8 @@ class TestHttpRequestActionHandlerSSRF:
         handler = HttpRequestActionHandler()
 
         allowed_action = self._action("http://api.example.com/", allowed_hosts=["api.example.com"])
-        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
-            with patch("urllib.request.urlopen", return_value=self._mock_response()):
-                allowed_result = handler.execute(allowed_action, ctx)
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("urllib.request.urlopen", return_value=self._mock_response()):
+            allowed_result = handler.execute(allowed_action, ctx)
         assert allowed_result.success is True
 
         blocked_action = self._action("http://other.example.com/", allowed_hosts=["api.example.com"])
@@ -1343,9 +1342,8 @@ class TestHttpRequestActionHandlerSSRF:
         handler = HttpRequestActionHandler()
 
         allowed_action = self._action("http://api.example.com/", allowed_hosts=["*.example.com"])
-        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
-            with patch("urllib.request.urlopen", return_value=self._mock_response()):
-                allowed_result = handler.execute(allowed_action, ctx)
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("urllib.request.urlopen", return_value=self._mock_response()):
+            allowed_result = handler.execute(allowed_action, ctx)
         assert allowed_result.success is True
 
         blocked_action = self._action("http://example.com/", allowed_hosts=["*.example.com"])
@@ -1414,9 +1412,8 @@ class TestHttpRequestActionHandlerSSRF:
             ("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80)),
             ("AF_INET", "SOCK_STREAM", 6, "", ("10.0.0.1", 80)),
         ]
-        with patch("socket.getaddrinfo", return_value=infos):
-            with patch("urllib.request.urlopen") as mock_urlopen:
-                result = handler.execute(action, ctx)
+        with patch("socket.getaddrinfo", return_value=infos), patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
 
         assert result.success is False
         assert "SSRF blocked" in result.stderr
@@ -1427,9 +1424,8 @@ class TestHttpRequestActionHandlerSSRF:
         handler = HttpRequestActionHandler()
 
         allowed_action = self._action("http://api1.example.com/", allowed_hosts=["api?.example.com"])
-        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
-            with patch("urllib.request.urlopen", return_value=self._mock_response()):
-                allowed_result = handler.execute(allowed_action, ctx)
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("urllib.request.urlopen", return_value=self._mock_response()):
+            allowed_result = handler.execute(allowed_action, ctx)
         assert allowed_result.success is True
 
         blocked_action = self._action("http://api12.example.com/", allowed_hosts=["api?.example.com"])
@@ -1444,9 +1440,8 @@ class TestHttpRequestActionHandlerSSRF:
         handler = HttpRequestActionHandler()
 
         allowed_action = self._action("http://api1.example.com/", allowed_hosts=["api[12].example.com"])
-        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
-            with patch("urllib.request.urlopen", return_value=self._mock_response()):
-                allowed_result = handler.execute(allowed_action, ctx)
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("urllib.request.urlopen", return_value=self._mock_response()):
+            allowed_result = handler.execute(allowed_action, ctx)
         assert allowed_result.success is True
 
         blocked_action = self._action("http://api3.example.com/", allowed_hosts=["api[12].example.com"])
@@ -1468,9 +1463,8 @@ class TestHttpRequestActionHandlerSSRF:
         mock_urlopen.assert_not_called()
 
         allowed_action = self._action("http://api12.example.com/", blocked_hosts=["api?.example.com"])
-        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
-            with patch("urllib.request.urlopen", return_value=self._mock_response()):
-                allowed_result = handler.execute(allowed_action, ctx)
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("urllib.request.urlopen", return_value=self._mock_response()):
+            allowed_result = handler.execute(allowed_action, ctx)
         assert allowed_result.success is True
 
     def test_dns_failure_is_blocked(self, tmp_path):
@@ -1478,9 +1472,8 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("socket.getaddrinfo", side_effect=socket.gaierror("Name or service not known")):
-            with patch("urllib.request.urlopen") as mock_urlopen:
-                result = handler.execute(action, ctx)
+        with patch("socket.getaddrinfo", side_effect=socket.gaierror("Name or service not known")), patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
 
         assert result.success is False
         assert "Could not resolve host" in result.stderr
