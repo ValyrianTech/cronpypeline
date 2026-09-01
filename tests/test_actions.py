@@ -16,7 +16,6 @@ from cronpypeline.actions import (
     _host_matches,
     _is_private_ip,
     _redact_url,
-    _validate_ssrf,
     execute_action,
     format_template,
 )
