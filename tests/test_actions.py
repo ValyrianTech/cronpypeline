@@ -1285,6 +1285,32 @@ class TestHttpRequestActionHandlerSSRF:
         assert "Host not allowed" in blocked_result.stderr
         mock_urlopen.assert_not_called()
 
+    def test_allowed_hosts_plain_string_is_rejected(self, tmp_path):
+        action = self._action("http://api.example.com/", allowed_hosts="api.example.com")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == -1
+        assert "allowed_hosts must be a list" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_blocked_hosts_plain_string_is_rejected(self, tmp_path):
+        action = self._action("http://api.example.com/", blocked_hosts="api.example.com")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == -1
+        assert "blocked_hosts must be a list" in result.stderr
+        mock_urlopen.assert_not_called()
+
     def test_blocked_hosts_blocks(self, tmp_path):
         action = self._action("http://internal.example.com/", blocked_hosts=["internal.example.com"])
         ctx = self._ctx(tmp_path)
