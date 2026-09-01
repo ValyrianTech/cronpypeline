@@ -1,12 +1,18 @@
 """Tests for cronpypeline.actions — built-in action handlers and TickContext."""
 
+import errno
 import socket
+import urllib.request
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cronpypeline.actions import (
     _MAX_REDIRECTS,
+    _PinnedHTTPConnection,
+    _PinnedHTTPSConnection,
+    _PinnedHTTPHandler,
+    _PinnedHTTPSHandler,
     ActionResult,
     CommandActionHandler,
     CustomActionHandler,
@@ -17,6 +23,7 @@ from cronpypeline.actions import (
     _host_matches,
     _is_private_ip,
     _redact_url,
+    _validate_ssrf,
     execute_action,
     format_template,
 )
@@ -1953,3 +1960,218 @@ class TestActionResult:
     def test_data_none_get_async_returns_false(self):
         r = ActionResult(success=True, data=None)
         assert r.data.get("async", False) is False
+
+
+class TestPinnedConnections:
+    """Tests for the TOCTOU DNS-rebinding fix: pinned connection classes."""
+
+    def _mock_sock(self):
+        return MagicMock()
+
+    def _mock_https_context(self):
+        ctx = MagicMock()
+        ctx.wrap_socket.return_value = MagicMock()
+        return ctx
+
+    # --- _PinnedHTTPConnection ---
+
+    def test_http_connection_connects_to_validated_ip(self):
+        conn = _PinnedHTTPConnection("example.com", 80, timeout=5, validated_ip="93.184.216.34")
+        sock = self._mock_sock()
+        create = MagicMock(return_value=sock)
+        conn._create_connection = create
+        conn.connect()
+        create.assert_called_once_with(("93.184.216.34", 80), 5, None)
+
+    def test_http_connection_falls_back_to_host(self):
+        conn = _PinnedHTTPConnection("example.com", 80, timeout=5)
+        sock = self._mock_sock()
+        create = MagicMock(return_value=sock)
+        conn._create_connection = create
+        conn.connect()
+        create.assert_called_once_with(("example.com", 80), 5, None)
+
+    def test_http_connection_swallows_enoprotoopt(self):
+        conn = _PinnedHTTPConnection("example.com", 80, validated_ip="93.184.216.34")
+        sock = self._mock_sock()
+        sock.setsockopt.side_effect = OSError(errno.ENOPROTOOPT, "Protocol not available")
+        conn._create_connection = MagicMock(return_value=sock)
+        conn.connect()
+
+    def test_http_connection_reraises_other_oserror(self):
+        conn = _PinnedHTTPConnection("example.com", 80, validated_ip="93.184.216.34")
+        sock = self._mock_sock()
+        sock.setsockopt.side_effect = OSError(errno.EINVAL, "Invalid argument")
+        conn._create_connection = MagicMock(return_value=sock)
+        with pytest.raises(OSError):
+            conn.connect()
+
+    def test_http_connection_tunnel(self):
+        conn = _PinnedHTTPConnection("example.com", 80, validated_ip="93.184.216.34")
+        conn._tunnel_host = "proxy.example.com"
+        sock = self._mock_sock()
+        conn._create_connection = MagicMock(return_value=sock)
+        with patch.object(_PinnedHTTPConnection, "_tunnel") as tunnel:
+            conn.connect()
+        tunnel.assert_called_once_with()
+
+    # --- _PinnedHTTPSConnection ---
+
+    def test_https_connection_connects_to_validated_ip(self):
+        conn = _PinnedHTTPSConnection("example.com", 443, timeout=5, validated_ip="93.184.216.34")
+        ctx = self._mock_https_context()
+        conn._context = ctx
+        sock = self._mock_sock()
+        create = MagicMock(return_value=sock)
+        conn._create_connection = create
+        conn.connect()
+        create.assert_called_once_with(("93.184.216.34", 443), 5, None)
+        ctx.wrap_socket.assert_called_once_with(sock, server_hostname="example.com")
+
+    def test_https_connection_falls_back_to_host(self):
+        conn = _PinnedHTTPSConnection("example.com", 443, timeout=5)
+        ctx = self._mock_https_context()
+        conn._context = ctx
+        sock = self._mock_sock()
+        create = MagicMock(return_value=sock)
+        conn._create_connection = create
+        conn.connect()
+        create.assert_called_once_with(("example.com", 443), 5, None)
+        ctx.wrap_socket.assert_called_once_with(sock, server_hostname="example.com")
+
+    def test_https_connection_swallows_enoprotoopt(self):
+        conn = _PinnedHTTPSConnection("example.com", 443, validated_ip="93.184.216.34")
+        ctx = self._mock_https_context()
+        conn._context = ctx
+        sock = self._mock_sock()
+        sock.setsockopt.side_effect = OSError(errno.ENOPROTOOPT, "Protocol not available")
+        conn._create_connection = MagicMock(return_value=sock)
+        conn.connect()
+
+    def test_https_connection_reraises_other_oserror(self):
+        conn = _PinnedHTTPSConnection("example.com", 443, validated_ip="93.184.216.34")
+        ctx = self._mock_https_context()
+        conn._context = ctx
+        sock = self._mock_sock()
+        sock.setsockopt.side_effect = OSError(errno.EINVAL, "Invalid argument")
+        conn._create_connection = MagicMock(return_value=sock)
+        with pytest.raises(OSError):
+            conn.connect()
+
+    def test_https_connection_tunnel_uses_tunnel_host_for_sni(self):
+        conn = _PinnedHTTPSConnection("example.com", 443, validated_ip="93.184.216.34")
+        ctx = self._mock_https_context()
+        conn._context = ctx
+        conn._tunnel_host = "proxy.example.com"
+        sock = self._mock_sock()
+        conn._create_connection = MagicMock(return_value=sock)
+        with patch.object(_PinnedHTTPSConnection, "_tunnel") as tunnel:
+            conn.connect()
+        tunnel.assert_called_once_with()
+        ctx.wrap_socket.assert_called_once_with(sock, server_hostname="proxy.example.com")
+
+    # --- _PinnedHTTPHandler / _PinnedHTTPSHandler ---
+
+    def test_http_handler_pins_when_validated_ip(self):
+        handler = _PinnedHTTPHandler()
+        req = urllib.request.Request("http://example.com/")
+        req._validated_ip = "93.184.216.34"
+        with patch.object(_PinnedHTTPHandler, "do_open", return_value=MagicMock()) as do_open:
+            handler.http_open(req)
+        do_open.assert_called_once()
+        factory = do_open.call_args[0][0]
+        conn = factory("example.com")
+        assert isinstance(conn, _PinnedHTTPConnection)
+        assert conn._validated_ip == "93.184.216.34"
+
+    def test_http_handler_delegates_without_validated_ip(self):
+        handler = _PinnedHTTPHandler()
+        req = urllib.request.Request("http://example.com/")
+        with patch.object(_PinnedHTTPHandler, "do_open") as do_open, \
+                patch.object(urllib.request.HTTPHandler, "http_open", return_value=MagicMock()) as super_open:
+            handler.http_open(req)
+        do_open.assert_not_called()
+        super_open.assert_called_once_with(req)
+
+    def test_https_handler_pins_when_validated_ip(self):
+        handler = _PinnedHTTPSHandler()
+        req = urllib.request.Request("https://example.com/")
+        req._validated_ip = "93.184.216.34"
+        with patch.object(_PinnedHTTPSHandler, "do_open", return_value=MagicMock()) as do_open:
+            handler.https_open(req)
+        do_open.assert_called_once()
+        factory = do_open.call_args[0][0]
+        assert do_open.call_args[1]["context"] is handler._context
+        assert do_open.call_args[1]["check_hostname"] is handler._check_hostname
+        conn = factory("example.com")
+        assert isinstance(conn, _PinnedHTTPSConnection)
+        assert conn._validated_ip == "93.184.216.34"
+
+    def test_https_handler_delegates_without_validated_ip(self):
+        handler = _PinnedHTTPSHandler()
+        req = urllib.request.Request("https://example.com/")
+        with patch.object(_PinnedHTTPSHandler, "do_open") as do_open, \
+                patch.object(urllib.request.HTTPSHandler, "https_open", return_value=MagicMock()) as super_open:
+            handler.https_open(req)
+        do_open.assert_not_called()
+        super_open.assert_called_once_with(req)
+
+    # --- _validate_ssrf tuple return ---
+
+    def test_validate_ssrf_returns_ip_on_public_host(self):
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ):
+            ip, err = _validate_ssrf("http://example.com/", {})
+        assert err is None
+        assert ip == "93.184.216.34"
+
+    def test_validate_ssrf_returns_none_ip_when_disabled(self):
+        ip, err = _validate_ssrf("http://127.0.0.1/", {"resolve_private_ip": False})
+        assert err is None
+        assert ip is None
+
+    # --- execute() pins the validated IP ---
+
+    def test_execute_sets_validated_ip_on_request(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "http://93.184.216.34/api", "method": "GET"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"ok": true}'
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        req = mock_urlopen.call_args[0][0]
+        assert req._validated_ip == "93.184.216.34"
+
+    def test_execute_does_not_set_validated_ip_when_disabled(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "http://127.0.0.1/api", "method": "GET", "resolve_private_ip": False},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"ok": true}'
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        req = mock_urlopen.call_args[0][0]
+        assert req._validated_ip is None
