@@ -227,7 +227,8 @@ def _build_queue_handler(params: dict[str, Any], context: TickContext) -> Conver
     :param params: Action params dict with optional queue settings.
     :param context: Tick context with pipeline reference for fallback.
     :returns: A :class:`ConversationQueueHandler` instance.
-    :raises ValueError: If queue_dir is missing, empty, or escapes the workspace.
+    :raises ValueError: If queue_dir is missing, empty, or escapes the workspace,
+        or if agent_settings_dir is set and escapes the workspace.
     """
     fallback: dict[str, Any] = {}
     pipeline = getattr(context, "pipeline", None)
@@ -248,6 +249,10 @@ def _build_queue_handler(params: dict[str, Any], context: TickContext) -> Conver
     ws = Path(context.workspace_dir).resolve()
     if not qd.is_relative_to(ws):
         raise ValueError(f"queue_dir escapes workspace: {handler.queue_dir}")
+    if handler.agent_settings_dir is not None:
+        asd = Path(handler.agent_settings_dir).resolve()
+        if not asd.is_relative_to(ws):
+            raise ValueError(f"agent_settings_dir escapes workspace: {handler.agent_settings_dir}")
     return handler
 
 
