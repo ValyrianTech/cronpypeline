@@ -1,5 +1,6 @@
 """Tests for cronpypeline.actions — built-in action handlers and TickContext."""
 
+import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +12,11 @@ from cronpypeline.actions import (
     HttpRequestActionHandler,
     SubprocessActionHandler,
     TickContext,
+    _as_bool,
+    _host_matches,
+    _is_private_ip,
     _redact_url,
+    _validate_ssrf,
     execute_action,
     format_template,
 )
@@ -441,7 +446,7 @@ class TestHttpRequestActionHandler:
     def test_successful_get(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET"},
+            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -468,6 +473,7 @@ class TestHttpRequestActionHandler:
                 "method": "POST",
                 "body": '{"title": "test"}',
                 "headers": {"Content-Type": "application/json"},
+                "resolve_private_ip": False,
             },
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
@@ -491,7 +497,7 @@ class TestHttpRequestActionHandler:
     def test_dry_run_does_not_execute(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET"},
+            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=True, verbose=False)
         handler = HttpRequestActionHandler()
@@ -506,7 +512,7 @@ class TestHttpRequestActionHandler:
     def test_non_2xx_response_is_failure(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET"},
+            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -530,6 +536,7 @@ class TestHttpRequestActionHandler:
                 "url": "http://localhost:12345/api",
                 "method": "GET",
                 "auth_token_env": "GITHUB_TOKEN",
+                "resolve_private_ip": False,
             },
         )
         ctx = TickContext(
@@ -558,6 +565,7 @@ class TestHttpRequestActionHandler:
                 "url": "http://localhost:12345/api",
                 "method": "GET",
                 "auth_token": "ghp_direct_token",
+                "resolve_private_ip": False,
             },
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
@@ -584,6 +592,7 @@ class TestHttpRequestActionHandler:
                 "method": "PATCH",
                 "body": '{"state": "closed"}',
                 "headers": {"Content-Type": "application/json"},
+                "resolve_private_ip": False,
             },
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
@@ -605,7 +614,7 @@ class TestHttpRequestActionHandler:
     def test_url_error_is_failure(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET"},
+            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -620,7 +629,7 @@ class TestHttpRequestActionHandler:
     def test_default_method_is_get(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api"},
+            params={"url": "http://localhost:12345/api", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -641,7 +650,7 @@ class TestHttpRequestActionHandler:
     def test_response_data_included(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET"},
+            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -661,7 +670,7 @@ class TestHttpRequestActionHandler:
     def test_timeout(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET"},
+            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
             timeout_seconds=1,
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
@@ -678,7 +687,7 @@ class TestHttpRequestActionHandler:
         """Default timeout of 30s is passed when timeout_seconds is None."""
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET"},
+            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1017,7 +1026,7 @@ class TestHttpRequestActionHandlerErrors:
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET"},
+            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1038,7 +1047,7 @@ class TestHttpRequestActionHandlerErrors:
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET"},
+            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1059,7 +1068,7 @@ class TestHttpRequestActionHandlerErrors:
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET"},
+            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
             timeout_seconds=1,
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
@@ -1117,7 +1126,7 @@ class TestHttpRequestActionHandlerRedaction:
     def test_success_result_redacts_url(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "https://user:pass@localhost:12345/api?api_key=secret", "method": "GET"},
+            params={"url": "https://user:pass@localhost:12345/api?api_key=secret", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1139,7 +1148,7 @@ class TestHttpRequestActionHandlerRedaction:
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "https://example.com/api?api_key=secret&token=abc", "method": "GET"},
+            params={"url": "https://example.com/api?api_key=secret&token=abc", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1151,6 +1160,515 @@ class TestHttpRequestActionHandlerRedaction:
 
         assert result.success is False
         assert result.data["url"] == "https://example.com/api"
+
+
+class TestHttpRequestActionHandlerSSRF:
+    """Tests for SSRF protection in the HTTP request handler."""
+
+    def _ctx(self, tmp_path):
+        return TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+
+    def _action(self, url, **params):
+        return ActionSpec(type=ActionType.HTTP_REQUEST, params={"url": url, **params})
+
+    def _mock_response(self, status=200, body=b'{"ok": true}'):
+        mock_resp = MagicMock()
+        mock_resp.status = status
+        mock_resp.read.return_value = body
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
+    def _mock_public_dns(self):
+        return [("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))]
+
+    def test_private_ip_is_blocked(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == -1
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_link_local_ip_is_blocked(self, tmp_path):
+        action = self._action("http://169.254.169.254/latest/meta-data/")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_private_range_ip_is_blocked(self, tmp_path):
+        action = self._action("http://10.0.0.1/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_localhost_hostname_is_blocked(self, tmp_path):
+        action = self._action("http://localhost:12345/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_public_ip_is_allowed(self, tmp_path):
+        action = self._action("http://93.184.216.34/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_resolve_private_ip_disabled_allows_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_resolve_private_ip_string_false_allows_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="false")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_resolve_private_ip_string_true_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="true")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_resolve_private_ip_string_zero_allows_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="0")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_resolve_private_ip_string_one_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="1")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_resolve_private_ip_string_capitalized_false_allows_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="False")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_resolve_private_ip_string_uppercase_true_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="TRUE")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_allowed_hosts_restricts(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        allowed_action = self._action("http://api.example.com/", allowed_hosts=["api.example.com"])
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
+            with patch("urllib.request.urlopen", return_value=self._mock_response()):
+                allowed_result = handler.execute(allowed_action, ctx)
+        assert allowed_result.success is True
+
+        blocked_action = self._action("http://other.example.com/", allowed_hosts=["api.example.com"])
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            blocked_result = handler.execute(blocked_action, ctx)
+        assert blocked_result.success is False
+        assert "Host not allowed" in blocked_result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_allowed_hosts_wildcard(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        allowed_action = self._action("http://api.example.com/", allowed_hosts=["*.example.com"])
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
+            with patch("urllib.request.urlopen", return_value=self._mock_response()):
+                allowed_result = handler.execute(allowed_action, ctx)
+        assert allowed_result.success is True
+
+        blocked_action = self._action("http://example.com/", allowed_hosts=["*.example.com"])
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            blocked_result = handler.execute(blocked_action, ctx)
+        assert blocked_result.success is False
+        assert "Host not allowed" in blocked_result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_allowed_hosts_plain_string_is_rejected(self, tmp_path):
+        action = self._action("http://api.example.com/", allowed_hosts="api.example.com")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == -1
+        assert "allowed_hosts must be a list" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_blocked_hosts_plain_string_is_rejected(self, tmp_path):
+        action = self._action("http://api.example.com/", blocked_hosts="api.example.com")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == -1
+        assert "blocked_hosts must be a list" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_blocked_hosts_blocks(self, tmp_path):
+        action = self._action("http://internal.example.com/", blocked_hosts=["internal.example.com"])
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "Host blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_blocked_hosts_wildcard(self, tmp_path):
+        action = self._action("http://db.internal.example.com/", blocked_hosts=["*.internal.example.com"])
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "Host blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_hostname_with_mixed_public_and_private_ips_is_blocked(self, tmp_path):
+        action = self._action("http://multi.example.com/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        infos = [
+            ("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80)),
+            ("AF_INET", "SOCK_STREAM", 6, "", ("10.0.0.1", 80)),
+        ]
+        with patch("socket.getaddrinfo", return_value=infos):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_allowed_hosts_question_mark_single_char(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        allowed_action = self._action("http://api1.example.com/", allowed_hosts=["api?.example.com"])
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
+            with patch("urllib.request.urlopen", return_value=self._mock_response()):
+                allowed_result = handler.execute(allowed_action, ctx)
+        assert allowed_result.success is True
+
+        blocked_action = self._action("http://api12.example.com/", allowed_hosts=["api?.example.com"])
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            blocked_result = handler.execute(blocked_action, ctx)
+        assert blocked_result.success is False
+        assert "Host not allowed" in blocked_result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_allowed_hosts_character_class(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        allowed_action = self._action("http://api1.example.com/", allowed_hosts=["api[12].example.com"])
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
+            with patch("urllib.request.urlopen", return_value=self._mock_response()):
+                allowed_result = handler.execute(allowed_action, ctx)
+        assert allowed_result.success is True
+
+        blocked_action = self._action("http://api3.example.com/", allowed_hosts=["api[12].example.com"])
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            blocked_result = handler.execute(blocked_action, ctx)
+        assert blocked_result.success is False
+        assert "Host not allowed" in blocked_result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_blocked_hosts_question_mark_single_char(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        blocked_action = self._action("http://api1.example.com/", blocked_hosts=["api?.example.com"])
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            blocked_result = handler.execute(blocked_action, ctx)
+        assert blocked_result.success is False
+        assert "Host blocked" in blocked_result.stderr
+        mock_urlopen.assert_not_called()
+
+        allowed_action = self._action("http://api12.example.com/", blocked_hosts=["api?.example.com"])
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
+            with patch("urllib.request.urlopen", return_value=self._mock_response()):
+                allowed_result = handler.execute(allowed_action, ctx)
+        assert allowed_result.success is True
+
+    def test_dns_failure_is_blocked(self, tmp_path):
+        action = self._action("http://nonexistent.invalid/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("socket.getaddrinfo", side_effect=socket.gaierror("Name or service not known")):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "Could not resolve host" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_ipv6_loopback_is_blocked(self, tmp_path):
+        action = self._action("http://[::1]:12345/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_private_ipv6_is_blocked(self, tmp_path):
+        action = self._action("http://[fd00::1]/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_private_ip_check_takes_precedence_over_allowlist(self, tmp_path):
+        action = self._action("http://localhost:12345/api", allowed_hosts=["localhost"])
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_resolve_private_ip_false_with_allowed_hosts(self, tmp_path):
+        action = self._action(
+            "http://localhost:12345/api",
+            allowed_hosts=["localhost"],
+            resolve_private_ip=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_private_ip_check_skipped_when_disabled(self, tmp_path):
+        action = self._action("http://10.0.0.1/api", resolve_private_ip=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_ipv4_mapped_ipv6_is_blocked(self, tmp_path):
+        action = self._action("http://[::ffff:127.0.0.1]/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_ssrf_error_result_format(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == -1
+        assert "SSRF blocked" in result.stderr
+        assert "127.0.0.1" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_public_ipv6_is_allowed(self, tmp_path):
+        action = self._action("http://[2001:4860:4860::8888]/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_ipv4_mapped_public_ipv6_is_allowed(self, tmp_path):
+        action = self._action("http://[::ffff:93.184.216.34]/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_invalid_ip_returns_false(self):
+        assert _is_private_ip("not-an-ip") is False
+        assert _is_private_ip("") is False
+
+    def test_url_without_hostname_is_rejected(self, tmp_path):
+        action = self._action("http://")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == -1
+        assert "Invalid URL" in result.stderr
+        mock_urlopen.assert_not_called()
+
+
+class TestHostMatches:
+    """Direct unit tests for the _host_matches helper."""
+
+    def test_star_wildcard(self):
+        assert _host_matches("api.example.com", "*.example.com") is True
+        assert _host_matches("example.com", "*.example.com") is False
+
+    def test_question_mark_single_char(self):
+        assert _host_matches("api1.example.com", "api?.example.com") is True
+        assert _host_matches("api12.example.com", "api?.example.com") is False
+
+    def test_character_class(self):
+        assert _host_matches("api1.example.com", "api[12].example.com") is True
+        assert _host_matches("api3.example.com", "api[12].example.com") is False
+
+    def test_case_insensitivity(self):
+        assert _host_matches("API.Example.COM", "api.example.com") is True
+        assert _host_matches("api.example.com", "API.EXAMPLE.COM") is True
+
+
+class TestAsBool:
+    """Tests for the _as_bool boolean coercion helper."""
+
+    def test_actual_booleans(self):
+        assert _as_bool(True) is True
+        assert _as_bool(False) is False
+
+    def test_string_true_variants(self):
+        for value in ("true", "True", "TRUE", "1", "yes", "Yes", "YES", "on", "On", "ON"):
+            assert _as_bool(value) is True, value
+
+    def test_string_false_variants(self):
+        for value in ("false", "False", "FALSE", "0", "no", "No", "NO", "off", "Off", "OFF"):
+            assert _as_bool(value) is False, value
+
+    def test_string_with_surrounding_whitespace(self):
+        assert _as_bool("  true  ") is True
+        assert _as_bool("  false  ") is False
+
+    def test_none_returns_none(self):
+        assert _as_bool(None) is None
+
+    def test_non_string_truthy_and_falsy(self):
+        assert _as_bool(1) is True
+        assert _as_bool(0) is False
+        assert _as_bool(42) is True
+        assert _as_bool([]) is False
+        assert _as_bool([1]) is True
+        assert _as_bool({}) is False
+        assert _as_bool({"a": 1}) is True
+
+    def test_unrecognized_string_uses_python_truthiness(self):
+        assert _as_bool("") is False
+        assert _as_bool("random") is True
 
 
 class TestActionResult:
