@@ -242,7 +242,7 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         :param newurl: URL the request would be redirected to.
         :returns: Always ``None`` to suppress automatic redirect handling.
         """
-        return None  # Don't follow redirects automatically
+        return  # Don't follow redirects automatically
 
 
 _HTTP_OPENER = urllib.request.build_opener(NoRedirectHandler)
