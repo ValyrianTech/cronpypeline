@@ -523,6 +523,9 @@ def _cleanup_orphaned_task_dirs(repo_name: str, verbose: bool = False) -> None:
             continue
         if verbose:
             print(f"  {repo_name}: removing orphaned task dir {task_dir.name} (no {TASK_FILE})")
+        if not task_dir.resolve().is_relative_to(TASKS_DIR.resolve()):
+            print(f"  [task] ERROR: task_dir escapes TASKS_DIR: {task_dir}")
+            continue
         shutil.rmtree(task_dir, ignore_errors=True)
 
 
