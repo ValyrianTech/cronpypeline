@@ -93,6 +93,28 @@ def _redact_url(url: str) -> str:
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc.split("@")[-1], parsed.path, "", "", ""))
 
 
+def _as_bool(value: Any) -> bool | None:
+    """Interpret a value as a boolean.
+
+    Handles string representations of booleans (commonly produced by YAML
+    configs where booleans may be quoted), actual booleans, and falls back
+    to Python's normal truthiness for any other value.
+
+    :param value: The value to interpret as a boolean.
+    :returns: ``True``/``False`` for recognized values, ``None`` for ``None``,
+        and Python's normal truthiness for any other value.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "1", "yes", "on"):
+            return True
+        if lowered in ("false", "0", "no", "off"):
+            return False
+    return bool(value)
+
+
 # Private/reserved IPv4 networks blocked by SSRF protection.
 _PRIVATE_V4_NETWORKS = (
     ipaddress.ip_network("10.0.0.0/8"),
@@ -193,7 +215,7 @@ def _validate_ssrf(url: str, params: dict) -> str | None:
     if blocked_hosts and any(_host_matches(host, pattern) for pattern in blocked_hosts):
         return f"Host blocked: {host!r}"
 
-    if params.get("resolve_private_ip", True):
+    if _as_bool(params.get("resolve_private_ip", True)):
         try:
             infos = socket.getaddrinfo(host, None)
         except socket.gaierror:

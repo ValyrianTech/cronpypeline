@@ -12,6 +12,7 @@ from cronpypeline.actions import (
     HttpRequestActionHandler,
     SubprocessActionHandler,
     TickContext,
+    _as_bool,
     _is_private_ip,
     _redact_url,
     _validate_ssrf,
@@ -1251,6 +1252,75 @@ class TestHttpRequestActionHandlerSSRF:
         assert result.success is True
         mock_urlopen.assert_called_once()
 
+    def test_resolve_private_ip_string_false_allows_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="false")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_resolve_private_ip_string_true_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="true")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_resolve_private_ip_string_zero_allows_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="0")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_resolve_private_ip_string_one_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="1")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_resolve_private_ip_string_capitalized_false_allows_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="False")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        mock_urlopen.assert_called_once()
+
+    def test_resolve_private_ip_string_uppercase_true_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="TRUE")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
     def test_allowed_hosts_restricts(self, tmp_path):
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
@@ -1474,6 +1544,42 @@ class TestHttpRequestActionHandlerSSRF:
         assert result.exit_code == -1
         assert "Invalid URL" in result.stderr
         mock_urlopen.assert_not_called()
+
+
+class TestAsBool:
+    """Tests for the _as_bool boolean coercion helper."""
+
+    def test_actual_booleans(self):
+        assert _as_bool(True) is True
+        assert _as_bool(False) is False
+
+    def test_string_true_variants(self):
+        for value in ("true", "True", "TRUE", "1", "yes", "Yes", "YES", "on", "On", "ON"):
+            assert _as_bool(value) is True, value
+
+    def test_string_false_variants(self):
+        for value in ("false", "False", "FALSE", "0", "no", "No", "NO", "off", "Off", "OFF"):
+            assert _as_bool(value) is False, value
+
+    def test_string_with_surrounding_whitespace(self):
+        assert _as_bool("  true  ") is True
+        assert _as_bool("  false  ") is False
+
+    def test_none_returns_none(self):
+        assert _as_bool(None) is None
+
+    def test_non_string_truthy_and_falsy(self):
+        assert _as_bool(1) is True
+        assert _as_bool(0) is False
+        assert _as_bool(42) is True
+        assert _as_bool([]) is False
+        assert _as_bool([1]) is True
+        assert _as_bool({}) is False
+        assert _as_bool({"a": 1}) is True
+
+    def test_unrecognized_string_uses_python_truthiness(self):
+        assert _as_bool("") is False
+        assert _as_bool("random") is True
 
 
 class TestActionResult:
