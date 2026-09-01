@@ -5,6 +5,8 @@ command, subprocess, and custom actions. The conversation_queue handler
 lives in the plugins package.
 """
 
+import fnmatch
+import ipaddress
 import os
 import shlex
 import socket
@@ -89,6 +91,115 @@ def _redact_url(url: str) -> str:
     """Remove userinfo and query params from a URL for safe logging."""
     parsed = urllib.parse.urlparse(url)
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc.split("@")[-1], parsed.path, "", "", ""))
+
+
+# Private/reserved IPv4 networks blocked by SSRF protection.
+_PRIVATE_V4_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("192.0.0.0/24"),
+    ipaddress.ip_network("192.0.2.0/24"),
+    ipaddress.ip_network("198.18.0.0/15"),
+    ipaddress.ip_network("198.51.100.0/24"),
+    ipaddress.ip_network("203.0.113.0/24"),
+    ipaddress.ip_network("224.0.0.0/4"),
+    ipaddress.ip_network("240.0.0.0/4"),
+)
+
+# Private/reserved IPv6 networks blocked by SSRF protection.
+_PRIVATE_V6_NETWORKS = (
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("::/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("ff00::/8"),
+    ipaddress.ip_network("::ffff:0:0/96"),
+)
+
+
+def _is_private_ip(ip_str: str) -> bool:
+    """Return True if ``ip_str`` is in a private/reserved IP range.
+
+    Handles both IPv4 and IPv6 addresses. IPv4-mapped IPv6 addresses are
+    checked via their embedded IPv4 address. Unparseable inputs return False.
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+
+    if isinstance(ip, ipaddress.IPv4Address):
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            return True
+        return any(ip in net for net in _PRIVATE_V4_NETWORKS)
+
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    ):
+        return True
+
+    mapped = ip.ipv4_mapped
+    if mapped is not None:
+        return _is_private_ip(str(mapped))
+
+    return any(ip in net for net in _PRIVATE_V6_NETWORKS)
+
+
+def _host_matches(host: str, pattern: str) -> bool:
+    """Match a hostname against a pattern (case-insensitive).
+
+    Supports ``*`` wildcards (e.g. ``*.example.com``) via :func:`fnmatch.fnmatchcase`.
+    """
+    return fnmatch.fnmatchcase(host.lower(), pattern.lower())
+
+
+def _validate_ssrf(url: str, params: dict) -> str | None:
+    """Validate a URL against SSRF protections.
+
+    Returns an error message string when validation fails, or ``None`` when
+    the URL is allowed.
+    """
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname
+    if host is None:
+        return f"Invalid URL: no hostname in {url!r}"
+
+    allowed_hosts = params.get("allowed_hosts")
+    if allowed_hosts and not any(_host_matches(host, pattern) for pattern in allowed_hosts):
+        return f"Host not allowed: {host!r}"
+
+    blocked_hosts = params.get("blocked_hosts")
+    if blocked_hosts and any(_host_matches(host, pattern) for pattern in blocked_hosts):
+        return f"Host blocked: {host!r}"
+
+    if params.get("resolve_private_ip", True):
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except socket.gaierror:
+            return f"Could not resolve host: {host!r}"
+        for info in infos:
+            ip = info[4][0]
+            if _is_private_ip(ip):
+                return f"SSRF blocked: host {host!r} resolves to private IP {ip!r}"
+
+    return None
 
 
 def format_template(template: str, variables: dict[str, Any]) -> str:
@@ -331,7 +442,9 @@ class HttpRequestActionHandler(ActionHandler):
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
         """Execute an HTTP request.
 
-        :param action: Action spec with ``url``, ``method``, ``headers``, ``body``, and auth params.
+        :param action: Action spec with ``url``, ``method``, ``headers``, ``body``,
+            and auth params. SSRF protection is controlled by the optional
+            ``allowed_hosts``, ``blocked_hosts``, and ``resolve_private_ip`` params.
         :param context: Tick context for auth token resolution from env.
         :returns: Result with response body, status code, and request metadata.
         """
@@ -365,6 +478,14 @@ class HttpRequestActionHandler(ActionHandler):
                 success=False,
                 exit_code=-1,
                 stderr=f"Unsupported URL scheme: {parsed_url.scheme!r}",
+            )
+
+        ssrf_error = _validate_ssrf(url, params)
+        if ssrf_error is not None:
+            return ActionResult(
+                success=False,
+                exit_code=-1,
+                stderr=ssrf_error,
             )
 
         try:

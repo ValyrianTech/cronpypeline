@@ -695,6 +695,12 @@ register_handler(ActionType.QUEUE_AGENT, handler)
 
 Makes HTTP requests using `urllib` from the stdlib. Supports `GET`, `POST`, `PATCH`, `PUT`, `DELETE` methods, custom headers, request body, and auth token resolution. Only `http` and `https` URL schemes are accepted — requests to other schemes (e.g. `file://`) are rejected with an error.
 
+The handler also protects against Server-Side Request Forgery (SSRF). By default, requests to private or reserved IP ranges are blocked — including `localhost`, `127.0.0.1`, `169.254.169.254` (cloud metadata), `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, IPv6 loopback/unique-local/link-local, and IPv4-mapped IPv6 addresses. The following optional params control this behavior:
+
+- `allowed_hosts`: optional list of hostname patterns (supports `*` wildcards, e.g. `*.example.com`) that restricts which hosts can be requested. If set, only matching hosts are allowed.
+- `blocked_hosts`: optional list of hostname patterns (supports `*` wildcards) that are always blocked.
+- `resolve_private_ip`: boolean (default `true`). When `true`, the handler resolves the hostname to IP addresses and blocks requests that resolve to private/reserved IPs. Set to `false` to disable this check (e.g. for internal pipelines that legitimately need to reach private hosts).
+
 ```json
 {
   "type": "http_request",
@@ -702,7 +708,10 @@ Makes HTTP requests using `urllib` from the stdlib. Supports `GET`, `POST`, `PAT
     "url": "https://api.github.com/repos/{slug}/issues",
     "method": "GET",
     "headers": {"Accept": "application/vnd.github+json"},
-    "auth_token_env": "GITHUB_TOKEN"
+    "auth_token_env": "GITHUB_TOKEN",
+    "allowed_hosts": ["*.github.com"],
+    "blocked_hosts": ["internal.example.com"],
+    "resolve_private_ip": true
   }
 }
 ```
