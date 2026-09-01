@@ -701,6 +701,8 @@ The handler also protects against Server-Side Request Forgery (SSRF). By default
 - `blocked_hosts`: optional list of hostname patterns (supports `*` wildcards) that are always blocked.
 - `resolve_private_ip`: boolean (default `true`). When `true`, the handler resolves the hostname to IP addresses and blocks requests that resolve to private/reserved IPs. Set to `false` to disable this check (e.g. for internal pipelines that legitimately need to reach private hosts).
 
+> **Note:** The SSRF check resolves the hostname separately from the actual HTTP request — `urllib.request.urlopen` resolves the hostname again independently. This creates a potential DNS rebinding / time-of-check-time-of-use (TOCTOU) vulnerability: an attacker who controls DNS could return a public IP during the validation check and a private IP during the actual request, bypassing the SSRF protection. This is a known limitation of Python's stdlib HTTP client and may be acceptable for a pipeline tool.
+
 ```json
 {
   "type": "http_request",
