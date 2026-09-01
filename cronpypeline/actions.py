@@ -164,6 +164,14 @@ class CommandActionHandler(ActionHandler):
         except ValueError as e:
             return ActionResult(success=False, stderr=str(e))
 
+        cwd_path = Path(cwd).resolve()
+        workspace_resolved = context.workspace_dir.resolve()
+        if not cwd_path.is_relative_to(workspace_resolved):
+            return ActionResult(
+                success=False,
+                stderr=f"cwd escapes workspace directory: {cwd}",
+            )
+
         timeout = action.timeout_seconds or 300  # Default to 5 minutes
 
         Path(cwd).mkdir(parents=True, exist_ok=True)
@@ -215,6 +223,15 @@ class SubprocessActionHandler(ActionHandler):
         script = action.params.get("script", "")
         args = action.params.get("args", [])
         cwd = action.params.get("cwd", str(context.target_dir))
+
+        cwd_path = Path(cwd).resolve()
+        workspace_resolved = context.workspace_dir.resolve()
+        if not cwd_path.is_relative_to(workspace_resolved):
+            return ActionResult(
+                success=False,
+                stderr=f"cwd escapes workspace directory: {cwd}",
+            )
+
         timeout = action.timeout_seconds or 300  # Default to 5 minutes
 
         if script.endswith(".py"):
