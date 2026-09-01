@@ -1234,3 +1234,100 @@ class TestBuildQueueHandler:
         ctx = TickContext(target="repo", workspace_dir=workspace_link, dry_run=False)
         handler = _build_queue_handler({"queue_dir": str(queue_dir)}, ctx)
         assert str(handler.queue_dir) == str(queue_dir)
+
+    def test_raises_when_agent_settings_dir_escapes_workspace(self, tmp_path):
+        """ValueError when agent_settings_dir is outside the workspace directory."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        with pytest.raises(ValueError, match="agent_settings_dir escapes workspace"):
+            _build_queue_handler(
+                {"queue_dir": str(workspace / "queue"), "agent_settings_dir": str(outside)},
+                ctx,
+            )
+
+    def test_raises_when_agent_settings_dir_escapes_via_dotdot(self, tmp_path):
+        """ValueError when agent_settings_dir uses .. to escape the workspace."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        with pytest.raises(ValueError, match="agent_settings_dir escapes workspace"):
+            _build_queue_handler(
+                {
+                    "queue_dir": str(workspace / "queue"),
+                    "agent_settings_dir": str(workspace / ".." / "outside"),
+                },
+                ctx,
+            )
+
+    def test_raises_when_agent_settings_dir_is_absolute_outside_workspace(self, tmp_path):
+        """ValueError when agent_settings_dir is an absolute path outside the workspace."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        with pytest.raises(ValueError, match="agent_settings_dir escapes workspace"):
+            _build_queue_handler(
+                {
+                    "queue_dir": str(workspace / "queue"),
+                    "agent_settings_dir": str(outside.resolve()),
+                },
+                ctx,
+            )
+
+    def test_agent_settings_dir_within_workspace_passes(self, tmp_path):
+        """agent_settings_dir inside workspace should not raise."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        agent_settings_dir = workspace / "agents"
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        handler = _build_queue_handler(
+            {
+                "queue_dir": str(workspace / "queue"),
+                "agent_settings_dir": str(agent_settings_dir),
+            },
+            ctx,
+        )
+        assert str(handler.agent_settings_dir) == str(agent_settings_dir)
+
+    def test_raises_when_agent_settings_dir_symlink_escapes_workspace(self, tmp_path):
+        """ValueError when agent_settings_dir is a symlink inside the workspace pointing outside."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        link = workspace / "agents"
+        link.symlink_to(outside, target_is_directory=True)
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        with pytest.raises(ValueError, match="agent_settings_dir escapes workspace"):
+            _build_queue_handler(
+                {"queue_dir": str(workspace / "queue"), "agent_settings_dir": str(link)},
+                ctx,
+            )
+
+    def test_agent_settings_dir_none_passes(self, tmp_path):
+        """agent_settings_dir not set (None) should not raise."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        handler = _build_queue_handler({"queue_dir": str(workspace / "queue")}, ctx)
+        assert handler.agent_settings_dir is None
+
+    def test_agent_settings_dir_from_fallback_validated(self, tmp_path):
+        """agent_settings_dir from pipeline fallback config is also validated."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        mock_pipeline = MagicMock()
+        mock_pipeline.config.action_handler.params = {
+            "queue_dir": str(workspace / "queue"),
+            "agent_settings_dir": str(outside),
+        }
+        ctx.pipeline = mock_pipeline
+        with pytest.raises(ValueError, match="agent_settings_dir escapes workspace"):
+            _build_queue_handler({}, ctx)
