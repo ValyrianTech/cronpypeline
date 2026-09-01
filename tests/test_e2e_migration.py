@@ -32,7 +32,7 @@ class MockAgentHandler(ActionHandler):
 
     def __init__(self, queue_dir: Path):
         self.queue_dir = queue_dir
-        self.entries = []
+        self.entries: list[tuple[str, Path]] = []
 
     def execute(self, action, context):
         if context.dry_run:

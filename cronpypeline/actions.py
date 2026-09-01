@@ -221,7 +221,7 @@ def _validate_ssrf(url: str, params: dict) -> str | None:
         except socket.gaierror:
             return f"Could not resolve host: {host!r}"
         for info in infos:
-            ip = info[4][0]
+            ip = str(info[4][0])
             if _is_private_ip(ip):
                 return f"SSRF blocked: host {host!r} resolves to private IP {ip!r}"
 
