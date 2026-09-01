@@ -801,6 +801,29 @@ class TestActionHandlerValidateCwd:
         assert result.success is False
         assert result.stderr == f"cwd escapes workspace directory: {outside}"
 
+    def test_symlink_cwd_escaping_workspace_is_rejected(self, tmp_path):
+        """A symlink inside the workspace pointing outside must be rejected."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        outside_dir_actions = tmp_path.parent / "outside_dir_actions"
+        outside_dir_actions.mkdir()
+        (tmp_path / "link").symlink_to(outside_dir_actions, target_is_directory=True)
+        result = handler._validate_cwd(str(tmp_path / "link"), tmp_path)
+        assert result is not None
+        assert result.success is False
+        assert "cwd escapes workspace directory" in result.stderr
+
+    def test_symlink_workspace_dir_accepts_resolved_cwd(self, tmp_path):
+        """A workspace_dir symlink pointing to a real directory accepts cwd inside it."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        real_workspace = tmp_path.parent / "real_workspace"
+        real_workspace.mkdir()
+        workspace_link = tmp_path / "workspace_link"
+        workspace_link.symlink_to(real_workspace, target_is_directory=True)
+        result = handler._validate_cwd(str(real_workspace / "subdir"), workspace_link)
+        assert result is None
+
 
 class TestSubprocessActionHandlerEdgeCases:
     """Tests for subprocess handler edge cases."""
