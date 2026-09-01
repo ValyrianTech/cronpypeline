@@ -956,6 +956,48 @@ class TestGhApiRedirectProtection:
         mock_open.assert_called_once()
         mock_urlopen.assert_not_called()
 
+    def test_redirect_does_not_leak_token_on_get(self):
+        from urllib.error import HTTPError
+
+        from cronpypeline.plugins import swe_plugin
+
+        evil_url = "https://evil.example/steal-token"
+        original_url = "https://api.github.com/repos/owner/repo/issues"
+        redirect = HTTPError(original_url, 302, "Found", {"Location": evil_url}, None)
+
+        with patch.object(swe_plugin._GH_OPENER, "open", side_effect=redirect) as mock_open:
+            result = swe_plugin._gh_api_get_list("owner", "repo", "issues", "secret-token")
+
+        assert result is None
+        mock_open.assert_called_once()
+
+        req = mock_open.call_args.args[0]
+        assert req.headers.get("Authorization") == "Bearer secret-token"
+        assert req.full_url == original_url
+        assert evil_url not in req.full_url
+
+    def test_redirect_does_not_leak_token_on_post(self):
+        from urllib.error import HTTPError
+
+        from cronpypeline.plugins import swe_plugin
+
+        evil_url = "https://evil.example/steal-token"
+        original_url = "https://api.github.com/repos/owner/repo/issues"
+        redirect = HTTPError(original_url, 302, "Found", {"Location": evil_url}, None)
+
+        with patch.object(swe_plugin._GH_OPENER, "open", side_effect=redirect) as mock_open:
+            result = swe_plugin._gh_api_post(
+                "owner", "repo", "issues", {"title": "test"}, "secret-token"
+            )
+
+        assert result is None
+        mock_open.assert_called_once()
+
+        req = mock_open.call_args.args[0]
+        assert req.headers.get("Authorization") == "Bearer secret-token"
+        assert req.full_url == original_url
+        assert evil_url not in req.full_url
+
 
 # ─── _read_github_session ───────────────────────────────────────────────────
 
