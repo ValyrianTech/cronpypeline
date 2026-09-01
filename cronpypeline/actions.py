@@ -563,7 +563,7 @@ class HttpRequestActionHandler(ActionHandler):
             except urllib.error.HTTPError as e:
                 if 300 <= e.code < 400:
                     # Redirect - validate and follow manually
-                    location = e.headers.get("Location")
+                    location = (e.headers or {}).get("Location")
                     if not location:
                         return ActionResult(
                             success=False,
