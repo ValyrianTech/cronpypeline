@@ -11,6 +11,7 @@ import http.client
 import ipaddress
 import os
 import shlex
+import ssl
 import socket
 import subprocess  # nosec B404 - subprocess is used by design to run pipeline commands/scripts
 import sys
@@ -238,61 +239,61 @@ def _validate_ssrf(url: str, params: dict) -> tuple[str | None, str | None]:
 class _PinnedHTTPConnection(http.client.HTTPConnection):
     """HTTPConnection that connects to a pre-validated IP address."""
 
-    def __init__(self, host, port=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
-                 source_address=None, blocksize=8192, *, validated_ip=None):
+    def __init__(self, host: str, port: int | None = None, timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT,  # type: ignore[attr-defined]
+                 source_address: tuple[str, int] | None = None, blocksize: int = 8192, *, validated_ip: str | None = None) -> None:
         self._validated_ip = validated_ip
         super().__init__(host, port, timeout, source_address, blocksize=blocksize)
 
-    def connect(self):
+    def connect(self) -> None:
         """Connect to the validated IP instead of re-resolving the hostname."""
         sys.audit("http.client.connect", self, self.host, self.port)
         connect_host = self._validated_ip or self.host
-        self.sock = self._create_connection(
-            (connect_host, self.port), self.timeout, self.source_address
+        self.sock = self._create_connection(  # type: ignore[attr-defined]
+            (connect_host, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
         )
         try:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError as e:
             if e.errno != errno.ENOPROTOOPT:
                 raise
-        if self._tunnel_host:
-            self._tunnel()
+        if self._tunnel_host:  # type: ignore[attr-defined]
+            self._tunnel()  # type: ignore[attr-defined]
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     """HTTPSConnection that connects to a pre-validated IP address."""
 
-    def __init__(self, host, port=None, key_file=None, cert_file=None,
-                 timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None,
-                 blocksize=8192, *, context=None, check_hostname=None, validated_ip=None):
+    def __init__(self, host: str, port: int | None = None, key_file: str | None = None, cert_file: str | None = None,
+                 timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT, source_address: tuple[str, int] | None = None,  # type: ignore[attr-defined]
+                 blocksize: int = 8192, *, context: ssl.SSLContext | None = None, check_hostname: bool | None = None, validated_ip: str | None = None) -> None:
         self._validated_ip = validated_ip
         super().__init__(host, port, key_file, cert_file, timeout,
                          source_address, blocksize=blocksize,
                          context=context, check_hostname=check_hostname)
 
-    def connect(self):
+    def connect(self) -> None:
         """Connect to the validated IP and do TLS with the original hostname."""
         sys.audit("http.client.connect", self, self.host, self.port)
         connect_host = self._validated_ip or self.host
-        self.sock = self._create_connection(
-            (connect_host, self.port), self.timeout, self.source_address
+        self.sock = self._create_connection(  # type: ignore[attr-defined]
+            (connect_host, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
         )
         try:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError as e:
             if e.errno != errno.ENOPROTOOPT:
                 raise
-        if self._tunnel_host:
-            self._tunnel()
+        if self._tunnel_host:  # type: ignore[attr-defined]
+            self._tunnel()  # type: ignore[attr-defined]
         # Use the original hostname for SNI and certificate validation
-        server_hostname = self._tunnel_host if self._tunnel_host else self.host
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)
+        server_hostname = self._tunnel_host if self._tunnel_host else self.host  # type: ignore[attr-defined]
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)  # type: ignore[attr-defined]
 
 
 class _PinnedHTTPHandler(urllib.request.HTTPHandler):
     """HTTPHandler that pins connections to a pre-validated IP address."""
 
-    def http_open(self, req):
+    def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
         validated_ip = getattr(req, "_validated_ip", None)
         if validated_ip:
             return self.do_open(
@@ -307,7 +308,7 @@ class _PinnedHTTPHandler(urllib.request.HTTPHandler):
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
     """HTTPSHandler that pins connections to a pre-validated IP address."""
 
-    def https_open(self, req):
+    def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
         validated_ip = getattr(req, "_validated_ip", None)
         if validated_ip:
             return self.do_open(
@@ -315,8 +316,8 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
                     host, timeout=timeout, validated_ip=validated_ip, **kwargs
                 ),
                 req,
-                context=self._context,
-                check_hostname=self._check_hostname,
+                context=self._context,  # type: ignore[attr-defined]
+                check_hostname=self._check_hostname,  # type: ignore[attr-defined]
             )
         return super().https_open(req)
 
