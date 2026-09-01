@@ -228,6 +228,17 @@ def _validate_ssrf(url: str, params: dict) -> str | None:
     return None
 
 
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """HTTP redirect handler that prevents automatic redirect following."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # Don't follow redirects automatically
+
+
+_HTTP_OPENER = urllib.request.build_opener(NoRedirectHandler)
+_MAX_REDIRECTS = 5
+
+
 def format_template(template: str, variables: dict[str, Any]) -> str:
     """Format a template string with variable substitution.
 
@@ -493,9 +504,8 @@ class HttpRequestActionHandler(ActionHandler):
         if auth_token:
             headers["Authorization"] = f"token {auth_token}"
 
-        # Build request
+        # Build request data
         data = body.encode("utf-8") if body else None
-        req = urllib.request.Request(url, data=data, method=method, headers=headers)
 
         # Restrict URL schemes to http/https only to prevent file:// or custom scheme access
         parsed_url = urllib.parse.urlparse(url)
@@ -506,52 +516,101 @@ class HttpRequestActionHandler(ActionHandler):
                 stderr=f"Unsupported URL scheme: {parsed_url.scheme!r}",
             )
 
-        ssrf_error = _validate_ssrf(url, params)
-        if ssrf_error is not None:
-            return ActionResult(
-                success=False,
-                exit_code=-1,
-                stderr=ssrf_error,
-            )
-
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 - URL scheme is validated to http/https only just above
-                status = resp.status
-                body_bytes = resp.read()
-                body_str = body_bytes.decode("utf-8", errors="replace")
-                success = 200 <= status < 300
-                return ActionResult(
-                    success=success,
-                    stdout=body_str,
-                    exit_code=status,
-                    data={"status_code": status, "url": _redact_url(url), "method": method},
-                )
-        except urllib.error.HTTPError as e:
-            body_str = ""
-            try:
-                body_str = e.read().decode("utf-8", errors="replace")
-            except (OSError, UnicodeDecodeError):
-                pass
-            return ActionResult(
-                success=False,
-                stdout=body_str,
-                stderr=f"HTTP {e.code}: {e.reason}",
-                exit_code=e.code,
-                data={"status_code": e.code, "url": _redact_url(url), "method": method},
-            )
-        except urllib.error.URLError as e:
-            if isinstance(e.reason, socket.timeout):
+        current_url = url
+        for _ in range(_MAX_REDIRECTS + 1):
+            # Restrict URL schemes to http/https only for every hop
+            parsed_url = urllib.parse.urlparse(current_url)
+            if parsed_url.scheme not in ("http", "https"):
                 return ActionResult(
                     success=False,
-                    timed_out=True,
                     exit_code=-1,
-                    stderr=f"Request timed out after {timeout}s",
+                    stderr=f"Unsupported URL scheme: {parsed_url.scheme!r}",
                 )
-            return ActionResult(
-                success=False,
-                exit_code=-1,
-                stderr=str(e.reason),
-            )
+
+            # Validate SSRF for the current URL
+            ssrf_error = _validate_ssrf(current_url, params)
+            if ssrf_error is not None:
+                return ActionResult(
+                    success=False,
+                    exit_code=-1,
+                    stderr=ssrf_error,
+                )
+
+            req = urllib.request.Request(current_url, data=data, method=method, headers=headers)
+
+            try:
+                with _HTTP_OPENER.open(req, timeout=timeout) as resp:  # nosec B310 - URL scheme is validated to http/https only just above
+                    status = resp.status
+                    body_bytes = resp.read()
+                    body_str = body_bytes.decode("utf-8", errors="replace")
+                    success = 200 <= status < 300
+                    return ActionResult(
+                        success=success,
+                        stdout=body_str,
+                        exit_code=status,
+                        data={"status_code": status, "url": _redact_url(current_url), "method": method},
+                    )
+            except urllib.error.HTTPError as e:
+                if 300 <= e.code < 400:
+                    # Redirect - validate and follow manually
+                    location = e.headers.get("Location")
+                    if not location:
+                        return ActionResult(
+                            success=False,
+                            exit_code=e.code,
+                            stderr=f"HTTP {e.code}: Redirect without Location header",
+                        )
+                    current_url = urllib.parse.urljoin(current_url, location)
+                    # Match urllib's default redirect behavior for method/body
+                    if e.code in (301, 302, 303) and method == "POST":
+                        method = "GET"
+                        data = None
+                    elif e.code in (307, 308) and method == "POST":
+                        # urllib does not follow 307/308 redirects for POST
+                        body_str = ""
+                        try:
+                            body_str = e.read().decode("utf-8", errors="replace")
+                        except (OSError, UnicodeDecodeError):
+                            pass
+                        return ActionResult(
+                            success=False,
+                            stdout=body_str,
+                            stderr=f"HTTP {e.code}: {e.reason}",
+                            exit_code=e.code,
+                            data={"status_code": e.code, "url": _redact_url(current_url), "method": method},
+                        )
+                    continue
+                body_str = ""
+                try:
+                    body_str = e.read().decode("utf-8", errors="replace")
+                except (OSError, UnicodeDecodeError):
+                    pass
+                return ActionResult(
+                    success=False,
+                    stdout=body_str,
+                    stderr=f"HTTP {e.code}: {e.reason}",
+                    exit_code=e.code,
+                    data={"status_code": e.code, "url": _redact_url(current_url), "method": method},
+                )
+            except urllib.error.URLError as e:
+                if isinstance(e.reason, socket.timeout):
+                    return ActionResult(
+                        success=False,
+                        timed_out=True,
+                        exit_code=-1,
+                        stderr=f"Request timed out after {timeout}s",
+                    )
+                return ActionResult(
+                    success=False,
+                    exit_code=-1,
+                    stderr=str(e.reason),
+                )
+
+        return ActionResult(
+            success=False,
+            exit_code=-1,
+            stderr=f"Too many redirects (max {_MAX_REDIRECTS})",
+        )
 
 
 # ─── Registry ───────────────────────────────────────────────────────────────

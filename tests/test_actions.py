@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cronpypeline.actions import (
+    _MAX_REDIRECTS,
     ActionResult,
     CommandActionHandler,
     CustomActionHandler,
@@ -457,7 +458,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_resp.getheaders.return_value = [("Content-Type", "application/json")]
 
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -484,7 +485,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -501,7 +502,7 @@ class TestHttpRequestActionHandler:
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=True, verbose=False)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -522,7 +523,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -550,7 +551,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -576,7 +577,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -603,7 +604,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -619,7 +620,7 @@ class TestHttpRequestActionHandler:
         handler = HttpRequestActionHandler()
 
         from urllib.error import URLError
-        with patch("urllib.request.urlopen", side_effect=URLError("Connection refused")):
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=URLError("Connection refused")):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -639,7 +640,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -660,7 +661,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -676,7 +677,7 @@ class TestHttpRequestActionHandler:
         handler = HttpRequestActionHandler()
 
         from urllib.error import URLError
-        with patch("urllib.request.urlopen", side_effect=URLError(TimeoutError("timed out"))):
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=URLError(TimeoutError("timed out"))):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -697,7 +698,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             handler.execute(action, ctx)
 
         assert mock_urlopen.call_args.kwargs["timeout"] == 30
@@ -1010,7 +1011,7 @@ class TestHttpRequestActionHandlerErrors:
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1032,7 +1033,7 @@ class TestHttpRequestActionHandlerErrors:
 
         error = HTTPError("http://localhost:12345/api", 500, "Internal Server Error", {}, None)
 
-        with patch("urllib.request.urlopen", side_effect=error):
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=error):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1054,7 +1055,7 @@ class TestHttpRequestActionHandlerErrors:
         error = HTTPError("http://localhost:12345/api", 503, "Service Unavailable", {}, None)
         error.read = MagicMock(side_effect=OSError("read failed"))
 
-        with patch("urllib.request.urlopen", side_effect=error):
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=error):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1073,7 +1074,7 @@ class TestHttpRequestActionHandlerErrors:
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", side_effect=URLError(TimeoutError("timed out"))):
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=URLError(TimeoutError("timed out"))):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1136,7 +1137,7 @@ class TestHttpRequestActionHandlerRedaction:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1154,7 +1155,7 @@ class TestHttpRequestActionHandlerRedaction:
 
         error = HTTPError("https://example.com/api", 500, "Internal Server Error", {}, None)
 
-        with patch("urllib.request.urlopen", side_effect=error):
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=error):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1186,7 +1187,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1199,7 +1200,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1211,7 +1212,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1223,7 +1224,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1235,7 +1236,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1246,7 +1247,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1257,7 +1258,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1268,7 +1269,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1280,7 +1281,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1291,7 +1292,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1303,7 +1304,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1314,7 +1315,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1326,12 +1327,12 @@ class TestHttpRequestActionHandlerSSRF:
         handler = HttpRequestActionHandler()
 
         allowed_action = self._action("http://api.example.com/", allowed_hosts=["api.example.com"])
-        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("urllib.request.urlopen", return_value=self._mock_response()):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()):
             allowed_result = handler.execute(allowed_action, ctx)
         assert allowed_result.success is True
 
         blocked_action = self._action("http://other.example.com/", allowed_hosts=["api.example.com"])
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             blocked_result = handler.execute(blocked_action, ctx)
         assert blocked_result.success is False
         assert "Host not allowed" in blocked_result.stderr
@@ -1342,12 +1343,12 @@ class TestHttpRequestActionHandlerSSRF:
         handler = HttpRequestActionHandler()
 
         allowed_action = self._action("http://api.example.com/", allowed_hosts=["*.example.com"])
-        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("urllib.request.urlopen", return_value=self._mock_response()):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()):
             allowed_result = handler.execute(allowed_action, ctx)
         assert allowed_result.success is True
 
         blocked_action = self._action("http://example.com/", allowed_hosts=["*.example.com"])
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             blocked_result = handler.execute(blocked_action, ctx)
         assert blocked_result.success is False
         assert "Host not allowed" in blocked_result.stderr
@@ -1358,7 +1359,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1371,7 +1372,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1384,7 +1385,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1396,7 +1397,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1412,7 +1413,7 @@ class TestHttpRequestActionHandlerSSRF:
             ("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80)),
             ("AF_INET", "SOCK_STREAM", 6, "", ("10.0.0.1", 80)),
         ]
-        with patch("socket.getaddrinfo", return_value=infos), patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("socket.getaddrinfo", return_value=infos), patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1424,12 +1425,12 @@ class TestHttpRequestActionHandlerSSRF:
         handler = HttpRequestActionHandler()
 
         allowed_action = self._action("http://api1.example.com/", allowed_hosts=["api?.example.com"])
-        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("urllib.request.urlopen", return_value=self._mock_response()):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()):
             allowed_result = handler.execute(allowed_action, ctx)
         assert allowed_result.success is True
 
         blocked_action = self._action("http://api12.example.com/", allowed_hosts=["api?.example.com"])
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             blocked_result = handler.execute(blocked_action, ctx)
         assert blocked_result.success is False
         assert "Host not allowed" in blocked_result.stderr
@@ -1440,12 +1441,12 @@ class TestHttpRequestActionHandlerSSRF:
         handler = HttpRequestActionHandler()
 
         allowed_action = self._action("http://api1.example.com/", allowed_hosts=["api[12].example.com"])
-        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("urllib.request.urlopen", return_value=self._mock_response()):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()):
             allowed_result = handler.execute(allowed_action, ctx)
         assert allowed_result.success is True
 
         blocked_action = self._action("http://api3.example.com/", allowed_hosts=["api[12].example.com"])
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             blocked_result = handler.execute(blocked_action, ctx)
         assert blocked_result.success is False
         assert "Host not allowed" in blocked_result.stderr
@@ -1456,14 +1457,14 @@ class TestHttpRequestActionHandlerSSRF:
         handler = HttpRequestActionHandler()
 
         blocked_action = self._action("http://api1.example.com/", blocked_hosts=["api?.example.com"])
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             blocked_result = handler.execute(blocked_action, ctx)
         assert blocked_result.success is False
         assert "Host blocked" in blocked_result.stderr
         mock_urlopen.assert_not_called()
 
         allowed_action = self._action("http://api12.example.com/", blocked_hosts=["api?.example.com"])
-        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("urllib.request.urlopen", return_value=self._mock_response()):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()):
             allowed_result = handler.execute(allowed_action, ctx)
         assert allowed_result.success is True
 
@@ -1472,7 +1473,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("socket.getaddrinfo", side_effect=socket.gaierror("Name or service not known")), patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("socket.getaddrinfo", side_effect=socket.gaierror("Name or service not known")), patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1484,7 +1485,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1496,7 +1497,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1508,7 +1509,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1524,7 +1525,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1535,7 +1536,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1546,7 +1547,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1558,7 +1559,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1572,7 +1573,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1583,7 +1584,7 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1598,13 +1599,225 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is False
         assert result.exit_code == -1
         assert "Invalid URL" in result.stderr
         mock_urlopen.assert_not_called()
+
+
+def _make_redirect_error(code, location, url="http://example.com/"):
+    from urllib.error import HTTPError
+
+    headers = {"Location": location} if location else {}
+    return HTTPError(url, code, "Redirect", headers, None)
+
+
+class TestHttpRequestActionHandlerRedirects:
+    """Tests for SSRF-protected redirect handling in the HTTP request handler."""
+
+    def _ctx(self, tmp_path):
+        return TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+
+    def _action(self, url, **params):
+        return ActionSpec(type=ActionType.HTTP_REQUEST, params={"url": url, **params})
+
+    def _mock_response(self, status=200, body=b'{"ok": true}'):
+        mock_resp = MagicMock()
+        mock_resp.status = status
+        mock_resp.read.return_value = body
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
+    def test_redirect_to_safe_url_follows(self, tmp_path):
+        action = self._action("http://example.com/start", resolve_private_ip=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]):
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert result.exit_code == 200
+
+    def test_redirect_to_private_ip_is_blocked(self, tmp_path):
+        action = self._action("http://93.184.216.34/start")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(
+            302, "http://169.254.169.254/latest/meta-data/", url="http://93.184.216.34/start"
+        )
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_open.assert_called_once()
+
+    def test_redirect_to_blocked_host_is_blocked(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            blocked_hosts=["blocked.example.com"],
+            resolve_private_ip=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://blocked.example.com/")
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "Host blocked" in result.stderr
+
+    def test_redirect_to_disallowed_host_is_blocked(self, tmp_path):
+        action = self._action(
+            "http://allowed.example.com/start",
+            allowed_hosts=["allowed.example.com"],
+            resolve_private_ip=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/")
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "Host not allowed" in result.stderr
+
+    def test_redirect_without_location_header(self, tmp_path):
+        action = self._action("http://example.com/start", resolve_private_ip=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, None)
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "Redirect without Location header" in result.stderr
+
+    def test_too_many_redirects(self, tmp_path):
+        action = self._action("http://example.com/start", resolve_private_ip=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://example.com/next")
+
+        with patch(
+            "cronpypeline.actions._HTTP_OPENER.open",
+            side_effect=[redirect] * (_MAX_REDIRECTS + 1),
+        ):
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "Too many redirects" in result.stderr
+
+    def test_redirect_post_changes_to_get(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            method="POST",
+            body='{"a": 1}',
+            resolve_private_ip=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_method() == "GET"
+
+    def test_redirect_307_post_not_followed(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            method="POST",
+            body='{"a": 1}',
+            resolve_private_ip=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(307, "http://example.com/safe")
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == 307
+        mock_open.assert_called_once()
+
+    def test_redirect_307_post_read_failure(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            method="POST",
+            body='{"a": 1}',
+            resolve_private_ip=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(307, "http://example.com/safe")
+        redirect.read = MagicMock(side_effect=OSError("read failed"))
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == 307
+
+    def test_no_redirect_handler_returns_none(self):
+        from cronpypeline.actions import NoRedirectHandler
+
+        handler = NoRedirectHandler()
+        assert handler.redirect_request(None, None, 302, "Found", {}, "http://example.com/") is None
+
+    def test_redirect_relative_url_resolved(self, tmp_path):
+        action = self._action("http://example.com/start", resolve_private_ip=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "/new-path")
+        mock_resp = self._mock_response(200)
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.full_url == "http://example.com/new-path"
+
+    def test_redirect_to_unsupported_scheme(self, tmp_path):
+        action = self._action("http://example.com/start", resolve_private_ip=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "file:///etc/passwd")
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "Unsupported URL scheme" in result.stderr
+        mock_open.assert_called_once()
 
 
 class TestHostMatches:
