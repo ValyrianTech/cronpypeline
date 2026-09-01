@@ -760,6 +760,8 @@ The `run_c_pr_status` action (used by the `C-pr-status` stage) reads the `pr_pub
 
 Git is invoked via `shutil.which("git")` (resolved to an absolute path, falling back to `"git"`), so the binary location is detected at runtime rather than hardcoded. Git commands are run with a timeout (default 60 seconds), so a hung git command cannot block the pipeline indefinitely.
 
+The SWE plugin's GitHub API calls use a custom HTTP opener built with a `_NoRedirectHandler` that prevents automatic redirect following, so the authorization token is never sent to (and thus never leaked to) a redirected host.
+
 The SWE pipeline's test-coverage target is configurable per-target via a `coverage_threshold` key in the target's registry config (defaulting to 100%). The threshold drives the `C-coverage` stage (a coverage issue is created when coverage falls below it), the `C-review`/`C-doc-sync`/`C-publish` gates (which only proceed once coverage meets the threshold), and the issue-fix plugin's SELECT/GATE coverage verification (the threshold is stored on the task at SELECT time and enforced at GATE time).
 
 The issue-fix plugin's `run_gate` (the GATE stage) prints an ERROR message, writes a failed gate result file (containing `task_id`, `gated_at`, `issue_type`, `passed: false`, and an `error` field describing the checkout failure) to the task directory's gate result file, and returns `False` (aborting the gate) when `git checkout` of the task branch fails during verification, instead of continuing to run verification commands on the wrong branch.
