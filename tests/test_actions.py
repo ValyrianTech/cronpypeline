@@ -228,6 +228,19 @@ class TestCommandActionHandler:
         assert result.success is False
         assert "Invalid command" in result.stderr
 
+    def test_default_timeout_when_none(self, tmp_path):
+        """Default timeout of 300s is passed when timeout_seconds is None."""
+        action = ActionSpec(
+            type=ActionType.COMMAND,
+            params={"command": "echo hello", "cwd": str(tmp_path)},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = CommandActionHandler()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            handler.execute(action, ctx)
+        assert mock_run.call_args.kwargs["timeout"] == 300
+
 
 class TestSubprocessActionHandler:
     """Tests for subprocess action handler."""
@@ -268,6 +281,19 @@ class TestSubprocessActionHandler:
         result = handler.execute(action, ctx)
         assert result.success is True
         assert result.dry_run is True
+
+    def test_default_timeout_when_none(self, tmp_path):
+        """Default timeout of 300s is passed when timeout_seconds is None."""
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": "test.py", "args": []},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            handler.execute(action, ctx)
+        assert mock_run.call_args.kwargs["timeout"] == 300
 
 
 class TestCustomActionHandler:
@@ -568,6 +594,26 @@ class TestHttpRequestActionHandler:
 
         assert result.success is False
         assert result.timed_out is True
+
+    def test_default_timeout_when_none(self, tmp_path):
+        """Default timeout of 30s is passed when timeout_seconds is None."""
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "http://localhost:12345/api", "method": "GET"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"ok": true}'
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+            handler.execute(action, ctx)
+
+        assert mock_urlopen.call_args.kwargs["timeout"] == 30
 
 
 class TestExecuteAction:

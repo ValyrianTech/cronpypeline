@@ -164,7 +164,7 @@ class CommandActionHandler(ActionHandler):
         except ValueError as e:
             return ActionResult(success=False, stderr=str(e))
 
-        timeout = action.timeout_seconds
+        timeout = action.timeout_seconds or 300  # Default to 5 minutes
 
         Path(cwd).mkdir(parents=True, exist_ok=True)
 
@@ -215,7 +215,7 @@ class SubprocessActionHandler(ActionHandler):
         script = action.params.get("script", "")
         args = action.params.get("args", [])
         cwd = action.params.get("cwd", str(context.target_dir))
-        timeout = action.timeout_seconds
+        timeout = action.timeout_seconds or 300  # Default to 5 minutes
 
         if script.endswith(".py"):
             cmd = [sys.executable, script] + list(args)
@@ -302,7 +302,7 @@ class HttpRequestActionHandler(ActionHandler):
         method = params.get("method", "GET").upper()
         headers = dict(params.get("headers", {}))
         body = params.get("body")
-        timeout = action.timeout_seconds
+        timeout = action.timeout_seconds or 30  # Default to 30 seconds
 
         # Resolve auth token: direct value, then env var, then context env
         auth_token = params.get("auth_token")
