@@ -346,6 +346,34 @@ class TestSubprocessActionHandler:
         assert result.success is True
         assert "subprocess works" in result.stdout
 
+    def test_cwd_template_substitution(self, tmp_path):
+        """cwd templates are substituted before validation."""
+        script = tmp_path / "test_script.py"
+        script.write_text("import os; print(os.getcwd())\n")
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": str(script), "args": [], "cwd": "{target_dir}"},
+        )
+        ctx = TickContext(target="my-repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is True
+        assert str(ctx.target_dir) in result.stdout
+
+    def test_cwd_template_substitution_failure_returns_error(self, tmp_path):
+        """A cwd template that fails substitution returns an error ActionResult."""
+        script = tmp_path / "test_script.py"
+        script.write_text("print('subprocess works')\n")
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": str(script), "args": [], "cwd": "{missing_var}"},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is False
+        assert "Template substitution failed" in result.stderr
+
 
 class TestCustomActionHandler:
     """Tests for custom action handler."""

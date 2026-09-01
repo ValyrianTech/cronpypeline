@@ -236,6 +236,16 @@ class SubprocessActionHandler(ActionHandler):
         args = action.params.get("args", [])
         cwd = action.params.get("cwd", str(context.target_dir))
 
+        cwd_variables = {
+            "target": context.target,
+            "target_dir": str(context.target_dir),
+            "workspace_dir": str(context.workspace_dir),
+        }
+        try:
+            cwd = format_template(cwd, cwd_variables)
+        except ValueError as e:
+            return ActionResult(success=False, stderr=str(e))
+
         result = self._validate_cwd(cwd, context.workspace_dir)
         if result is not None:
             return result
