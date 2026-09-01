@@ -232,6 +232,16 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     """HTTP redirect handler that prevents automatic redirect following."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Prevent automatic redirect following by always returning None.
+
+        :param req: The original request being redirected.
+        :param fp: File-like object for the response body.
+        :param code: HTTP status code that triggered the redirect.
+        :param msg: HTTP status message.
+        :param headers: Response headers.
+        :param newurl: URL the request would be redirected to.
+        :returns: Always ``None`` to suppress automatic redirect handling.
+        """
         return None  # Don't follow redirects automatically
 
 
