@@ -845,7 +845,7 @@ class TestGhApiGetList:
         mock_resp.read.return_value = b'[{"id": 1}]'
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", return_value=mock_resp):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp):
             result = _gh_api_get_list("owner", "repo", "issues", "token")
         assert result == [{"id": 1}]
 
@@ -854,19 +854,19 @@ class TestGhApiGetList:
         mock_resp.read.return_value = b'{"id": 1}'
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", return_value=mock_resp):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp):
             result = _gh_api_get_list("owner", "repo", "issues", "token")
         assert result is None
 
     def test_returns_none_on_http_error(self):
         from urllib.error import HTTPError
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=HTTPError("url", 404, "Not Found", {}, None)):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=HTTPError("url", 404, "Not Found", {}, None)):
             result = _gh_api_get_list("owner", "repo", "issues", "token")
         assert result is None
 
     def test_returns_none_on_url_error(self):
         from urllib.error import URLError
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=URLError("conn refused")):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=URLError("conn refused")):
             result = _gh_api_get_list("owner", "repo", "issues", "token")
         assert result is None
 
@@ -875,7 +875,7 @@ class TestGhApiGetList:
         mock_resp.read.return_value = b'[]'
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", return_value=mock_resp) as mock_open:
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp) as mock_open:
             _gh_api_get_list("owner", "repo", "issues", "token", params={"state": "open"})
         url = mock_open.call_args[0][0].get_full_url()
         assert "state=open" in url
@@ -891,7 +891,7 @@ class TestGhApiPost:
         mock_resp.read.return_value = b'{"number": 42}'
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", return_value=mock_resp):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp):
             result = _gh_api_post("owner", "repo", "issues", {"title": "test"}, "token")
         assert result == {"number": 42}
 
@@ -901,13 +901,13 @@ class TestGhApiPost:
         mock_resp.read.return_value = b'{"error": "server"}'
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", return_value=mock_resp):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp):
             result = _gh_api_post("owner", "repo", "issues", {"title": "test"}, "token")
         assert result is None
 
     def test_returns_none_on_http_error(self):
         from urllib.error import HTTPError
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=HTTPError("url", 403, "Forbidden", {}, None)):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=HTTPError("url", 403, "Forbidden", {}, None)):
             result = _gh_api_post("owner", "repo", "issues", {}, "token")
         assert result is None
 
@@ -921,15 +921,40 @@ class TestGhApiPatch:
         mock_resp.read.return_value = b'{"state": "closed"}'
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", return_value=mock_resp):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp):
             result = _gh_api_patch("owner", "repo", "issues/1", {"state": "closed"}, "token")
         assert result == {"state": "closed"}
 
     def test_returns_none_on_http_error(self):
         from urllib.error import HTTPError
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=HTTPError("url", 404, "Not Found", {}, None)):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=HTTPError("url", 404, "Not Found", {}, None)):
             result = _gh_api_patch("owner", "repo", "issues/1", {}, "token")
         assert result is None
+
+
+# ─── _NoRedirectHandler / _GH_OPENER ────────────────────────────────────────
+
+
+class TestGhApiRedirectProtection:
+    def test_no_redirect_handler_returns_none(self):
+        from cronpypeline.plugins import swe_plugin
+
+        handler = swe_plugin._NoRedirectHandler()
+        assert handler.redirect_request(None, None, 302, "Found", {}, "https://evil.example/") is None
+
+    def test_gh_opener_used_instead_of_urlopen(self):
+        from cronpypeline.plugins import swe_plugin
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"[]"
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        with patch.object(swe_plugin._GH_OPENER, "open", return_value=mock_resp) as mock_open, \
+             patch("urllib.request.urlopen") as mock_urlopen:
+            result = swe_plugin._gh_api_get_list("owner", "repo", "issues", "token")
+        assert result == []
+        mock_open.assert_called_once()
+        mock_urlopen.assert_not_called()
 
 
 # ─── _read_github_session ───────────────────────────────────────────────────
@@ -2333,7 +2358,7 @@ class TestRunCPrStatus:
         }).encode()
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", return_value=mock_resp), \
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp), \
              patch("cronpypeline.plugins.swe_plugin._gh_api_post") as mock_post, \
              patch("cronpypeline.plugins.swe_plugin._gh_api_patch") as mock_patch:
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
@@ -2360,7 +2385,7 @@ class TestRunCPrStatus:
         }).encode()
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", return_value=mock_resp), \
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp), \
              patch("cronpypeline.plugins.swe_plugin._gh_api_post") as mock_post, \
              patch("cronpypeline.plugins.swe_plugin._gh_api_patch"):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
@@ -2384,7 +2409,7 @@ class TestRunCPrStatus:
         mock_reviews.read.return_value = b'[]'
         mock_reviews.__enter__ = MagicMock(return_value=mock_reviews)
         mock_reviews.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[mock_resp, mock_reviews]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[mock_resp, mock_reviews]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "open"
@@ -2395,7 +2420,7 @@ class TestRunCPrStatus:
         (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
         ctx = _make_tick_context(target, slug="owner/repo")
         from urllib.error import HTTPError
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=HTTPError("url", 404, "Not Found", {}, None)):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=HTTPError("url", 404, "Not Found", {}, None)):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
 
@@ -3434,7 +3459,7 @@ class TestDetectCPrStatusReviewsException:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
         from urllib.error import URLError
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[mock_resp, URLError("fail")]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[mock_resp, URLError("fail")]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "open"
@@ -3458,7 +3483,7 @@ class TestDetectCPrStatusChangesRequested:
         ]).encode()
         mock_reviews.__enter__ = MagicMock(return_value=mock_reviews)
         mock_reviews.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[mock_resp, mock_reviews]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[mock_resp, mock_reviews]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "changes_requested"
@@ -3489,7 +3514,7 @@ class TestDetectCPrStatusChangesRequestedNoBody:
         ]).encode()
         mock_reviews.__enter__ = MagicMock(return_value=mock_reviews)
         mock_reviews.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[mock_resp, mock_reviews]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[mock_resp, mock_reviews]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         # Cycle count still updated even with empty body
@@ -3518,7 +3543,7 @@ class TestDetectCPrStatusChangesRequestedExistingIssues:
         ]).encode()
         mock_reviews.__enter__ = MagicMock(return_value=mock_reviews)
         mock_reviews.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[mock_resp, mock_reviews]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[mock_resp, mock_reviews]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "changes_requested"
@@ -3542,7 +3567,7 @@ class TestRunCPrStatusMergedNoSession:
         }).encode()
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", return_value=mock_resp), \
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp), \
              patch("cronpypeline.plugins.swe_plugin._gh_api_post"), \
              patch("cronpypeline.plugins.swe_plugin._gh_api_patch"):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
@@ -3782,7 +3807,7 @@ class TestRunCPrStatusNoToken:
         (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
         ctx = _make_tick_context(target, slug="owner/repo")
         from urllib.error import URLError
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=URLError("fail")):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=URLError("fail")):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
 
@@ -3804,7 +3829,7 @@ class TestRunCPrStatusPrFetchError:
         (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
         ctx = _make_tick_context(target, slug="owner/repo")
         from urllib.error import URLError
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=URLError("fail")):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=URLError("fail")):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
 
@@ -4262,7 +4287,7 @@ class TestRunCPrStatusChangesRequestedNonNumericIssue:
         ]).encode()
         mock_reviews.__enter__ = MagicMock(return_value=mock_reviews)
         mock_reviews.__exit__ = MagicMock(return_value=False)
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[mock_resp, mock_reviews]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[mock_resp, mock_reviews]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "open"
@@ -4996,7 +5021,7 @@ class TestRunCPrStatusReviews:
         ctx = _make_tick_context(target, slug="owner/repo")
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 100, "state": "APPROVED", "body": "LGTM"}])
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "approved"
@@ -5011,7 +5036,7 @@ class TestRunCPrStatusReviews:
         ctx = _make_tick_context(target, slug="owner/repo")
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 101, "state": "COMMENTED", "body": "Just a note"}])
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "open"
@@ -5023,7 +5048,7 @@ class TestRunCPrStatusReviews:
         ctx = _make_tick_context(target, slug="owner/repo")
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 102, "state": "COMMENTED", "body": "Please request changes before merge"}])
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "changes_requested"
@@ -5037,7 +5062,7 @@ class TestRunCPrStatusReviews:
         ctx = _make_tick_context(target, slug="owner/repo", max_pr_review_cycles=2)
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 200, "state": "CHANGES_REQUESTED", "body": "## Change Requests\n\n1. Fix bug"}])
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "changes_requested"
@@ -5053,7 +5078,7 @@ class TestRunCPrStatusReviews:
         ctx = _make_tick_context(target, slug="owner/repo")
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 300, "state": "CHANGES_REQUESTED", "body": "## Change Requests\n\n1. Fix bug"}])
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "changes_requested"
@@ -5076,7 +5101,7 @@ class TestRunCPrStatusReviews:
         def _mock_run(*args, **kwargs):
             cmd = args[0] if args else kwargs.get("args")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]), \
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]), \
              patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="abc12345"), \
              patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_mock_run):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
@@ -5097,7 +5122,7 @@ class TestRunCPrStatusReviews:
         ctx = _make_tick_context(target, slug="owner/repo")
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]), \
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]), \
              patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="abc12345"), \
              patch("cronpypeline.plugins.swe_plugin.subprocess.run",
                    return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="rejected")):
@@ -5706,7 +5731,7 @@ class TestRunCPrStatusAlreadyHandled:
         ctx = _make_tick_context(target, slug="owner/repo", max_pr_review_cycles=2)
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 500, "state": "CHANGES_REQUESTED", "body": "needs work"}])
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "open"
@@ -5723,7 +5748,7 @@ class TestRunCPrStatusAlreadyHandled:
         ctx = _make_tick_context(target, slug="owner/repo")
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 500, "state": "CHANGES_REQUESTED", "body": "needs work"}])
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "open"
@@ -5739,7 +5764,7 @@ class TestRunCPrStatusAlreadyHandled:
         ctx = _make_tick_context(target, slug="owner/repo")
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 500, "state": "CHANGES_REQUESTED", "body": "needs work"}])
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]):
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "open"
@@ -5757,7 +5782,7 @@ class TestRunCPrStatusAlreadyHandled:
         ctx = _make_tick_context(target, slug="owner/repo")
         pr_resp = _mock_http_response({"state": "open", "merged": False})
         reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
-        with patch("cronpypeline.plugins.swe_plugin.urlopen", side_effect=[pr_resp, reviews_resp]), \
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]), \
              patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="abc12345"), \
              patch("cronpypeline.plugins.swe_plugin.subprocess.run",
                    return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
