@@ -182,10 +182,14 @@ def _validate_ssrf(url: str, params: dict) -> str | None:
         return f"Invalid URL: no hostname in {url!r}"
 
     allowed_hosts = params.get("allowed_hosts")
+    if isinstance(allowed_hosts, str):
+        return "allowed_hosts must be a list of hostname patterns, got str"
     if allowed_hosts and not any(_host_matches(host, pattern) for pattern in allowed_hosts):
         return f"Host not allowed: {host!r}"
 
     blocked_hosts = params.get("blocked_hosts")
+    if isinstance(blocked_hosts, str):
+        return "blocked_hosts must be a list of hostname patterns, got str"
     if blocked_hosts and any(_host_matches(host, pattern) for pattern in blocked_hosts):
         return f"Host blocked: {host!r}"
 
