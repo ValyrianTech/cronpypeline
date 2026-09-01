@@ -254,6 +254,9 @@ def _build_queue_handler(params: dict[str, Any], context: TickContext) -> Conver
         asd = Path(handler.agent_settings_dir)
         if not str(asd).strip():
             raise ValueError(f"agent_settings_dir is required: {handler.agent_settings_dir}")
+        if not asd.is_absolute():
+            handler.agent_settings_dir = context.workspace_dir / asd
+            asd = handler.agent_settings_dir
         if ".." in asd.parts:
             raise ValueError(f"agent_settings_dir contains path traversal: {handler.agent_settings_dir}")
     return handler
