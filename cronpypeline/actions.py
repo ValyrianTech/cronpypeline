@@ -246,6 +246,15 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
 
     def __init__(self, host: str, port: int | None = None, timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT,  # type: ignore[attr-defined]
                  source_address: tuple[str, int] | None = None, blocksize: int = 8192, *, validated_ips: list[str] | None = None) -> None:
+        """Initialize a pinned HTTP connection.
+
+        :param host: Hostname to connect to.
+        :param port: Port to connect to, or ``None`` for the default.
+        :param timeout: Connection timeout in seconds.
+        :param source_address: Source address to bind to, or ``None``.
+        :param blocksize: Buffer size for file reads in bytes.
+        :param validated_ips: Pre-validated IP addresses to pin the connection to, or ``None``.
+        """
         self._validated_ips = validated_ips
         super().__init__(host, port, timeout, source_address, blocksize=blocksize)
 
@@ -279,6 +288,16 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     def __init__(self, host: str, port: int | None = None,
                  timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT, source_address: tuple[str, int] | None = None,  # type: ignore[attr-defined]
                  blocksize: int = 8192, *, context: ssl.SSLContext | None = None, validated_ips: list[str] | None = None) -> None:
+        """Initialize a pinned HTTPS connection.
+
+        :param host: Hostname to connect to.
+        :param port: Port to connect to, or ``None`` for the default.
+        :param timeout: Connection timeout in seconds.
+        :param source_address: Source address to bind to, or ``None``.
+        :param blocksize: Buffer size for file reads in bytes.
+        :param context: SSL context to use for TLS, or ``None`` for the default.
+        :param validated_ips: Pre-validated IP addresses to pin the connection to, or ``None``.
+        """
         self._validated_ips = validated_ips
         super().__init__(host, port, timeout=timeout,
                          source_address=source_address, blocksize=blocksize,
@@ -315,6 +334,13 @@ class _PinnedHTTPHandler(urllib.request.HTTPHandler):
     """HTTPHandler that pins connections to a pre-validated IP address."""
 
     def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        """Open an HTTP connection pinned to the validated IPs from ``req``.
+
+        :param req: The request to open a connection for.
+        :returns: The opened HTTP response, or falls back to the default
+            ``http_open`` behavior when no validated IPs are present.
+        :rtype: http.client.HTTPResponse
+        """
         validated_ips = getattr(req, "_validated_ips", None)
         if validated_ips:
             return self.do_open(
@@ -330,6 +356,13 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
     """HTTPSHandler that pins connections to a pre-validated IP address."""
 
     def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        """Open an HTTPS connection pinned to the validated IPs from ``req``.
+
+        :param req: The request to open a connection for.
+        :returns: The opened HTTPS response, or falls back to the default
+            ``https_open`` behavior when no validated IPs are present.
+        :rtype: http.client.HTTPResponse
+        """
         validated_ips = getattr(req, "_validated_ips", None)
         if validated_ips:
             return self.do_open(
