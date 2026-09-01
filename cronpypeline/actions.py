@@ -262,7 +262,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
         """Connect to a validated IP instead of re-resolving the hostname."""
         sys.audit("http.client.connect", self, self.host, self.port)
         connect_hosts = self._validated_ips or [self.host]
-        last_err = None
+        last_err: OSError | None = None
         for connect_host in connect_hosts:
             try:
                 self.sock = self._create_connection(  # type: ignore[attr-defined]
@@ -272,7 +272,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
             except OSError as e:
                 last_err = e
         if self.sock is None:
-            raise last_err
+            raise last_err if last_err is not None else OSError("connection failed")
         try:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError as e:
@@ -307,7 +307,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         """Connect to a validated IP and do TLS with the original hostname."""
         sys.audit("http.client.connect", self, self.host, self.port)
         connect_hosts = self._validated_ips or [self.host]
-        last_err = None
+        last_err: OSError | None = None
         for connect_host in connect_hosts:
             try:
                 self.sock = self._create_connection(  # type: ignore[attr-defined]
@@ -317,7 +317,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
             except OSError as e:
                 last_err = e
         if self.sock is None:
-            raise last_err
+            raise last_err if last_err is not None else OSError("connection failed")
         try:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError as e:
