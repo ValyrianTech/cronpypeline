@@ -191,10 +191,11 @@ class Pipeline:
             )
             from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
             if isinstance(handler, ConversationQueueHandler):
-                qd = Path(handler.queue_dir).resolve()
-                ws = self.workspace_dir.resolve()
-                if not qd.is_relative_to(ws):
-                    raise ValueError(f"queue_dir escapes workspace: {handler.queue_dir}")
+                qd = Path(handler.queue_dir)
+                if not str(qd).strip():
+                    raise ValueError(f"queue_dir is required: {handler.queue_dir}")
+                if ".." in qd.parts:
+                    raise ValueError(f"queue_dir contains path traversal: {handler.queue_dir}")
             register_handler(ActionType.QUEUE_AGENT, handler)
 
     @classmethod
