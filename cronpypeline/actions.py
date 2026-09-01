@@ -111,11 +111,17 @@ class ActionHandler:
     def _validate_cwd(self, cwd: str, workspace_dir: Path) -> ActionResult | None:
         """Validate that cwd is inside workspace_dir.
 
+        Relative cwd paths are resolved against workspace_dir; absolute cwd
+        paths are resolved as-is.
+
         :param cwd: The working directory path to validate.
         :param workspace_dir: The workspace root directory.
         :returns: An error ActionResult if cwd escapes the workspace, else None.
         """
-        cwd_path = Path(cwd).resolve()
+        cwd_path = Path(cwd)
+        if not cwd_path.is_absolute():
+            cwd_path = workspace_dir / cwd_path
+        cwd_path = cwd_path.resolve()
         workspace_resolved = workspace_dir.resolve()
         if not cwd_path.is_relative_to(workspace_resolved):
             return ActionResult(
