@@ -746,6 +746,8 @@ Git is invoked via `shutil.which("git")` (resolved to an absolute path, falling 
 
 The SWE pipeline's test-coverage target is configurable per-target via a `coverage_threshold` key in the target's registry config (defaulting to 100%). The threshold drives the `C-coverage` stage (a coverage issue is created when coverage falls below it), the `C-review`/`C-doc-sync`/`C-publish` gates (which only proceed once coverage meets the threshold), and the issue-fix plugin's SELECT/GATE coverage verification (the threshold is stored on the task at SELECT time and enforced at GATE time).
 
+The issue-fix plugin's `run_gate` (the GATE stage) prints an ERROR message, writes a failed gate result file (containing `task_id`, `gated_at`, `issue_type`, `passed: false`, and an `error` field describing the checkout failure) to the task directory's gate result file, and returns `False` (aborting the gate) when `git checkout` of the task branch fails during verification, instead of continuing to run verification commands on the wrong branch.
+
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
 
 Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency). The frontmatter parser handles booleans (true/false/yes/no) and null values (null/none/~) in addition to integers, floats, lists, and strings; quoted values containing colons (e.g. `title: "Fix: Login bug"`) are parsed correctly.
@@ -846,6 +848,8 @@ configs/
 ├── swe_pipeline.json         # Full SWE pipeline example config
 └── vnn_pipeline.json         # Full VNN pipeline example config
 ```
+
+The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) for visualizing pipeline state. The webui module can now be imported even when the web stack is unavailable or broken — the FastAPI app is built lazily via a `_build_app()` function, and the module-level `app` is `None` when app construction fails for any reason (missing fastapi/pydantic, or any other error during app construction). This is useful for importing helper functions without installing the web stack.
 
 ## Testing
 
