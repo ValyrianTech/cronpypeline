@@ -241,6 +241,31 @@ class TestCommandActionHandler:
             handler.execute(action, ctx)
         assert mock_run.call_args.kwargs["timeout"] == 300
 
+    def test_cwd_escaping_workspace_is_rejected(self, tmp_path):
+        """A cwd outside the workspace directory must be rejected."""
+        outside = str(tmp_path.parent / "outside")
+        action = ActionSpec(
+            type=ActionType.COMMAND,
+            params={"command": "echo hello", "cwd": outside},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = CommandActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is False
+        assert "cwd escapes workspace directory" in result.stderr
+
+    def test_cwd_subdirectory_of_workspace_works(self, tmp_path):
+        """A cwd that is a subdirectory of the workspace works normally."""
+        action = ActionSpec(
+            type=ActionType.COMMAND,
+            params={"command": "pwd", "cwd": str(tmp_path / "subdir")},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = CommandActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is True
+        assert str(tmp_path / "subdir") in result.stdout
+
 
 class TestSubprocessActionHandler:
     """Tests for subprocess action handler."""
@@ -294,6 +319,32 @@ class TestSubprocessActionHandler:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             handler.execute(action, ctx)
         assert mock_run.call_args.kwargs["timeout"] == 300
+
+    def test_cwd_escaping_workspace_is_rejected(self, tmp_path):
+        """A cwd outside the workspace directory must be rejected."""
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": "test.py", "args": [], "cwd": str(tmp_path.parent)},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is False
+        assert "cwd escapes workspace directory" in result.stderr
+
+    def test_cwd_subdirectory_of_workspace_works(self, tmp_path):
+        """A cwd that is a subdirectory of the workspace works normally."""
+        script = tmp_path / "test_script.py"
+        script.write_text("print('subprocess works')\n")
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": str(script), "args": [], "cwd": str(tmp_path / "subdir")},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        result = handler.execute(action, ctx)
+        assert result.success is True
+        assert "subprocess works" in result.stdout
 
 
 class TestCustomActionHandler:
