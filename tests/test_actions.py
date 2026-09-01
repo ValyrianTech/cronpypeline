@@ -1709,6 +1709,21 @@ class TestHttpRequestActionHandlerRedirects:
         assert result.success is False
         assert "Redirect without Location header" in result.stderr
 
+    def test_redirect_with_none_headers(self, tmp_path):
+        from urllib.error import HTTPError
+
+        action = self._action("http://example.com/start", resolve_private_ip=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = HTTPError("http://example.com/start", 302, "Found", None, None)
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "Redirect without Location header" in result.stderr
+
     def test_too_many_redirects(self, tmp_path):
         action = self._action("http://example.com/start", resolve_private_ip=False)
         ctx = self._ctx(tmp_path)
