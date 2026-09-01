@@ -263,7 +263,7 @@ class TestVNNMultiTickSimulation:
         workspace.mkdir()
         story_dir = workspace / "story-1"
         story_dir.mkdir()
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
@@ -313,7 +313,7 @@ class TestVNNMultiTickSimulation:
         workspace.mkdir()
         story_dir = workspace / "story-1"
         story_dir.mkdir()
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
@@ -380,7 +380,7 @@ class TestVNNMultiTickSimulation:
         workspace.mkdir()
         story_dir = workspace / "story-1"
         story_dir.mkdir()
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
@@ -405,7 +405,7 @@ class TestVNNMultiTickSimulation:
         workspace.mkdir()
         story_dir = workspace / "story-1"
         story_dir.mkdir()
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)

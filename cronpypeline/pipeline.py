@@ -189,6 +189,13 @@ class Pipeline:
                 config.action_handler.type,
                 config.action_handler.params,
             )
+            from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
+            if isinstance(handler, ConversationQueueHandler):
+                qd = Path(handler.queue_dir)
+                if not str(qd).strip():
+                    raise ValueError(f"queue_dir is required: {handler.queue_dir}")
+                if ".." in qd.parts:
+                    raise ValueError(f"queue_dir contains path traversal: {handler.queue_dir}")
             register_handler(ActionType.QUEUE_AGENT, handler)
 
     @classmethod

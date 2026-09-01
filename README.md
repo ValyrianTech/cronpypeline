@@ -656,6 +656,7 @@ register_handler(ActionType.QUEUE_AGENT, handler)
 - Agent settings loading: if `agent_settings_dir` is set, loads `{agent}.json` config into the queue entry
 - Queue file tracking: returns `queue_file` and `entry_id` in `result.data`, which the pipeline writes into the processing marker for stale detection
 - Agent name sanitization: agent names are sanitized (non-alphanumeric/underscore/dot/hyphen characters replaced with `_`) before use in queue filenames, and the resolved queue file path is validated with `is_relative_to()` — queue files escaping the queue directory raise a `ValueError` (prevents path traversal)
+- Queue directory validation: when wired from the pipeline's `action_handler` config, `Pipeline.__init__` validates that the handler's `queue_dir` resolves within the pipeline's `workspace_dir`. A `queue_dir` that escapes the workspace (via `..` segments, absolute paths, or symlinks) raises a `ValueError` (`"queue_dir escapes workspace: {queue_dir}"`), preventing the conversation queue from writing agent entries outside the workspace.
 - Optional params: `model`, `temperature`, `max_tokens`
 
 **Default queue entry format** (backward compatible):

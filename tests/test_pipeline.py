@@ -1710,7 +1710,7 @@ class TestActionHandlerWiring:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
 
         config = PipelineConfig.from_dict({
             "name": "test",
@@ -1754,7 +1754,7 @@ class TestActionHandlerWiring:
         """Pipeline should pass agent_settings_dir to ConversationQueueHandler."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
         agent_settings_dir = tmp_path / "agents"
 
         config = PipelineConfig.from_dict({
@@ -1776,6 +1776,64 @@ class TestActionHandlerWiring:
         handler = _HANDLERS.get(ActionType.QUEUE_AGENT)
         assert isinstance(handler, ConversationQueueHandler)
         assert handler.agent_settings_dir == agent_settings_dir
+
+    def test_conversation_queue_handler_queue_dir_outside_workspace_raises(self, tmp_path):
+        """Pipeline.__init__ should allow queue_dir outside workspace."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        queue_dir = tmp_path / "queue"  # sibling of workspace, NOT inside it
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "action_handler": {
+                "type": "conversation_queue",
+                "params": {"queue_dir": str(queue_dir)},
+            },
+            "stages": [],
+        })
+        Pipeline(config)
+
+        from cronpypeline.actions import _HANDLERS
+        from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
+        handler = _HANDLERS.get(ActionType.QUEUE_AGENT)
+        assert isinstance(handler, ConversationQueueHandler)
+        assert handler.queue_dir == queue_dir
+
+    def test_conversation_queue_handler_queue_dir_dotdot_raises(self, tmp_path):
+        """Pipeline.__init__ should raise ValueError when queue_dir contains .."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        queue_dir = workspace / ".." / "queue"
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "action_handler": {
+                "type": "conversation_queue",
+                "params": {"queue_dir": str(queue_dir)},
+            },
+            "stages": [],
+        })
+        with pytest.raises(ValueError, match="queue_dir contains path traversal"):
+            Pipeline(config)
+
+    def test_conversation_queue_handler_queue_dir_whitespace_raises(self, tmp_path):
+        """Pipeline.__init__ should raise ValueError when queue_dir is whitespace-only."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "action_handler": {
+                "type": "conversation_queue",
+                "params": {"queue_dir": "   "},
+            },
+            "stages": [],
+        })
+        with pytest.raises(ValueError, match="queue_dir is required"):
+            Pipeline(config)
 
     def test_pipeline_without_action_handler_does_not_override(self, tmp_path):
         """Pipeline without action_handler config should not touch _HANDLERS."""
@@ -2399,7 +2457,7 @@ class TestRetryPromptSupport:
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
 
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
 
         config = PipelineConfig.from_dict({
             "name": "test",
@@ -2459,7 +2517,7 @@ class TestRetryPromptSupport:
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
 
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
 
         config = PipelineConfig.from_dict({
             "name": "test",
@@ -2518,7 +2576,7 @@ class TestRetryPromptSupport:
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
 
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
 
         config = PipelineConfig.from_dict({
             "name": "test",
@@ -2695,7 +2753,7 @@ class TestQueueFileStaleDetection:
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
 
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
 
         config = PipelineConfig.from_dict({
             "name": "test",
@@ -2735,7 +2793,7 @@ class TestQueueFileStaleDetection:
         workspace.mkdir()
         (workspace / "my-repo").mkdir()
 
-        queue_dir = tmp_path / "queue"
+        queue_dir = workspace / "queue"
 
         config = PipelineConfig.from_dict({
             "name": "test",

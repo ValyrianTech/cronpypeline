@@ -227,6 +227,8 @@ def _build_queue_handler(params: dict[str, Any], context: TickContext) -> Conver
     :param params: Action params dict with optional queue settings.
     :param context: Tick context with pipeline reference for fallback.
     :returns: A :class:`ConversationQueueHandler` instance.
+    :raises ValueError: If queue_dir or agent_settings_dir is missing, empty, or
+        contains path traversal (``..``) segments.
     """
     fallback: dict[str, Any] = {}
     pipeline = getattr(context, "pipeline", None)
@@ -236,13 +238,28 @@ def _build_queue_handler(params: dict[str, Any], context: TickContext) -> Conver
     queue_dir = merged.get("queue_dir", "")
     if not queue_dir:
         raise ValueError("queue_dir is required for ConversationQueueHandler")
-    return ConversationQueueHandler(
+    handler = ConversationQueueHandler(
         queue_dir=queue_dir,
         agent_settings_dir=merged.get("agent_settings_dir"),
         prompt_field=merged.get("prompt_field", "prompt"),
         default_fields=merged.get("default_fields"),
         flatten_agent_settings=merged.get("flatten_agent_settings", False),
     )
+    qd = Path(handler.queue_dir)
+    if not str(qd).strip():
+        raise ValueError(f"queue_dir is required: {handler.queue_dir}")
+    if ".." in qd.parts:
+        raise ValueError(f"queue_dir contains path traversal: {handler.queue_dir}")
+    if handler.agent_settings_dir is not None:
+        asd = Path(handler.agent_settings_dir)
+        if not str(asd).strip():
+            raise ValueError(f"agent_settings_dir is required: {handler.agent_settings_dir}")
+        if not asd.is_absolute():
+            handler.agent_settings_dir = context.workspace_dir / asd
+            asd = handler.agent_settings_dir
+        if ".." in asd.parts:
+            raise ValueError(f"agent_settings_dir contains path traversal: {handler.agent_settings_dir}")
+    return handler
 
 
 def queue_fix_agent(action: ActionSpec, context: TickContext) -> ActionResult:
