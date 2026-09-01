@@ -11,12 +11,13 @@ import shlex
 import shutil
 import subprocess  # nosec B404 - subprocess is used by design to run git commands for pipeline state detection
 import sys
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from cronpypeline.actions import ActionResult, ActionSpec, TickContext
 from cronpypeline.plugins.issue_store import (
@@ -41,6 +42,26 @@ TASKS_DIR = SWE_WORKSPACE_DIR / "tasks"
 REVIEW_RANKING_MARKER = f"{SWE_SUBDIR}/markers/review_ranked.json"
 
 GIT_BIN = shutil.which("git") or "git"
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """HTTP redirect handler that prevents automatic redirect following."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Prevent automatic redirect following by always returning None.
+
+        :param req: The original request being redirected.
+        :param fp: File-like object for the response body.
+        :param code: HTTP status code that triggered the redirect.
+        :param msg: HTTP status message.
+        :param headers: Response headers.
+        :param newurl: URL the request would be redirected to.
+        :returns: Always ``None`` to suppress automatic redirect handling.
+        """
+        return None
+
+
+_GH_OPENER = urllib.request.build_opener(_NoRedirectHandler())
 
 
 def _parse_utc_datetime(s: str) -> datetime | None:
@@ -763,7 +784,7 @@ def _gh_api_get_list(
     }
     try:
         req = Request(url, headers=headers, method="GET")
-        with urlopen(req, timeout=30) as resp:  # nosec B310 - HTTPS URL to GitHub API
+        with _GH_OPENER.open(req, timeout=30) as resp:  # nosec B310 - HTTPS URL to GitHub API
             data = json.loads(resp.read().decode("utf-8"))
             if isinstance(data, list):
                 return data
@@ -796,7 +817,7 @@ def _gh_api_post(
     try:
         body = json.dumps(payload).encode("utf-8")
         req = Request(url, data=body, headers=headers, method="POST")
-        with urlopen(req, timeout=30) as resp:  # nosec B310 - HTTPS URL to GitHub API
+        with _GH_OPENER.open(req, timeout=30) as resp:  # nosec B310 - HTTPS URL to GitHub API
             if resp.status in expected_statuses:
                 return json.loads(resp.read().decode("utf-8"))
             return None
@@ -826,7 +847,7 @@ def _gh_api_patch(
     try:
         body = json.dumps(payload).encode("utf-8")
         req = Request(url, data=body, headers=headers, method="PATCH")
-        with urlopen(req, timeout=30) as resp:  # nosec B310 - HTTPS URL to GitHub API
+        with _GH_OPENER.open(req, timeout=30) as resp:  # nosec B310 - HTTPS URL to GitHub API
             return json.loads(resp.read().decode("utf-8"))
     except (HTTPError, URLError, OSError):
         return None
@@ -1941,7 +1962,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     }
     try:
         req = Request(url, headers=headers, method="GET")
-        with urlopen(req, timeout=30) as resp:  # nosec B310 - HTTPS GitHub API
+        with _GH_OPENER.open(req, timeout=30) as resp:  # nosec B310 - HTTPS GitHub API
             pr_info = json.loads(resp.read().decode("utf-8"))
     except (HTTPError, URLError, OSError):
         return ActionResult(success=False, stderr="Failed to fetch PR info")
@@ -1999,7 +2020,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     reviews_url = f"https://api.github.com/repos/{owner}/{gh_repo_name}/pulls/{pr_number}/reviews"
     try:
         req2 = Request(reviews_url, headers=headers, method="GET")
-        with urlopen(req2, timeout=30) as resp2:  # nosec B310 - HTTPS GitHub API
+        with _GH_OPENER.open(req2, timeout=30) as resp2:  # nosec B310 - HTTPS GitHub API
             reviews = json.loads(resp2.read().decode("utf-8"))
     except (HTTPError, URLError, OSError):
         reviews = []
