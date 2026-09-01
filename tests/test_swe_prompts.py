@@ -1174,3 +1174,40 @@ class TestBuildQueueHandler:
         params = {"queue_dir": str(tmp_path / "override_queue")}
         handler = _build_queue_handler(params, ctx)
         assert str(handler.queue_dir) == str(tmp_path / "override_queue")
+
+    def test_raises_when_queue_dir_escapes_workspace(self, tmp_path):
+        """ValueError when queue_dir is outside the workspace directory."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        with pytest.raises(ValueError, match="queue_dir escapes workspace"):
+            _build_queue_handler({"queue_dir": str(outside)}, ctx)
+
+    def test_raises_when_queue_dir_escapes_via_dotdot(self, tmp_path):
+        """ValueError when queue_dir uses .. to escape the workspace."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        with pytest.raises(ValueError, match="queue_dir escapes workspace"):
+            _build_queue_handler({"queue_dir": str(workspace / ".." / "outside")}, ctx)
+
+    def test_raises_when_queue_dir_is_absolute_outside_workspace(self, tmp_path):
+        """ValueError when queue_dir is an absolute path outside the workspace."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        with pytest.raises(ValueError, match="queue_dir escapes workspace"):
+            _build_queue_handler({"queue_dir": str(outside.resolve())}, ctx)
+
+    def test_queue_dir_within_workspace_passes(self, tmp_path):
+        """queue_dir inside workspace should not raise."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        queue_dir = workspace / "queue"
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        handler = _build_queue_handler({"queue_dir": str(queue_dir)}, ctx)
+        assert str(handler.queue_dir) == str(queue_dir)
