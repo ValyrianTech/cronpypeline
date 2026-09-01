@@ -1211,3 +1211,26 @@ class TestBuildQueueHandler:
         ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
         handler = _build_queue_handler({"queue_dir": str(queue_dir)}, ctx)
         assert str(handler.queue_dir) == str(queue_dir)
+
+    def test_raises_when_queue_dir_symlink_escapes_workspace(self, tmp_path):
+        """ValueError when queue_dir is a symlink inside the workspace pointing outside."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        link = workspace / "link"
+        link.symlink_to(outside, target_is_directory=True)
+        ctx = TickContext(target="repo", workspace_dir=workspace, dry_run=False)
+        with pytest.raises(ValueError, match="queue_dir escapes workspace"):
+            _build_queue_handler({"queue_dir": str(link)}, ctx)
+
+    def test_symlink_workspace_dir_accepts_resolved_queue_dir(self, tmp_path):
+        """A workspace_dir symlink pointing to a real dir accepts a queue_dir inside it."""
+        real_workspace = tmp_path / "real_workspace"
+        real_workspace.mkdir()
+        workspace_link = tmp_path / "workspace_link"
+        workspace_link.symlink_to(real_workspace, target_is_directory=True)
+        queue_dir = real_workspace / "queue"
+        ctx = TickContext(target="repo", workspace_dir=workspace_link, dry_run=False)
+        handler = _build_queue_handler({"queue_dir": str(queue_dir)}, ctx)
+        assert str(handler.queue_dir) == str(queue_dir)
