@@ -13,6 +13,7 @@ from cronpypeline.actions import (
     SubprocessActionHandler,
     TickContext,
     _as_bool,
+    _host_matches,
     _is_private_ip,
     _redact_url,
     _validate_ssrf,
@@ -1405,6 +1406,74 @@ class TestHttpRequestActionHandlerSSRF:
         assert "Host blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
+    def test_hostname_with_mixed_public_and_private_ips_is_blocked(self, tmp_path):
+        action = self._action("http://multi.example.com/api")
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        infos = [
+            ("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80)),
+            ("AF_INET", "SOCK_STREAM", 6, "", ("10.0.0.1", 80)),
+        ]
+        with patch("socket.getaddrinfo", return_value=infos):
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_allowed_hosts_question_mark_single_char(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        allowed_action = self._action("http://api1.example.com/", allowed_hosts=["api?.example.com"])
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
+            with patch("urllib.request.urlopen", return_value=self._mock_response()):
+                allowed_result = handler.execute(allowed_action, ctx)
+        assert allowed_result.success is True
+
+        blocked_action = self._action("http://api12.example.com/", allowed_hosts=["api?.example.com"])
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            blocked_result = handler.execute(blocked_action, ctx)
+        assert blocked_result.success is False
+        assert "Host not allowed" in blocked_result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_allowed_hosts_character_class(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        allowed_action = self._action("http://api1.example.com/", allowed_hosts=["api[12].example.com"])
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
+            with patch("urllib.request.urlopen", return_value=self._mock_response()):
+                allowed_result = handler.execute(allowed_action, ctx)
+        assert allowed_result.success is True
+
+        blocked_action = self._action("http://api3.example.com/", allowed_hosts=["api[12].example.com"])
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            blocked_result = handler.execute(blocked_action, ctx)
+        assert blocked_result.success is False
+        assert "Host not allowed" in blocked_result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_blocked_hosts_question_mark_single_char(self, tmp_path):
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        blocked_action = self._action("http://api1.example.com/", blocked_hosts=["api?.example.com"])
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            blocked_result = handler.execute(blocked_action, ctx)
+        assert blocked_result.success is False
+        assert "Host blocked" in blocked_result.stderr
+        mock_urlopen.assert_not_called()
+
+        allowed_action = self._action("http://api12.example.com/", blocked_hosts=["api?.example.com"])
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()):
+            with patch("urllib.request.urlopen", return_value=self._mock_response()):
+                allowed_result = handler.execute(allowed_action, ctx)
+        assert allowed_result.success is True
+
     def test_dns_failure_is_blocked(self, tmp_path):
         action = self._action("http://nonexistent.invalid/api")
         ctx = self._ctx(tmp_path)
@@ -1544,6 +1613,26 @@ class TestHttpRequestActionHandlerSSRF:
         assert result.exit_code == -1
         assert "Invalid URL" in result.stderr
         mock_urlopen.assert_not_called()
+
+
+class TestHostMatches:
+    """Direct unit tests for the _host_matches helper."""
+
+    def test_star_wildcard(self):
+        assert _host_matches("api.example.com", "*.example.com") is True
+        assert _host_matches("example.com", "*.example.com") is False
+
+    def test_question_mark_single_char(self):
+        assert _host_matches("api1.example.com", "api?.example.com") is True
+        assert _host_matches("api12.example.com", "api?.example.com") is False
+
+    def test_character_class(self):
+        assert _host_matches("api1.example.com", "api[12].example.com") is True
+        assert _host_matches("api3.example.com", "api[12].example.com") is False
+
+    def test_case_insensitivity(self):
+        assert _host_matches("API.Example.COM", "api.example.com") is True
+        assert _host_matches("api.example.com", "API.EXAMPLE.COM") is True
 
 
 class TestAsBool:
