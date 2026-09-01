@@ -388,7 +388,7 @@ For the ordering operators (`lt`, `lte`, `gt`, `gte`), if the JSON field value's
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `params` | object | `{}` | Type-specific parameters |
-| `timeout_seconds` | int | `null` | Execution timeout |
+| `timeout_seconds` | int | `null` | Execution timeout. When not set, action handlers apply a sensible default: command and subprocess actions default to 300 seconds (5 minutes), and http_request actions default to 30 seconds |
 | `produces` | array | `[]` | Markers created on success |
 
 **Template variables** in `command`, `cwd`, `prompt_template`, marker names, and marker directories:
