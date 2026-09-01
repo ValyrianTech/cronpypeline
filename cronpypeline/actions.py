@@ -11,8 +11,8 @@ import http.client
 import ipaddress
 import os
 import shlex
-import ssl
 import socket
+import ssl
 import subprocess  # nosec B404 - subprocess is used by design to run pipeline commands/scripts
 import sys
 import urllib.error
@@ -666,7 +666,7 @@ class HttpRequestActionHandler(ActionHandler):
                 )
 
             req = urllib.request.Request(current_url, data=data, method=method, headers=headers)
-            setattr(req, "_validated_ips", validated_ips)  # type: ignore[attr-defined]
+            req._validated_ips = validated_ips  # type: ignore[attr-defined]
 
             try:
                 with _HTTP_OPENER.open(req, timeout=timeout) as resp:  # nosec B310 - URL scheme is validated to http/https only just above

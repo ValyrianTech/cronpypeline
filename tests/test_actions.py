@@ -9,10 +9,6 @@ import pytest
 
 from cronpypeline.actions import (
     _MAX_REDIRECTS,
-    _PinnedHTTPConnection,
-    _PinnedHTTPSConnection,
-    _PinnedHTTPHandler,
-    _PinnedHTTPSHandler,
     ActionResult,
     CommandActionHandler,
     CustomActionHandler,
@@ -22,6 +18,10 @@ from cronpypeline.actions import (
     _as_bool,
     _host_matches,
     _is_private_ip,
+    _PinnedHTTPConnection,
+    _PinnedHTTPHandler,
+    _PinnedHTTPSConnection,
+    _PinnedHTTPSHandler,
     _redact_url,
     _validate_ssrf,
     execute_action,
