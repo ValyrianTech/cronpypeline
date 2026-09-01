@@ -645,7 +645,7 @@ class HttpRequestActionHandler(ActionHandler):
                 )
 
             req = urllib.request.Request(current_url, data=data, method=method, headers=headers)
-            req._validated_ip = validated_ip
+            setattr(req, "_validated_ip", validated_ip)  # type: ignore[attr-defined]
 
             try:
                 with _HTTP_OPENER.open(req, timeout=timeout) as resp:  # nosec B310 - URL scheme is validated to http/https only just above
