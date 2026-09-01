@@ -824,6 +824,38 @@ class TestActionHandlerValidateCwd:
         result = handler._validate_cwd(str(real_workspace / "subdir"), workspace_link)
         assert result is None
 
+    def test_relative_cwd_resolves_against_workspace(self, tmp_path):
+        """A relative cwd like 'subdir' is resolved against the workspace and accepted."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_cwd("subdir", tmp_path)
+        assert result is None
+
+    def test_relative_cwd_escaping_workspace_is_rejected(self, tmp_path):
+        """A relative cwd that would escape the workspace is rejected."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_cwd("../outside", tmp_path)
+        assert result is not None
+        assert result.success is False
+        assert "cwd escapes workspace directory" in result.stderr
+
+    def test_absolute_cwd_inside_workspace_accepted(self, tmp_path):
+        """An absolute cwd inside the workspace is accepted."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_cwd(str(tmp_path / "subdir"), tmp_path)
+        assert result is None
+
+    def test_absolute_cwd_outside_workspace_rejected(self, tmp_path):
+        """An absolute cwd outside the workspace is rejected."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        outside = str(tmp_path.parent / "outside")
+        result = handler._validate_cwd(outside, tmp_path)
+        assert result is not None
+        assert result.success is False
+
 
 class TestSubprocessActionHandlerEdgeCases:
     """Tests for subprocess handler edge cases."""
