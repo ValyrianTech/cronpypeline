@@ -1442,7 +1442,7 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_allowlist_takes_precedence_over_private_check(self, tmp_path):
+    def test_private_ip_check_takes_precedence_over_allowlist(self, tmp_path):
         action = self._action("http://localhost:12345/api", allowed_hosts=["localhost"])
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
