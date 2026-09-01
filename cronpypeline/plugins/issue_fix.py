@@ -494,6 +494,9 @@ def _cleanup_stale_task(repo_dir: Path, task_dir: Path,
                 _finalize_issue_outcome(i, repo_dir, passed=False, verbose=verbose)
                 break
 
+    if not task_dir.is_relative_to(TASKS_DIR.resolve()):
+        print(f"  [task] ERROR: task_dir escapes TASKS_DIR: {task_dir}")
+        return False
     try:
         shutil.rmtree(task_dir)
         if verbose:
