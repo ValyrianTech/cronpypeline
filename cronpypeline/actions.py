@@ -570,6 +570,7 @@ class HttpRequestActionHandler(ActionHandler):
                             exit_code=e.code,
                             stderr=f"HTTP {e.code}: Redirect without Location header",
                         )
+                    original_url = current_url
                     current_url = urllib.parse.urljoin(current_url, location)
                     # Match urllib's default redirect behavior for method/body
                     if e.code in (301, 302, 303) and method == "POST":
@@ -587,7 +588,7 @@ class HttpRequestActionHandler(ActionHandler):
                             stdout=body_str,
                             stderr=f"HTTP {e.code}: {e.reason}",
                             exit_code=e.code,
-                            data={"status_code": e.code, "url": _redact_url(current_url), "method": method},
+                            data={"status_code": e.code, "url": _redact_url(original_url), "method": method},
                         )
                     continue
                 body_str = ""

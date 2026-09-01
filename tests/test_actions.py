@@ -1778,6 +1778,29 @@ class TestHttpRequestActionHandlerRedirects:
 
         assert result.success is False
         assert result.exit_code == 307
+        assert result.data["url"] == "http://example.com/start"
+        assert result.data["method"] == "POST"
+        mock_open.assert_called_once()
+
+    def test_redirect_308_post_not_followed(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            method="POST",
+            body='{"a": 1}',
+            resolve_private_ip=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(308, "http://example.com/safe")
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == 308
+        assert result.data["url"] == "http://example.com/start"
+        assert result.data["method"] == "POST"
         mock_open.assert_called_once()
 
     def test_redirect_307_post_read_failure(self, tmp_path):
