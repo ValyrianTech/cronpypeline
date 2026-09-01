@@ -389,12 +389,12 @@ class TestBuildApp:
 
     def test_mock_base_model_init(self):
         """MockBaseModel.__init__ sets attributes from kwargs."""
-        modules, fastapi_module, responses_module, staticfiles_module, pydantic_module = self._make_mock_modules()
+        _modules, _fastapi_module, _responses_module, _staticfiles_module, pydantic_module = self._make_mock_modules()
         instance = pydantic_module.BaseModel(enabled=True)
         assert instance.enabled is True
 
     def test_returns_app_and_registers_routes(self):
-        built, fastapi_module, responses_module, staticfiles_module, pydantic_module = self._build_app()
+        built, fastapi_module, _responses_module, staticfiles_module, _pydantic_module = self._build_app()
         assert isinstance(built, fastapi_module.FastAPI)
         paths = sorted(f"{m} {p}" for m, p, _ in built.routes)
         assert paths == [
@@ -474,9 +474,8 @@ class TestBuildApp:
         built, fastapi_module, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["GET /api/pipeline"]
-        with mock.patch.object(app, "CONFIGS_DIR", tmp_path):
-            with pytest.raises(fastapi_module.HTTPException) as excinfo:
-                handler(config="missing.json")
+        with mock.patch.object(app, "CONFIGS_DIR", tmp_path), pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(config="missing.json")
         assert excinfo.value.status_code == 404
 
     def test_pipeline_info_parse_error(self, tmp_path):
@@ -486,18 +485,16 @@ class TestBuildApp:
         built, fastapi_module, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["GET /api/pipeline"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
-            with pytest.raises(fastapi_module.HTTPException) as excinfo:
-                handler(config="bad.json")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(config="bad.json")
         assert excinfo.value.status_code == 422
 
     def test_pipeline_info_traversal(self, tmp_path):
         built, fastapi_module, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["GET /api/pipeline"]
-        with mock.patch.object(app, "CONFIGS_DIR", tmp_path):
-            with pytest.raises(fastapi_module.HTTPException) as excinfo:
-                handler(config="../outside.json")
+        with mock.patch.object(app, "CONFIGS_DIR", tmp_path), pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(config="../outside.json")
         assert excinfo.value.status_code == 400
 
     def test_pipeline_info_targets_error(self, tmp_path):
@@ -608,9 +605,8 @@ class TestBuildApp:
         built, fastapi_module, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
-            with pytest.raises(fastapi_module.HTTPException) as excinfo:
-                handler(types.SimpleNamespace(enabled=True), config="swe.json")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(enabled=True), config="swe.json")
         assert excinfo.value.status_code == 409
 
     def test_toggle_write_success(self, tmp_path):
@@ -647,7 +643,7 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
-            result = handler(types.SimpleNamespace(enabled=True), config="swe.json")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json")
         data = json.loads((workspace / "toggle.json").read_text())
         assert data["other"] == "keep"
         assert data["enabled"] is True
@@ -667,7 +663,7 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
-            result = handler(types.SimpleNamespace(enabled=True), config="swe.json")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json")
         data = json.loads((workspace / "toggle.json").read_text())
         assert data == {"enabled": True}
 
@@ -685,13 +681,13 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
-                mock.patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
-            with pytest.raises(fastapi_module.HTTPException) as excinfo:
-                handler(types.SimpleNamespace(enabled=True), config="swe.json")
+                mock.patch("pathlib.Path.write_text", side_effect=OSError("disk full")), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(enabled=True), config="swe.json")
         assert excinfo.value.status_code == 500
 
     def test_index_serves_frontend(self):
-        built, fastapi_module, responses_module, *_ = self._build_app()
+        built, _fastapi_module, responses_module, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["GET /"]
         result = handler()
