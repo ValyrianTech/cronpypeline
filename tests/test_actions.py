@@ -749,6 +749,31 @@ class TestActionHandlerBase:
             base.check_complete(action, ctx)
 
 
+class TestActionHandlerValidateCwd:
+    """Tests for ActionHandler._validate_cwd."""
+
+    def test_returns_none_when_cwd_inside_workspace(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_cwd(str(tmp_path / "subdir"), tmp_path)
+        assert result is None
+
+    def test_returns_none_when_cwd_is_workspace(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_cwd(str(tmp_path), tmp_path)
+        assert result is None
+
+    def test_returns_failure_when_cwd_escapes_workspace(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        outside = str(tmp_path.parent / "outside")
+        result = handler._validate_cwd(outside, tmp_path)
+        assert result is not None
+        assert result.success is False
+        assert result.stderr == f"cwd escapes workspace directory: {outside}"
+
+
 class TestSubprocessActionHandlerEdgeCases:
     """Tests for subprocess handler edge cases."""
 
