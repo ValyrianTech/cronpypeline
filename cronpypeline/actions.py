@@ -231,7 +231,7 @@ def _validate_ssrf(url: str, params: dict) -> str | None:
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     """HTTP redirect handler that prevents automatic redirect following."""
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(self, req: urllib.request.Request, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
         """Prevent automatic redirect following by always returning None.
 
         :param req: The original request being redirected.
@@ -474,10 +474,11 @@ class CustomActionHandler(ActionHandler):
         elif isinstance(result, bool):
             return ActionResult(success=result)
         elif isinstance(result, dict):
+            result_dict: dict[str, Any] = result
             return ActionResult(
-                success=result.get("success", True),
-                stdout=str(result.get("output", "")),
-                data=result,
+                success=result_dict.get("success", True),
+                stdout=str(result_dict.get("output", "")),
+                data=result_dict,
             )
         else:
             return ActionResult(success=True, stdout=str(result))
@@ -563,7 +564,8 @@ class HttpRequestActionHandler(ActionHandler):
             except urllib.error.HTTPError as e:
                 if 300 <= e.code < 400:
                     # Redirect - validate and follow manually
-                    location = (e.headers or {}).get("Location")
+                    resp_headers: Any = e.headers or {}
+                    location = resp_headers.get("Location")
                     if not location:
                         return ActionResult(
                             success=False,
