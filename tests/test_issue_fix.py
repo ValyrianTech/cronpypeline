@@ -750,10 +750,11 @@ class TestEnsureToolingArtifactsEdge:
 
 
 class TestCleanupStaleTask:
-    def _setup(self, tmp_path, issue_id=""):
+    def _setup(self, tmp_path, monkeypatch, issue_id=""):
         target = _make_target_dir(tmp_path)
         _init_git(target)
         subprocess.run(["git", "-C", str(target), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
         task_dir = tmp_path / "tasks" / "2025-01-01" / "task1"
         task_dir.mkdir(parents=True)
         (task_dir / TASK_FILE).write_text(json.dumps({
@@ -766,15 +767,15 @@ class TestCleanupStaleTask:
         subprocess.run(["git", "-C", str(target), "checkout", "-b", "swe-pipeline/task_task1"], capture_output=True, check=True)
         return target, task_dir
 
-    def test_cleans_dir_and_branch(self, tmp_path):
-        target, task_dir = self._setup(tmp_path)
+    def test_cleans_dir_and_branch(self, tmp_path, monkeypatch):
+        target, task_dir = self._setup(tmp_path, monkeypatch)
         assert _cleanup_stale_task(target, task_dir, verbose=True) is True
         assert not task_dir.exists()
         branches = subprocess.run(["git", "-C", str(target), "branch", "--list"], capture_output=True, text=True, check=False).stdout
         assert "swe-pipeline/task_task1" not in branches
 
-    def test_preserves_untracked_files(self, tmp_path):
-        target, task_dir = self._setup(tmp_path)
+    def test_preserves_untracked_files(self, tmp_path, monkeypatch):
+        target, task_dir = self._setup(tmp_path, monkeypatch)
         venv_pkg = target / ".venv" / "lib" / "site-packages" / "pkg"
         venv_pkg.mkdir(parents=True)
         (venv_pkg / "__init__.py").write_text("x")
@@ -783,12 +784,13 @@ class TestCleanupStaleTask:
         assert (venv_pkg / "__init__.py").exists()
         assert (target / "generated_artifact.txt").exists()
 
-    def test_with_source_issue(self, tmp_path):
+    def test_with_source_issue(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         _write_issue(target / ".SWE" / "issues", "iss-1", status="open")
         _init_git(target)
         (target / ".gitignore").write_text(".SWE/\n")
         subprocess.run(["git", "-C", str(target), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
         task_dir = tmp_path / "tasks" / "d" / "t"
         task_dir.mkdir(parents=True)
         (task_dir / TASK_FILE).write_text(json.dumps({
@@ -800,9 +802,10 @@ class TestCleanupStaleTask:
         content = (target / ".SWE" / "issues" / "iss-1.md").read_text()
         assert "open" in content or "discarded" in content
 
-    def test_creates_integration_if_missing(self, tmp_path):
+    def test_creates_integration_if_missing(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
         task_dir = tmp_path / "tasks" / "d" / "t"
         task_dir.mkdir(parents=True)
         (task_dir / TASK_FILE).write_text(json.dumps({
@@ -812,9 +815,10 @@ class TestCleanupStaleTask:
         }))
         assert _cleanup_stale_task(target, task_dir) is True
 
-    def test_rmtree_error(self, tmp_path):
+    def test_rmtree_error(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
         task_dir = tmp_path / "tasks" / "d" / "t"
         task_dir.mkdir(parents=True)
         (task_dir / TASK_FILE).write_text(json.dumps({
@@ -825,9 +829,10 @@ class TestCleanupStaleTask:
         with patch("cronpypeline.plugins.issue_fix.shutil.rmtree", side_effect=OSError("x")):
             assert _cleanup_stale_task(target, task_dir) is False
 
-    def test_verbose_no_created_at(self, tmp_path):
+    def test_verbose_no_created_at(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
         task_dir = tmp_path / "tasks" / "d" / "t"
         task_dir.mkdir(parents=True)
         (task_dir / TASK_FILE).write_text(json.dumps({
@@ -836,9 +841,10 @@ class TestCleanupStaleTask:
         }))
         assert _cleanup_stale_task(target, task_dir, verbose=True) is True
 
-    def test_verbose_old_mtime_no_created_at(self, tmp_path):
+    def test_verbose_old_mtime_no_created_at(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
         task_dir = tmp_path / "tasks" / "d" / "t"
         task_dir.mkdir(parents=True)
         task_file = task_dir / TASK_FILE
@@ -849,6 +855,68 @@ class TestCleanupStaleTask:
         old = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).timestamp()
         os.utime(task_file, (old, old))
         assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+
+    def test_rmtree_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
+        """Covers the containment check failure path."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
+        task_dir = tmp_path / "outside" / "t"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text(json.dumps({
+            "task_id": "t", "branch": "b", "default_branch": "main",
+            "source_issue_id": "",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        assert _cleanup_stale_task(target, task_dir) is False
+        assert task_dir.exists()
+        out = capsys.readouterr().out
+        assert "ERROR" in out and "escapes TASKS_DIR" in out
+
+    def test_rmtree_symlink_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
+        """Covers the containment check against a symlink bypassing TASKS_DIR."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
+        outside_dir = tmp_path / "outside" / "t"
+        outside_dir.mkdir(parents=True)
+        (outside_dir / TASK_FILE).write_text(json.dumps({
+            "task_id": "t", "branch": "b", "default_branch": "main",
+            "source_issue_id": "",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        task_dir = tasks_dir / "d" / "link"
+        task_dir.parent.mkdir(parents=True)
+        task_dir.symlink_to(outside_dir, target_is_directory=True)
+        assert _cleanup_stale_task(target, task_dir) is False
+        assert outside_dir.exists()
+        out = capsys.readouterr().out
+        assert "ERROR" in out and "escapes TASKS_DIR" in out
+
+    def test_rmtree_dotdot_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
+        """Covers the containment check against a `..` segment bypassing TASKS_DIR."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
+        outside_dir = tmp_path / "outside" / "t"
+        outside_dir.mkdir(parents=True)
+        (outside_dir / TASK_FILE).write_text(json.dumps({
+            "task_id": "t", "branch": "b", "default_branch": "main",
+            "source_issue_id": "",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        (tasks_dir / "d").mkdir()
+        task_dir = tasks_dir / "d" / ".." / ".." / "outside" / "t"
+        assert _cleanup_stale_task(target, task_dir) is False
+        assert outside_dir.exists()
+        out = capsys.readouterr().out
+        assert "ERROR" in out and "escapes TASKS_DIR" in out
 
 
 # ─── _cleanup_orphaned_task_dirs ─────────────────────────────────────────────
@@ -876,6 +944,37 @@ class TestCleanupOrphanedTaskDirs:
         monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
         _cleanup_orphaned_task_dirs("repo")
         assert td.exists()
+
+    def test_symlink_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
+        outside_dir = tmp_path / "outside" / "t"
+        outside_dir.mkdir(parents=True)
+        date_dir = tasks_dir / "2025-01-01"
+        date_dir.mkdir()
+        task_dir = date_dir / "20250101_repo_iss1"
+        task_dir.symlink_to(outside_dir, target_is_directory=True)
+        _cleanup_orphaned_task_dirs("repo")
+        assert outside_dir.exists()
+        out = capsys.readouterr().out
+        assert "ERROR" in out and "escapes TASKS_DIR" in out
+
+    def test_dotdot_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
+        outside_dir = tmp_path / "outside" / "20250101_repo_iss1"
+        outside_dir.mkdir(parents=True)
+        (tasks_dir / "d").mkdir()
+        task_dir = tasks_dir / "d" / ".." / ".." / "outside" / "20250101_repo_iss1"
+        monkeypatch.setattr(
+            "cronpypeline.plugins.issue_fix._iter_task_dirs", lambda: [task_dir]
+        )
+        _cleanup_orphaned_task_dirs("repo")
+        assert outside_dir.exists()
+        out = capsys.readouterr().out
+        assert "ERROR" in out and "escapes TASKS_DIR" in out
 
 
 # ─── _recover_orphaned_triaged ──────────────────────────────────────────────
@@ -1604,12 +1703,13 @@ class TestIterTaskDirsFileInTasksDir:
 
 
 class TestCleanupStaleTaskGitError:
-    def test_branch_delete_fails(self, tmp_path, capsys):
+    def test_branch_delete_fails(self, tmp_path, monkeypatch, capsys):
         """Covers lines 442-444 — CalledProcessError during git cleanup."""
         target = _make_target_dir(tmp_path)
         _init_git(target)
         (target / ".gitignore").write_text(".SWE/\n")
         subprocess.run(["git", "-C", str(target), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
         task_dir = tmp_path / "tasks" / "d" / "t"
         task_dir.mkdir(parents=True)
         (task_dir / TASK_FILE).write_text(json.dumps({

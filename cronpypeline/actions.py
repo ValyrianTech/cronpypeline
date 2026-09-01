@@ -11,8 +11,8 @@ import http.client
 import ipaddress
 import os
 import shlex
-import ssl
 import socket
+import ssl
 import subprocess  # nosec B404 - subprocess is used by design to run pipeline commands/scripts
 import sys
 import urllib.error
@@ -246,6 +246,15 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
 
     def __init__(self, host: str, port: int | None = None, timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT,  # type: ignore[attr-defined]
                  source_address: tuple[str, int] | None = None, blocksize: int = 8192, *, validated_ips: list[str] | None = None) -> None:
+        """Initialize a pinned HTTP connection.
+
+        :param host: Hostname to connect to.
+        :param port: Port to connect to, or ``None`` for the default.
+        :param timeout: Connection timeout in seconds.
+        :param source_address: Source address to bind to, or ``None``.
+        :param blocksize: Buffer size for file reads in bytes.
+        :param validated_ips: Pre-validated IP addresses to pin the connection to, or ``None``.
+        """
         self._validated_ips = validated_ips
         super().__init__(host, port, timeout, source_address, blocksize=blocksize)
 
@@ -253,7 +262,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
         """Connect to a validated IP instead of re-resolving the hostname."""
         sys.audit("http.client.connect", self, self.host, self.port)
         connect_hosts = self._validated_ips or [self.host]
-        last_err = None
+        last_err: OSError | None = None
         for connect_host in connect_hosts:
             try:
                 self.sock = self._create_connection(  # type: ignore[attr-defined]
@@ -263,7 +272,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
             except OSError as e:
                 last_err = e
         if self.sock is None:
-            raise last_err
+            raise last_err if last_err is not None else OSError("connection failed")
         try:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError as e:
@@ -279,6 +288,16 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     def __init__(self, host: str, port: int | None = None,
                  timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT, source_address: tuple[str, int] | None = None,  # type: ignore[attr-defined]
                  blocksize: int = 8192, *, context: ssl.SSLContext | None = None, validated_ips: list[str] | None = None) -> None:
+        """Initialize a pinned HTTPS connection.
+
+        :param host: Hostname to connect to.
+        :param port: Port to connect to, or ``None`` for the default.
+        :param timeout: Connection timeout in seconds.
+        :param source_address: Source address to bind to, or ``None``.
+        :param blocksize: Buffer size for file reads in bytes.
+        :param context: SSL context to use for TLS, or ``None`` for the default.
+        :param validated_ips: Pre-validated IP addresses to pin the connection to, or ``None``.
+        """
         self._validated_ips = validated_ips
         super().__init__(host, port, timeout=timeout,
                          source_address=source_address, blocksize=blocksize,
@@ -288,7 +307,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         """Connect to a validated IP and do TLS with the original hostname."""
         sys.audit("http.client.connect", self, self.host, self.port)
         connect_hosts = self._validated_ips or [self.host]
-        last_err = None
+        last_err: OSError | None = None
         for connect_host in connect_hosts:
             try:
                 self.sock = self._create_connection(  # type: ignore[attr-defined]
@@ -298,7 +317,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
             except OSError as e:
                 last_err = e
         if self.sock is None:
-            raise last_err
+            raise last_err if last_err is not None else OSError("connection failed")
         try:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError as e:
@@ -315,6 +334,13 @@ class _PinnedHTTPHandler(urllib.request.HTTPHandler):
     """HTTPHandler that pins connections to a pre-validated IP address."""
 
     def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        """Open an HTTP connection pinned to the validated IPs from ``req``.
+
+        :param req: The request to open a connection for.
+        :returns: The opened HTTP response, or falls back to the default
+            ``http_open`` behavior when no validated IPs are present.
+        :rtype: http.client.HTTPResponse
+        """
         validated_ips = getattr(req, "_validated_ips", None)
         if validated_ips:
             return self.do_open(
@@ -330,6 +356,13 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
     """HTTPSHandler that pins connections to a pre-validated IP address."""
 
     def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        """Open an HTTPS connection pinned to the validated IPs from ``req``.
+
+        :param req: The request to open a connection for.
+        :returns: The opened HTTPS response, or falls back to the default
+            ``https_open`` behavior when no validated IPs are present.
+        :rtype: http.client.HTTPResponse
+        """
         validated_ips = getattr(req, "_validated_ips", None)
         if validated_ips:
             return self.do_open(
@@ -666,7 +699,7 @@ class HttpRequestActionHandler(ActionHandler):
                 )
 
             req = urllib.request.Request(current_url, data=data, method=method, headers=headers)
-            setattr(req, "_validated_ips", validated_ips)  # type: ignore[attr-defined]
+            req._validated_ips = validated_ips  # type: ignore[attr-defined]
 
             try:
                 with _HTTP_OPENER.open(req, timeout=timeout) as resp:  # nosec B310 - URL scheme is validated to http/https only just above
