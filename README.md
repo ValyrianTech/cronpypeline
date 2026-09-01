@@ -764,6 +764,8 @@ The SWE pipeline's test-coverage target is configurable per-target via a `covera
 
 The issue-fix plugin's `run_gate` (the GATE stage) prints an ERROR message, writes a failed gate result file (containing `task_id`, `gated_at`, `issue_type`, `passed: false`, and an `error` field describing the checkout failure) to the task directory's gate result file, and returns `False` (aborting the gate) when `git checkout` of the task branch fails during verification, instead of continuing to run verification commands on the wrong branch.
 
+The issue-fix plugin's stale-task cleanup (`_cleanup_stale_task`) now validates that the task directory is contained within the tasks directory (`TASKS_DIR`) before removing it with `shutil.rmtree`. A task directory that escapes the tasks directory (via `..` segments, absolute paths, or symlinks) is rejected with an ERROR message and the cleanup is aborted, preventing path traversal attacks that could delete arbitrary directories outside the tasks directory.
+
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
 
 Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency). The frontmatter parser handles booleans (true/false/yes/no) and null values (null/none/~) in addition to integers, floats, lists, and strings; quoted values containing colons (e.g. `title: "Fix: Login bug"`) are parsed correctly.
