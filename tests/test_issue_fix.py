@@ -657,6 +657,18 @@ class TestQueueAgent:
         with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=h):
             assert _queue_agent("A", "p", "repo", t, td, "t1", "i1", "C2", ctx) is False
 
+    def test_queue_dir_outside_workspace(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        t = _make_target_dir(workspace)
+        td = tmp_path / "t"; td.mkdir()
+        outside = tmp_path / "conversation_queue"
+        ctx = TickContext(target="repo", workspace_dir=workspace, target_config={})
+        mock_pipeline = MagicMock()
+        mock_pipeline.config.action_handler.params = {"queue_dir": str(outside)}
+        ctx.pipeline = mock_pipeline
+        assert _queue_agent("A", "p", "repo", t, td, "t1", "i1", "C2", ctx) is True
+
 
 # ─── Edge case coverage ─────────────────────────────────────────────────────
 
