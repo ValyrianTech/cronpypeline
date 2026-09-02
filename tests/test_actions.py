@@ -1248,8 +1248,8 @@ class TestHttpRequestActionHandlerSSRF:
         assert result.success is True
         mock_urlopen.assert_called_once()
 
-    def test_resolve_private_ip_disabled_still_blocks_private(self, tmp_path):
-        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip=False)
+    def test_pin_to_validated_ips_disabled_still_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", pin_to_validated_ips=False)
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1260,8 +1260,8 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_string_false_still_blocks_private(self, tmp_path):
-        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="false")
+    def test_pin_to_validated_ips_string_false_still_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", pin_to_validated_ips="false")
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1272,8 +1272,8 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_string_true_blocks_private(self, tmp_path):
-        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="true")
+    def test_pin_to_validated_ips_string_true_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", pin_to_validated_ips="true")
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1284,8 +1284,8 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_string_zero_still_blocks_private(self, tmp_path):
-        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="0")
+    def test_pin_to_validated_ips_string_zero_still_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", pin_to_validated_ips="0")
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1296,8 +1296,8 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_string_one_blocks_private(self, tmp_path):
-        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="1")
+    def test_pin_to_validated_ips_string_one_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", pin_to_validated_ips="1")
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1308,8 +1308,8 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_string_capitalized_false_still_blocks_private(self, tmp_path):
-        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="False")
+    def test_pin_to_validated_ips_string_capitalized_false_still_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", pin_to_validated_ips="False")
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1320,8 +1320,8 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_string_uppercase_true_blocks_private(self, tmp_path):
-        action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="TRUE")
+    def test_pin_to_validated_ips_string_uppercase_true_blocks_private(self, tmp_path):
+        action = self._action("http://127.0.0.1:12345/api", pin_to_validated_ips="TRUE")
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1526,11 +1526,11 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_false_still_blocks_private_with_allowed_hosts(self, tmp_path):
+    def test_pin_to_validated_ips_false_still_blocks_private_with_allowed_hosts(self, tmp_path):
         action = self._action(
             "http://localhost:12345/api",
             allowed_hosts=["localhost"],
-            resolve_private_ip=False,
+            pin_to_validated_ips=False,
         )
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
@@ -1543,7 +1543,7 @@ class TestHttpRequestActionHandlerSSRF:
         mock_urlopen.assert_not_called()
 
     def test_private_ip_check_runs_when_disabled(self, tmp_path):
-        action = self._action("http://10.0.0.1/api", resolve_private_ip=False)
+        action = self._action("http://10.0.0.1/api", pin_to_validated_ips=False)
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1648,7 +1648,7 @@ class TestHttpRequestActionHandlerRedirects:
         return [("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))]
 
     def test_redirect_to_safe_url_follows(self, tmp_path):
-        action = self._action("http://example.com/start", resolve_private_ip=False)
+        action = self._action("http://example.com/start", pin_to_validated_ips=False)
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1681,7 +1681,7 @@ class TestHttpRequestActionHandlerRedirects:
         action = self._action(
             "http://example.com/start",
             blocked_hosts=["blocked.example.com"],
-            resolve_private_ip=False,
+            pin_to_validated_ips=False,
         )
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
@@ -1698,7 +1698,7 @@ class TestHttpRequestActionHandlerRedirects:
         action = self._action(
             "http://allowed.example.com/start",
             allowed_hosts=["allowed.example.com"],
-            resolve_private_ip=False,
+            pin_to_validated_ips=False,
         )
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
@@ -1712,7 +1712,7 @@ class TestHttpRequestActionHandlerRedirects:
         assert "Host not allowed" in result.stderr
 
     def test_redirect_without_location_header(self, tmp_path):
-        action = self._action("http://example.com/start", resolve_private_ip=False)
+        action = self._action("http://example.com/start", pin_to_validated_ips=False)
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1727,7 +1727,7 @@ class TestHttpRequestActionHandlerRedirects:
     def test_redirect_with_none_headers(self, tmp_path):
         from urllib.error import HTTPError
 
-        action = self._action("http://example.com/start", resolve_private_ip=False)
+        action = self._action("http://example.com/start", pin_to_validated_ips=False)
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1740,7 +1740,7 @@ class TestHttpRequestActionHandlerRedirects:
         assert "Redirect without Location header" in result.stderr
 
     def test_too_many_redirects(self, tmp_path):
-        action = self._action("http://example.com/start", resolve_private_ip=False)
+        action = self._action("http://example.com/start", pin_to_validated_ips=False)
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1763,7 +1763,7 @@ class TestHttpRequestActionHandlerRedirects:
             "http://example.com/start",
             method="POST",
             body='{"a": 1}',
-            resolve_private_ip=False,
+            pin_to_validated_ips=False,
         )
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
@@ -1784,7 +1784,7 @@ class TestHttpRequestActionHandlerRedirects:
             "http://example.com/start",
             method="POST",
             body='{"a": 1}',
-            resolve_private_ip=False,
+            pin_to_validated_ips=False,
         )
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
@@ -1805,7 +1805,7 @@ class TestHttpRequestActionHandlerRedirects:
             "http://example.com/start",
             method="POST",
             body='{"a": 1}',
-            resolve_private_ip=False,
+            pin_to_validated_ips=False,
         )
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
@@ -1826,7 +1826,7 @@ class TestHttpRequestActionHandlerRedirects:
             "http://example.com/start",
             method="POST",
             body='{"a": 1}',
-            resolve_private_ip=False,
+            pin_to_validated_ips=False,
         )
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
@@ -1847,7 +1847,7 @@ class TestHttpRequestActionHandlerRedirects:
         assert handler.redirect_request(None, None, 302, "Found", {}, "http://example.com/") is None
 
     def test_redirect_relative_url_resolved(self, tmp_path):
-        action = self._action("http://example.com/start", resolve_private_ip=False)
+        action = self._action("http://example.com/start", pin_to_validated_ips=False)
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -1862,7 +1862,7 @@ class TestHttpRequestActionHandlerRedirects:
         assert second_req.full_url == "http://example.com/new-path"
 
     def test_redirect_to_unsupported_scheme(self, tmp_path):
-        action = self._action("http://example.com/start", resolve_private_ip=False)
+        action = self._action("http://example.com/start", pin_to_validated_ips=False)
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
@@ -2191,15 +2191,46 @@ class TestPinnedConnections:
         assert ips == ["93.184.216.34", "93.184.216.35"]
 
     def test_validate_ssrf_returns_none_ip_when_disabled(self):
-        ip, err = _validate_ssrf("http://93.184.216.34/", {"resolve_private_ip": False})
+        ip, err = _validate_ssrf("http://93.184.216.34/", {"pin_to_validated_ips": False})
         assert err is None
         assert ip is None
 
     def test_validate_ssrf_blocks_private_ip_when_disabled(self):
+        ip, err = _validate_ssrf("http://127.0.0.1/", {"pin_to_validated_ips": False})
+        assert err is not None
+        assert ip is None
+        assert "SSRF blocked" in err
+
+    def test_validate_ssrf_deprecated_alias_disables_pinning(self):
+        ip, err = _validate_ssrf("http://93.184.216.34/", {"resolve_private_ip": False})
+        assert err is None
+        assert ip is None
+
+    def test_validate_ssrf_deprecated_alias_still_blocks_private(self):
         ip, err = _validate_ssrf("http://127.0.0.1/", {"resolve_private_ip": False})
         assert err is not None
         assert ip is None
         assert "SSRF blocked" in err
+
+    def test_validate_ssrf_new_name_takes_precedence_over_alias(self):
+        ip, err = _validate_ssrf(
+            "http://93.184.216.34/",
+            {"pin_to_validated_ips": False, "resolve_private_ip": True},
+        )
+        assert err is None
+        assert ip is None
+
+    def test_validate_ssrf_new_name_true_takes_precedence_over_alias_false(self):
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ):
+            ip, err = _validate_ssrf(
+                "http://example.com/",
+                {"pin_to_validated_ips": True, "resolve_private_ip": False},
+            )
+        assert err is None
+        assert ip == ["93.184.216.34"]
 
     # --- execute() pins the validated IP ---
 
@@ -2230,7 +2261,69 @@ class TestPinnedConnections:
     def test_execute_does_not_set_validated_ip_when_disabled(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
+            params={"url": "http://93.184.216.34/api", "method": "GET", "pin_to_validated_ips": False},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"ok": true}'
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        req = mock_urlopen.call_args[0][0]
+        assert req._validated_ips is None
+
+    def test_execute_deprecated_alias_resolve_private_ip(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
             params={"url": "http://93.184.216.34/api", "method": "GET", "resolve_private_ip": False},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"ok": true}'
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        req = mock_urlopen.call_args[0][0]
+        assert req._validated_ips is None
+
+    def test_execute_deprecated_alias_still_blocks_private(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "http://127.0.0.1:12345/api", "method": "GET", "resolve_private_ip": False},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = HttpRequestActionHandler()
+
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
+
+    def test_execute_new_name_takes_precedence_over_alias(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={
+                "url": "http://93.184.216.34/api",
+                "method": "GET",
+                "pin_to_validated_ips": False,
+                "resolve_private_ip": True,
+            },
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
