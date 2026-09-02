@@ -139,6 +139,21 @@ class TestReadTask:
         (d / TASK_FILE).write_text(json.dumps({"task_id": "x"}))
         assert _read_task(d) == {"task_id": "x"}
 
+    def test_missing_file(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        assert _read_task(d) is None
+
+    def test_corrupt_json(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        (d / TASK_FILE).write_text("not valid json")
+        assert _read_task(d) is None
+
+    def test_os_error(self, tmp_path):
+        d = tmp_path / "t"; d.mkdir()
+        (d / TASK_FILE).write_text("{}")
+        with patch("pathlib.Path.read_text", side_effect=OSError("x")):
+            assert _read_task(d) is None
+
 
 class TestTaskCreatedAt:
     def test_valid_created_at(self, tmp_path):
@@ -865,6 +880,16 @@ class TestCleanupStaleTask:
         os.utime(task_file, (old, old))
         assert _cleanup_stale_task(target, task_dir, verbose=True) is True
 
+    def test_corrupt_task_json(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "t"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+        assert not task_dir.exists()
+
     def test_rmtree_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
         """Covers the containment check failure path."""
         target = _make_target_dir(tmp_path)
@@ -1216,6 +1241,26 @@ class TestRunGate:
     def test_review_gate_dry_run(self, tmp_path):
         td = tmp_path / "t"; self._make_task(tmp_path, td, issue_type="review")
         assert run_gate(tmp_path, td, dry_run=True) is True
+
+    def test_corrupt_task_json(self, tmp_path, monkeypatch):
+        t = _make_target_dir(tmp_path)
+        _init_git(t)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        td = tmp_path / "tasks" / "d" / "t"
+        td.mkdir(parents=True)
+        (td / TASK_FILE).write_text("not valid json{")
+        assert run_gate(t, td, verbose=True) is True
+        assert not td.exists()
+
+    def test_corrupt_task_json_dry_run(self, tmp_path, monkeypatch):
+        t = _make_target_dir(tmp_path)
+        _init_git(t)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        td = tmp_path / "tasks" / "d" / "t"
+        td.mkdir(parents=True)
+        (td / TASK_FILE).write_text("not valid json{")
+        assert run_gate(t, td, dry_run=True) is True
+        assert td.exists()
 
     def _setup_git_with_branch(self, tmp_path):
         t = _make_target_dir(tmp_path)
@@ -1634,6 +1679,41 @@ class TestRunIssueFixStateMachine:
         ctx.pipeline.config.action_handler.params = {"queue_dir": str(queue_dir)}
         assert run_issue_fix_state_machine(t, "repo", {}, ctx, dry_run=True) is True
         assert not (td / GATE_RESULT_FILE).exists()
+
+    def test_corrupt_task_json(self, tmp_path, monkeypatch):
+        """Corrupted task.json (recent mtime) — cleanup then select a new task."""
+        t = _make_target_dir(tmp_path)
+        (t / ".SWE" / "repo_briefing.md").write_text("b")
+        _write_issue(t / ".SWE" / "issues", "1", status="open", body="F", type="bug")
+        _init_git(t)
+        (t / ".gitignore").write_text(".SWE/\n")
+        subprocess.run(["git", "-C", str(t), "add", ".gitignore"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(t), "commit", "-m", "add gitignore"], capture_output=True, check=True)
+        tasks_dir = tmp_path / "tasks"
+        td = tasks_dir / "d" / "20250101_repo_t1"
+        td.mkdir(parents=True)
+        (td / TASK_FILE).write_text("not valid json{")
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix._find_active_task", lambda repo_name: td)
+        h = MagicMock(); h.execute.return_value = ActionResult(success=True)
+        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=h):
+            assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), verbose=True) is True
+        assert not td.exists()
+
+    def test_corrupt_task_json_dry_run(self, tmp_path, monkeypatch):
+        """Corrupted task.json + dry_run — should not mutate, return True."""
+        t = _make_target_dir(tmp_path)
+        _init_git(t)
+        tasks_dir = tmp_path / "tasks"
+        td = tasks_dir / "d" / "20250101_repo_t1"
+        td.mkdir(parents=True)
+        (td / TASK_FILE).write_text("not valid json{")
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix._find_active_task", lambda repo_name: td)
+        assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), dry_run=True) is True
+        assert td.exists()
 
 
 class TestIsQueueEmpty:
