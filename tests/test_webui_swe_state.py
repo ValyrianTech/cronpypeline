@@ -824,6 +824,32 @@ class TestBuildApp:
             handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
         assert excinfo.value.status_code == 400
 
+    def test_toggle_real_repo_config_outside_safe_dirs(self, tmp_path):
+        """A config mirroring the real swe_pipeline.json with config_file outside both safe dirs is rejected with a clear message."""
+        repo_config_path = Path(__file__).parent.parent / "configs" / "swe_pipeline.json"
+        data = json.loads(repo_config_path.read_text())
+
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+
+        data["workspace_dir"] = str(workspace)
+        data["config_file"] = str(outside / "swe_pipeline_config.json")
+
+        self._write_config(configs_dir, "swe_pipeline.json", data)
+
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/toggle"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(enabled=True), config="swe_pipeline.json", token="test-token")
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail == "Toggle path is outside the workspace or configs directory"
+
     def test_toggle_relative_config_file_in_workspace(self, tmp_path):
         configs_dir = tmp_path / "configs"
         workspace = tmp_path / "workspace"
