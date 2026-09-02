@@ -1220,11 +1220,16 @@ def detect_c_issue_fix(context: dict[str, Any]) -> bool:
 
     session = _read_github_session(target_dir)
     if session is not None and session.get("active"):
-        # Allow revision issues (from PR review change requests) to be
-        # processed during an active GitHub session — they are part of the
-        # PR review cycle, not new issue selection.
+        # Allow the session's own issue to be selected (it hasn't been
+        # started yet), and allow revision issues (from PR review change
+        # requests) during an active GitHub session.
+        session_issue_id = session.get("issue_id")
         issues = load_issues(target_dir)
-        if not any(i.status == "open" and (i.type or "") == "revision" for i in issues):
+        session_issue_open = session_issue_id and any(
+            str(i.id) == str(session_issue_id) and i.status == "open" for i in issues
+        )
+        has_revision = any(i.status == "open" and (i.type or "") == "revision" for i in issues)
+        if not session_issue_open and not has_revision:
             return False
 
     if _find_active_task(repo_name) is not None:
