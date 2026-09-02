@@ -1218,6 +1218,11 @@ def detect_c_issue_fix(context: dict[str, Any]) -> bool:
     repo_name = context.get("target", "")
     target_config = context.get("target_config", {})
 
+    # Active task always takes priority — the state machine must run to
+    # manage it (gate, stale cleanup, etc.) regardless of session state.
+    if _find_active_task(repo_name) is not None:
+        return True
+
     session = _read_github_session(target_dir)
     if session is not None and session.get("active"):
         # Allow the session's own issue to be selected (it hasn't been
@@ -1231,9 +1236,6 @@ def detect_c_issue_fix(context: dict[str, Any]) -> bool:
         has_revision = any(i.status == "open" and (i.type or "") == "revision" for i in issues)
         if not session_issue_open and not has_revision:
             return False
-
-    if _find_active_task(repo_name) is not None:
-        return True
 
     if _batch_is_full(target_dir, target_config):
         if _has_open_coverage_issues(target_dir):
