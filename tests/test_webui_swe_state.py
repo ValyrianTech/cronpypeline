@@ -762,9 +762,8 @@ class TestBuildApp:
         built, fastapi_module, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", ""):
-            with pytest.raises(fastapi_module.HTTPException) as excinfo:
-                handler(types.SimpleNamespace(enabled=True), config="swe.json", token="")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", ""), pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="")
         assert excinfo.value.status_code == 403
 
     def test_toggle_wrong_token(self, tmp_path):
@@ -781,9 +780,8 @@ class TestBuildApp:
         built, fastapi_module, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"):
-            with pytest.raises(fastapi_module.HTTPException) as excinfo:
-                handler(types.SimpleNamespace(enabled=True), config="swe.json", token="wrong")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"), pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="wrong")
         assert excinfo.value.status_code == 401
 
     def test_index_serves_frontend(self):
