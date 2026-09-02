@@ -191,6 +191,13 @@ class TestConfigTogglePath:
         cfg = _make_config(tmp_path, config_file=str(abs_path))
         assert app._config_toggle_path(cfg) == abs_path
 
+    def test_absolute_config_file_outside_workspace(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside" / "toggle.json"
+        cfg = _make_config(workspace, config_file=str(outside))
+        assert app._config_toggle_path(cfg) == outside
+
 
 class TestReadEnabled:
     def test_no_toggle_file(self, tmp_path):
@@ -215,6 +222,16 @@ class TestReadEnabled:
         cfg = _make_config(tmp_path, config_file="toggle.json")
         (tmp_path / "toggle.json").write_text("{broken")
         assert app._read_enabled(cfg) is True
+
+    def test_absolute_config_file_outside_workspace(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        toggle = outside / "toggle.json"
+        toggle.write_text('{"enabled": false}')
+        cfg = _make_config(workspace, config_file=str(toggle))
+        assert app._read_enabled(cfg) is False
 
 
 class TestReadMode:
@@ -594,6 +611,59 @@ class TestBuildApp:
         assert stage_state["stateless"] is False
         assert stage_state["complete"] is False
         assert result["summary"]["tracked_stages"] == 1
+
+    def test_pipeline_info_config_file_outside_dirs(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "toggle.json").write_text('{"enabled": false}')
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "config_file": str(outside / "toggle.json"),
+            "stages": [
+                {"id": "A0", "name": "Step", "trigger": {"type": "file_missing", "path": "a.md"},
+                 "action": {"type": "command", "params": {"command": "echo a"}}},
+            ],
+        })
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/pipeline"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        assert result["has_toggle"] is True
+        assert result["enabled"] is False
+        assert len(result["stages"]) == 1
+        assert result["stages"][0]["active"] is True
+
+    def test_pipeline_status_config_file_outside_dirs(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        (workspace / "repo1").mkdir(parents=True)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "toggle.json").write_text('{"enabled": false}')
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "config_file": str(outside / "toggle.json"),
+            "targets": {"type": "static", "items": ["repo1"]},
+            "stages": [
+                {"id": "A0", "name": "Step", "trigger": {"type": "file_missing", "path": "a.md"},
+                 "action": {"type": "command", "params": {"command": "echo a"}}},
+            ],
+        })
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/status"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        assert result["error"] is None
+        assert result["enabled"] is False
+        assert "repo1" in result["targets"]
+        assert result["targets"]["repo1"]["next_actionable"] == "A0"
 
     def test_toggle_no_config_file(self, tmp_path):
         configs_dir = tmp_path / "configs"
