@@ -768,6 +768,8 @@ The issue-fix plugin's `run_gate` (the GATE stage) prints an ERROR message, writ
 
 The issue-fix plugin's stale-task cleanup (`_cleanup_stale_task`) now validates that the task directory is contained within the tasks directory (`TASKS_DIR`) before removing it with `shutil.rmtree`. A task directory that escapes the tasks directory (via `..` segments, absolute paths, or symlinks) is rejected with an ERROR message and the cleanup is aborted, preventing path traversal attacks that could delete arbitrary directories outside the tasks directory.
 
+The issue-fix plugin's `_read_task` helper now returns `None` when a task's `task.json` file is missing or corrupted (unreadable or invalid JSON), instead of raising an exception. The state machine handles a missing/corrupt `task.json` gracefully: the GATE stage (`run_gate`) cleans up the task directory when its `task.json` is unreadable, and `run_issue_fix_state_machine` cleans up a corrupted active task and selects a new one instead of crashing. In dry-run mode these paths report what they would do without mutating state.
+
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
 
 Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency). The frontmatter parser handles booleans (true/false/yes/no) and null values (null/none/~) in addition to integers, floats, lists, and strings; quoted values containing colons (e.g. `title: "Fix: Login bug"`) are parsed correctly.
