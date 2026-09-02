@@ -525,20 +525,28 @@ def _cleanup_stale_task(repo_dir: Path, task_dir: Path,
 
 
 def _cleanup_orphaned_task_dirs(repo_name: str, verbose: bool = False) -> None:
-    """Remove task dirs for *repo_name* that have no task.json.
+    """Remove task dirs for *repo_name* that have no readable task.json.
+
+    Removes dirs where task.json is missing OR exists but fails to parse.
 
     :param repo_name: Repo name to match.
     :param verbose: If True, print progress.
     """
     safe_repo = _safe_slug(repo_name)
     for task_dir in _iter_task_dirs():
-        if (task_dir / TASK_FILE).exists():
-            continue
+        task_file = task_dir / TASK_FILE
+        if task_file.exists():
+            try:
+                json.loads(task_file.read_text(encoding="utf-8"))
+                continue  # valid task.json - keep
+            except (OSError, json.JSONDecodeError):
+                pass  # corrupt/unreadable - fall through to cleanup
         parts = task_dir.name.split("_", 1)
         if len(parts) < 2 or not parts[1].startswith(f"{safe_repo}_"):
             continue
         if verbose:
-            print(f"  {repo_name}: removing orphaned task dir {task_dir.name} (no {TASK_FILE})")
+            reason = f"no {TASK_FILE}" if not task_file.exists() else f"corrupt {TASK_FILE}"
+            print(f"  {repo_name}: removing orphaned task dir {task_dir.name} ({reason})")
         if not task_dir.resolve().is_relative_to(TASKS_DIR.resolve()):
             print(f"  [task] ERROR: task_dir escapes TASKS_DIR: {task_dir}")
             continue
