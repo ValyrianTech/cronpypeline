@@ -2206,6 +2206,15 @@ class TestPinnedConnections:
         assert err is None
         assert ip is None
 
+    def test_validate_ssrf_deprecated_alias_hostname_returns_none(self):
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ):
+            ip, err = _validate_ssrf("http://example.com/", {"resolve_private_ip": False})
+        assert err is None
+        assert ip is None
+
     def test_validate_ssrf_deprecated_alias_still_blocks_private(self):
         ip, err = _validate_ssrf("http://127.0.0.1/", {"resolve_private_ip": False})
         assert err is not None
