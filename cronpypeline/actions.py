@@ -202,9 +202,16 @@ def _validate_ssrf(url: str, params: dict) -> tuple[list[str] | None, str | None
     """Validate a URL against SSRF protections.
 
     Returns a tuple of (validated_ips, error_message). On success, validated_ips
-    is a list of resolved public IP addresses (or None if resolve_private_ip is
-    disabled) and error_message is None. On failure, validated_ips is None and
-    error_message describes the failure.
+    is a list of resolved public IP addresses (or None if ``pin_to_validated_ips``
+    is disabled, meaning the connection is not pinned) and error_message is None.
+    On failure, validated_ips is None and error_message describes the failure.
+
+    DNS resolution and private-IP validation always run to prevent SSRF. The
+    ``pin_to_validated_ips`` option only controls whether the connection is pinned
+    to the validated public IPs (to prevent DNS rebinding) or left to normal DNS
+    resolution at connection time. Private IPs are always blocked. The old name
+    ``resolve_private_ip`` is a deprecated alias for backward compatibility; when
+    both are present, ``pin_to_validated_ips`` takes precedence.
     """
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname
@@ -223,21 +230,27 @@ def _validate_ssrf(url: str, params: dict) -> tuple[list[str] | None, str | None
     if blocked_hosts and any(_host_matches(host, pattern) for pattern in blocked_hosts):
         return None, f"Host blocked: {host!r}"
 
-    if _as_bool(params.get("resolve_private_ip", True)):
-        try:
-            infos = socket.getaddrinfo(host, None)
-        except socket.gaierror:
-            return None, f"Could not resolve host: {host!r}"
-        public_ips = []
-        for info in infos:
-            ip = str(info[4][0])
-            if _is_private_ip(ip):
-                return None, f"SSRF blocked: host {host!r} resolves to private IP {ip!r}"
-            public_ips.append(ip)
-        # All resolved IPs are public - return all of them for connection pinning
-        if public_ips:
-            return public_ips, None
-
+    # DNS resolution and private-IP validation always run to prevent SSRF.
+    # pin_to_validated_ips (formerly resolve_private_ip) only controls whether
+    # the connection is pinned to the validated public IPs (to prevent DNS
+    # rebinding) or left to normal DNS.
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return None, f"Could not resolve host: {host!r}"
+    public_ips = []
+    for info in infos:
+        ip = str(info[4][0])
+        if _is_private_ip(ip):
+            return None, f"SSRF blocked: host {host!r} resolves to private IP {ip!r}"
+        public_ips.append(ip)
+    # All resolved IPs are public.
+    if "pin_to_validated_ips" in params:
+        pin = params["pin_to_validated_ips"]
+    else:
+        pin = params.get("resolve_private_ip", True)
+    if _as_bool(pin) and public_ips:
+        return public_ips, None
     return None, None
 
 
@@ -643,7 +656,8 @@ class HttpRequestActionHandler(ActionHandler):
 
         :param action: Action spec with ``url``, ``method``, ``headers``, ``body``,
             and auth params. SSRF protection is controlled by the optional
-            ``allowed_hosts``, ``blocked_hosts``, and ``resolve_private_ip`` params.
+            ``allowed_hosts``, ``blocked_hosts``, and ``pin_to_validated_ips``
+            params (``resolve_private_ip`` is a deprecated alias).
         :param context: Tick context for auth token resolution from env.
         :returns: Result with response body, status code, and request metadata.
         """

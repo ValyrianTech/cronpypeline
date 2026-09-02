@@ -380,7 +380,7 @@ For the ordering operators (`lt`, `lte`, `gt`, `gte`), if the JSON field value's
 | `command` | Run a shell command | `command`, `cwd` |
 | `queue_agent` | Drop a file in conversation queue | `agent`, `prompt` or `prompt_template`, `reminder_prompt`, `reminder_prompt_template` |
 | `subprocess` | Run a Python script as subprocess | `script`, `args` |
-| `http_request` | Call an HTTP endpoint | `url`, `method`, `headers`, `body`, `auth_token`, `auth_token_env`, `allowed_hosts`, `blocked_hosts`, `resolve_private_ip` |
+| `http_request` | Call an HTTP endpoint | `url`, `method`, `headers`, `body`, `auth_token`, `auth_token_env`, `allowed_hosts`, `blocked_hosts`, `pin_to_validated_ips` |
 | `custom` | User-provided Python callable | `callable` |
 
 **Common fields:**
@@ -699,11 +699,11 @@ The handler also protects against Server-Side Request Forgery (SSRF). By default
 
 - `allowed_hosts`: optional list of hostname patterns (supports `*` wildcards, e.g. `*.example.com`) that restricts which hosts can be requested. If set, only matching hosts are allowed.
 - `blocked_hosts`: optional list of hostname patterns (supports `*` wildcards) that are always blocked.
-- `resolve_private_ip`: boolean (default `true`). When `true`, the handler resolves the hostname to IP addresses and blocks requests that resolve to private/reserved IPs. Set to `false` to disable this check (e.g. for internal pipelines that legitimately need to reach private hosts).
+- `pin_to_validated_ips`: boolean (default `true`). The handler always resolves the hostname and blocks requests that resolve to private/reserved IPs (SSRF protection). When `true` (default), the connection is also pinned to the validated public IP addresses to prevent DNS rebinding attacks. Set to `false` to skip IP pinning (the connection uses normal DNS resolution at connect time), but private/reserved IPs are still blocked. The old name `resolve_private_ip` is kept as a deprecated alias for backward compatibility.
 
 HTTP redirects are followed manually (up to 5 hops), and SSRF protection is re-validated on every redirect hop — the URL scheme (http/https only) and private-IP check are applied to each hop before it is followed. This prevents an SSRF bypass where an attacker redirects a request to a private/reserved IP (e.g. `localhost`, `169.254.169.254`) after the initial URL passed validation. Redirects without a `Location` header return an error, and exceeding the 5-hop limit returns `"Too many redirects (max 5)"`. For POST requests, 301/302/303 redirects switch to GET (matching urllib's default behavior), while 307/308 redirects for POST are not followed.
 
-When `resolve_private_ip` is enabled and the host resolves to public IPs only, the handler pins the connection to the pre-validated IP address instead of letting `urllib` re-resolve the hostname during the actual request. This closes a DNS rebinding / time-of-check-time-of-use (TOCTOU) gap where an attacker who controls DNS could return a public IP during the validation check and a private IP during the actual request, bypassing the SSRF protection. The connection is made to the validated IP directly (with the original hostname preserved for TLS SNI and certificate validation on HTTPS), so the SSRF protection cannot be bypassed between validation and use.
+DNS resolution and private-IP validation always run (regardless of `pin_to_validated_ips`), so requests that resolve to private/reserved IPs are always blocked. When `pin_to_validated_ips` is enabled (the default) and the host resolves to public IPs only, the handler pins the connection to the pre-validated IP address instead of letting `urllib` re-resolve the hostname during the actual request. This closes a DNS rebinding / time-of-check-time-of-use (TOCTOU) gap where an attacker who controls DNS could return a public IP during the validation check and a private IP during the actual request, bypassing the SSRF protection. The connection is made to the validated IP directly (with the original hostname preserved for TLS SNI and certificate validation on HTTPS), so the SSRF protection cannot be bypassed between validation and use.
 
 ```json
 {
@@ -715,7 +715,7 @@ When `resolve_private_ip` is enabled and the host resolves to public IPs only, t
     "auth_token_env": "GITHUB_TOKEN",
     "allowed_hosts": ["*.github.com"],
     "blocked_hosts": ["internal.example.com"],
-    "resolve_private_ip": true
+    "pin_to_validated_ips": true
   }
 }
 ```
