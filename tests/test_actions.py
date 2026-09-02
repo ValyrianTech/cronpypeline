@@ -453,7 +453,7 @@ class TestHttpRequestActionHandler:
     def test_successful_get(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -476,11 +476,10 @@ class TestHttpRequestActionHandler:
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={
-                "url": "http://localhost:12345/api",
+                "url": "http://93.184.216.34:12345/api",
                 "method": "POST",
                 "body": '{"title": "test"}',
                 "headers": {"Content-Type": "application/json"},
-                "resolve_private_ip": False,
             },
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
@@ -504,7 +503,7 @@ class TestHttpRequestActionHandler:
     def test_dry_run_does_not_execute(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=True, verbose=False)
         handler = HttpRequestActionHandler()
@@ -519,7 +518,7 @@ class TestHttpRequestActionHandler:
     def test_non_2xx_response_is_failure(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -540,10 +539,9 @@ class TestHttpRequestActionHandler:
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={
-                "url": "http://localhost:12345/api",
+                "url": "http://93.184.216.34:12345/api",
                 "method": "GET",
                 "auth_token_env": "GITHUB_TOKEN",
-                "resolve_private_ip": False,
             },
         )
         ctx = TickContext(
@@ -569,10 +567,9 @@ class TestHttpRequestActionHandler:
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={
-                "url": "http://localhost:12345/api",
+                "url": "http://93.184.216.34:12345/api",
                 "method": "GET",
                 "auth_token": "ghp_direct_token",
-                "resolve_private_ip": False,
             },
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
@@ -595,11 +592,10 @@ class TestHttpRequestActionHandler:
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={
-                "url": "http://localhost:12345/api/1",
+                "url": "http://93.184.216.34:12345/api/1",
                 "method": "PATCH",
                 "body": '{"state": "closed"}',
                 "headers": {"Content-Type": "application/json"},
-                "resolve_private_ip": False,
             },
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
@@ -621,7 +617,7 @@ class TestHttpRequestActionHandler:
     def test_url_error_is_failure(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -636,7 +632,7 @@ class TestHttpRequestActionHandler:
     def test_default_method_is_get(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -657,7 +653,7 @@ class TestHttpRequestActionHandler:
     def test_response_data_included(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -677,7 +673,7 @@ class TestHttpRequestActionHandler:
     def test_timeout(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
             timeout_seconds=1,
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
@@ -694,7 +690,7 @@ class TestHttpRequestActionHandler:
         """Default timeout of 30s is passed when timeout_seconds is None."""
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1033,7 +1029,7 @@ class TestHttpRequestActionHandlerErrors:
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1054,7 +1050,7 @@ class TestHttpRequestActionHandlerErrors:
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1075,7 +1071,7 @@ class TestHttpRequestActionHandlerErrors:
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://localhost:12345/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
             timeout_seconds=1,
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
@@ -1133,7 +1129,7 @@ class TestHttpRequestActionHandlerRedaction:
     def test_success_result_redacts_url(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "https://user:pass@localhost:12345/api?api_key=secret", "method": "GET", "resolve_private_ip": False},
+            params={"url": "https://user:pass@93.184.216.34:12345/api?api_key=secret", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1148,21 +1144,24 @@ class TestHttpRequestActionHandlerRedaction:
             result = handler.execute(action, ctx)
 
         assert result.success is True
-        assert result.data["url"] == "https://localhost:12345/api"
+        assert result.data["url"] == "https://93.184.216.34:12345/api"
 
     def test_http_error_result_redacts_url(self, tmp_path):
         from urllib.error import HTTPError
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "https://example.com/api?api_key=secret&token=abc", "method": "GET", "resolve_private_ip": False},
+            params={"url": "https://example.com/api?api_key=secret&token=abc", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
 
         error = HTTPError("https://example.com/api", 500, "Internal Server Error", {}, None)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=error):
+        with patch(
+            "socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=error):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1249,27 +1248,29 @@ class TestHttpRequestActionHandlerSSRF:
         assert result.success is True
         mock_urlopen.assert_called_once()
 
-    def test_resolve_private_ip_disabled_allows_private(self, tmp_path):
+    def test_resolve_private_ip_disabled_still_blocks_private(self, tmp_path):
         action = self._action("http://127.0.0.1:12345/api", resolve_private_ip=False)
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
-        assert result.success is True
-        mock_urlopen.assert_called_once()
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_string_false_allows_private(self, tmp_path):
+    def test_resolve_private_ip_string_false_still_blocks_private(self, tmp_path):
         action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="false")
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
-        assert result.success is True
-        mock_urlopen.assert_called_once()
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
 
     def test_resolve_private_ip_string_true_blocks_private(self, tmp_path):
         action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="true")
@@ -1283,16 +1284,17 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_string_zero_allows_private(self, tmp_path):
+    def test_resolve_private_ip_string_zero_still_blocks_private(self, tmp_path):
         action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="0")
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
-        assert result.success is True
-        mock_urlopen.assert_called_once()
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
 
     def test_resolve_private_ip_string_one_blocks_private(self, tmp_path):
         action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="1")
@@ -1306,16 +1308,17 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_string_capitalized_false_allows_private(self, tmp_path):
+    def test_resolve_private_ip_string_capitalized_false_still_blocks_private(self, tmp_path):
         action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="False")
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
-        assert result.success is True
-        mock_urlopen.assert_called_once()
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
 
     def test_resolve_private_ip_string_uppercase_true_blocks_private(self, tmp_path):
         action = self._action("http://127.0.0.1:12345/api", resolve_private_ip="TRUE")
@@ -1523,7 +1526,7 @@ class TestHttpRequestActionHandlerSSRF:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_resolve_private_ip_false_with_allowed_hosts(self, tmp_path):
+    def test_resolve_private_ip_false_still_blocks_private_with_allowed_hosts(self, tmp_path):
         action = self._action(
             "http://localhost:12345/api",
             allowed_hosts=["localhost"],
@@ -1532,22 +1535,24 @@ class TestHttpRequestActionHandlerSSRF:
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
-        assert result.success is True
-        mock_urlopen.assert_called_once()
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
 
-    def test_private_ip_check_skipped_when_disabled(self, tmp_path):
+    def test_private_ip_check_runs_when_disabled(self, tmp_path):
         action = self._action("http://10.0.0.1/api", resolve_private_ip=False)
         ctx = self._ctx(tmp_path)
         handler = HttpRequestActionHandler()
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()) as mock_urlopen:
+        with patch("cronpypeline.actions._HTTP_OPENER.open") as mock_urlopen:
             result = handler.execute(action, ctx)
 
-        assert result.success is True
-        mock_urlopen.assert_called_once()
+        assert result.success is False
+        assert "SSRF blocked" in result.stderr
+        mock_urlopen.assert_not_called()
 
     def test_ipv4_mapped_ipv6_is_blocked(self, tmp_path):
         action = self._action("http://[::ffff:127.0.0.1]/api")
@@ -1639,6 +1644,9 @@ class TestHttpRequestActionHandlerRedirects:
         mock_resp.__exit__ = MagicMock(return_value=False)
         return mock_resp
 
+    def _mock_public_dns(self):
+        return [("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))]
+
     def test_redirect_to_safe_url_follows(self, tmp_path):
         action = self._action("http://example.com/start", resolve_private_ip=False)
         ctx = self._ctx(tmp_path)
@@ -1647,7 +1655,7 @@ class TestHttpRequestActionHandlerRedirects:
         redirect = _make_redirect_error(302, "http://example.com/safe")
         mock_resp = self._mock_response(200)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]):
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1680,7 +1688,7 @@ class TestHttpRequestActionHandlerRedirects:
 
         redirect = _make_redirect_error(302, "http://blocked.example.com/")
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1697,7 +1705,7 @@ class TestHttpRequestActionHandlerRedirects:
 
         redirect = _make_redirect_error(302, "http://other.example.com/")
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1710,7 +1718,7 @@ class TestHttpRequestActionHandlerRedirects:
 
         redirect = _make_redirect_error(302, None)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1725,7 +1733,7 @@ class TestHttpRequestActionHandlerRedirects:
 
         redirect = HTTPError("http://example.com/start", 302, "Found", None, None)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1739,6 +1747,9 @@ class TestHttpRequestActionHandlerRedirects:
         redirect = _make_redirect_error(302, "http://example.com/next")
 
         with patch(
+            "socket.getaddrinfo",
+            return_value=self._mock_public_dns(),
+        ), patch(
             "cronpypeline.actions._HTTP_OPENER.open",
             side_effect=[redirect] * (_MAX_REDIRECTS + 1),
         ):
@@ -1760,7 +1771,7 @@ class TestHttpRequestActionHandlerRedirects:
         redirect = _make_redirect_error(302, "http://example.com/safe")
         mock_resp = self._mock_response(200)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]) as mock_open:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]) as mock_open:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1780,7 +1791,7 @@ class TestHttpRequestActionHandlerRedirects:
 
         redirect = _make_redirect_error(307, "http://example.com/safe")
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]) as mock_open:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]) as mock_open:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1801,7 +1812,7 @@ class TestHttpRequestActionHandlerRedirects:
 
         redirect = _make_redirect_error(308, "http://example.com/safe")
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]) as mock_open:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]) as mock_open:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1823,7 +1834,7 @@ class TestHttpRequestActionHandlerRedirects:
         redirect = _make_redirect_error(307, "http://example.com/safe")
         redirect.read = MagicMock(side_effect=OSError("read failed"))
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1843,7 +1854,7 @@ class TestHttpRequestActionHandlerRedirects:
         redirect = _make_redirect_error(302, "/new-path")
         mock_resp = self._mock_response(200)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]) as mock_open:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]) as mock_open:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -1857,7 +1868,7 @@ class TestHttpRequestActionHandlerRedirects:
 
         redirect = _make_redirect_error(302, "file:///etc/passwd")
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]) as mock_open:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]) as mock_open:
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -2180,9 +2191,15 @@ class TestPinnedConnections:
         assert ips == ["93.184.216.34", "93.184.216.35"]
 
     def test_validate_ssrf_returns_none_ip_when_disabled(self):
-        ip, err = _validate_ssrf("http://127.0.0.1/", {"resolve_private_ip": False})
+        ip, err = _validate_ssrf("http://93.184.216.34/", {"resolve_private_ip": False})
         assert err is None
         assert ip is None
+
+    def test_validate_ssrf_blocks_private_ip_when_disabled(self):
+        ip, err = _validate_ssrf("http://127.0.0.1/", {"resolve_private_ip": False})
+        assert err is not None
+        assert ip is None
+        assert "SSRF blocked" in err
 
     # --- execute() pins the validated IP ---
 
@@ -2213,7 +2230,7 @@ class TestPinnedConnections:
     def test_execute_does_not_set_validated_ip_when_disabled(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://127.0.0.1/api", "method": "GET", "resolve_private_ip": False},
+            params={"url": "http://93.184.216.34/api", "method": "GET", "resolve_private_ip": False},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
