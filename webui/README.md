@@ -56,5 +56,10 @@ The module can be imported even when the web stack is unavailable or broken — 
 - Stages without markers (custom plugin-managed stages) are shown with a dashed
   "stateless" node.
 - If a pipeline defines no `config_file`, the enable/disable toggle is hidden.
+- The toggle endpoint only writes to toggle paths that resolve within the
+  pipeline's workspace directory or the configs directory. A toggle path that
+  resolves outside both (including via a symlink pointing outside) is rejected
+  with an HTTP 400 error. This is a security hardening measure preventing
+  arbitrary file writes outside the workspace/configs directories.
 - If the workspace or registry paths in a config don't exist on this machine,
   the UI shows an error banner instead of data.

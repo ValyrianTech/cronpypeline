@@ -873,7 +873,7 @@ configs/
 └── vnn_pipeline.json         # Full VNN pipeline example config
 ```
 
-The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) for visualizing pipeline state. The webui module can now be imported even when the web stack is unavailable or broken — the FastAPI app is built lazily via a `_build_app()` function, and the module-level `app` is `None` when app construction fails for any reason (missing fastapi/pydantic, or any other error during app construction). This is useful for importing helper functions without installing the web stack.
+The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) for visualizing pipeline state. The webui module can now be imported even when the web stack is unavailable or broken — the FastAPI app is built lazily via a `_build_app()` function, and the module-level `app` is `None` when app construction fails for any reason (missing fastapi/pydantic, or any other error during app construction). This is useful for importing helper functions without installing the web stack. The enable/disable toggle endpoint restricts its writes to toggle paths that resolve within the pipeline's workspace directory or the configs directory (security hardening), rejecting paths that resolve outside both.
 
 ## Testing
 
