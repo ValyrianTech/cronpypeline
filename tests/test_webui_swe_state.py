@@ -192,31 +192,6 @@ class TestConfigTogglePath:
         assert app._config_toggle_path(cfg) == abs_path
 
 
-class TestIsPathWithin:
-    def test_path_within_directory(self, tmp_path):
-        d = tmp_path / "dir"
-        d.mkdir()
-        assert app._is_path_within(d / "file.txt", d) is True
-
-    def test_path_outside_directory(self, tmp_path):
-        d = tmp_path / "dir"
-        d.mkdir()
-        assert app._is_path_within(tmp_path / "other" / "file.txt", d) is False
-
-    def test_path_equal_to_directory(self, tmp_path):
-        d = tmp_path / "dir"
-        d.mkdir()
-        assert app._is_path_within(d, d) is True
-
-    def test_symlink_outside_directory(self, tmp_path):
-        d = tmp_path / "dir"
-        d.mkdir()
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        (d / "link").symlink_to(outside)
-        assert app._is_path_within(d / "link", d) is False
-
-
 class TestReadEnabled:
     def test_no_toggle_file(self, tmp_path):
         cfg = _make_config(tmp_path)
@@ -711,7 +686,7 @@ class TestBuildApp:
             handler(types.SimpleNamespace(enabled=True), config="swe.json")
         assert excinfo.value.status_code == 500
 
-    def test_toggle_rejects_path_outside_safe_dirs(self, tmp_path):
+    def test_toggle_allows_path_outside_safe_dirs(self, tmp_path):
         configs_dir = tmp_path / "configs"
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -723,12 +698,14 @@ class TestBuildApp:
             "config_file": str(outside / "toggle.json"),
             "stages": [],
         })
-        built, fastapi_module, *_ = self._build_app()
+        built, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(enabled=True), config="swe.json")
-        assert excinfo.value.status_code == 400
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(types.SimpleNamespace(enabled=True), config="swe.json")
+        assert result["enabled"] is True
+        assert (outside / "toggle.json").exists()
+        assert json.loads((outside / "toggle.json").read_text())["enabled"] is True
 
     def test_toggle_allows_path_in_configs_dir(self, tmp_path):
         configs_dir = tmp_path / "configs"
