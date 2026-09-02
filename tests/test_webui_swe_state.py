@@ -199,6 +199,31 @@ class TestConfigTogglePath:
         assert app._config_toggle_path(cfg) == outside
 
 
+class TestIsPathWithin:
+    def test_path_within_directory(self, tmp_path):
+        d = tmp_path / "dir"
+        d.mkdir()
+        assert app._is_path_within(d / "file.txt", d) is True
+
+    def test_path_outside_directory(self, tmp_path):
+        d = tmp_path / "dir"
+        d.mkdir()
+        assert app._is_path_within(tmp_path / "other" / "file.txt", d) is False
+
+    def test_path_equal_to_directory(self, tmp_path):
+        d = tmp_path / "dir"
+        d.mkdir()
+        assert app._is_path_within(d, d) is True
+
+    def test_symlink_outside_directory(self, tmp_path):
+        d = tmp_path / "dir"
+        d.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (d / "link").symlink_to(outside)
+        assert app._is_path_within(d / "link", d) is False
+
+
 class TestReadEnabled:
     def test_no_toggle_file(self, tmp_path):
         cfg = _make_config(tmp_path)
@@ -759,7 +784,7 @@ class TestBuildApp:
             handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
         assert excinfo.value.status_code == 500
 
-    def test_toggle_allows_path_outside_safe_dirs(self, tmp_path):
+    def test_toggle_rejects_path_outside_safe_dirs(self, tmp_path):
         configs_dir = tmp_path / "configs"
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -771,14 +796,52 @@ class TestBuildApp:
             "config_file": str(outside / "toggle.json"),
             "stages": [],
         })
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/toggle"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
+        assert excinfo.value.status_code == 400
+
+    def test_toggle_real_world_config(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "config_file": "/spellbook_data/Serendipity/swe/swe_pipeline_config.json",
+            "stages": [],
+        })
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/toggle"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
+        assert excinfo.value.status_code == 400
+
+    def test_toggle_relative_config_file_in_workspace(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "config_file": ".SWE/pipeline_config.json",
+            "stages": [],
+        })
         built, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
             result = handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
         assert result["enabled"] is True
-        assert (outside / "toggle.json").exists()
-        assert json.loads((outside / "toggle.json").read_text())["enabled"] is True
+        assert (workspace / ".SWE" / "pipeline_config.json").exists()
+        assert json.loads((workspace / ".SWE" / "pipeline_config.json").read_text())["enabled"] is True
 
     def test_toggle_allows_path_in_configs_dir(self, tmp_path):
         configs_dir = tmp_path / "configs"
