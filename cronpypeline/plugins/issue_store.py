@@ -386,12 +386,10 @@ def create_issue(target_dir: Path | str | None = None, issue_data: dict[str, Any
     if path.exists():
         existing = _read_issue_file(path)
         if existing.id != issue.id:
-            warnings.warn(
+            raise ValueError(
                 f"Issue id {issue.id!r} sanitizes to filename {filename!r}, which is "
-                f"already used by issue id {existing.id!r}; the existing file will be "
-                "overwritten.",
-                UserWarning,
-                stacklevel=2,
+                f"already used by issue id {existing.id!r}; refusing to overwrite "
+                "existing issue."
             )
     _write_issue_file(path, issue)
     return issue

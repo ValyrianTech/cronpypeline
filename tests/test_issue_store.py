@@ -398,15 +398,15 @@ class TestCreateIssue:
         issues_dir = tmp_path / ".SWE" / "issues"
         assert (issues_dir / "foo-bar.md").exists()
 
-    def test_create_issue_warns_on_collision(self, tmp_path):
+    def test_create_issue_raises_on_collision(self, tmp_path):
         create_issue(tmp_path, {"id": "foo/bar", "status": "open"}, body="first")
-        with pytest.warns(UserWarning):
+        with pytest.raises(ValueError, match="refusing to overwrite"):
             create_issue(tmp_path, {"id": "foo-bar", "status": "open"}, body="second")
 
-        loaded = get_issue(tmp_path, "foo-bar")
+        loaded = get_issue(tmp_path, "foo/bar")
         assert loaded is not None
-        assert loaded.id == "foo-bar"
-        assert loaded.body == "second"
+        assert loaded.id == "foo/bar"
+        assert loaded.body == "first"
 
     def test_create_issue_no_warning_on_same_id(self, tmp_path, recwarn):
         create_issue(tmp_path, {"id": "foo-bar", "status": "open"}, body="first")
