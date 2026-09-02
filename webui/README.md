@@ -75,5 +75,9 @@ The module can be imported even when the web stack is unavailable or broken — 
   configured and HTTP 401 if an invalid or missing token is supplied. The
   dashboard stores the token you type in `localStorage` and sends it with each
   toggle request.
+- The toggle endpoint only allows writing to `config_file` paths that resolve
+  within the pipeline's `workspace_dir` or the configs directory. Configs whose
+  `config_file` points outside these directories return HTTP 400 and need to be
+  migrated to point within the workspace or configs directory.
 - If the workspace or registry paths in a config don't exist on this machine,
   the UI shows an error banner instead of data.

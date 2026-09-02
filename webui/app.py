@@ -44,6 +44,21 @@ def _config_toggle_path(config: PipelineConfig) -> Path | None:
     return path
 
 
+def _is_path_within(path: Path, directory: Path) -> bool:
+    """Return whether a path resides within a directory, resolving symlinks.
+
+    Symlinks are resolved on both paths so that a symlink inside ``directory``
+    pointing outside it is treated as outside, preventing symlink-based escapes.
+
+    :param path: Path to check.
+    :param directory: Directory that must contain the path.
+    :returns: True if the resolved path is within the resolved directory.
+    """
+    resolved_path = Path(path).resolve()
+    resolved_directory = Path(directory).resolve()
+    return resolved_path.is_relative_to(resolved_directory)
+
+
 def _read_enabled(config: PipelineConfig) -> bool | None:
     """Read the enabled state from the pipeline's config_file toggle.
 
@@ -393,8 +408,9 @@ def _build_app():
         :param token: Auth token required to enable/disable a pipeline.
         :returns: Dict with the new enabled state.
         :raises HTTPException: If no auth token is configured (403), the token
-            is invalid or missing (401), or the pipeline has no config_file
-            toggle (409).
+            is invalid or missing (401), the pipeline has no config_file
+            toggle (409), or the toggle path resolves outside the workspace
+            and configs directory (400).
         """
         if not WEBUI_TOKEN:
             raise HTTPException(status_code=403, detail="Toggle is disabled: no auth token configured")
@@ -405,6 +421,10 @@ def _build_app():
         toggle = _config_toggle_path(cfg)
         if toggle is None:
             raise HTTPException(status_code=409, detail="This pipeline has no config_file toggle")
+
+        workspace_dir = Path(cfg.workspace_dir)
+        if not _is_path_within(toggle, workspace_dir) and not _is_path_within(toggle, CONFIGS_DIR):
+            raise HTTPException(status_code=400, detail="Toggle path is outside the workspace or configs directory")
 
         existing: dict[str, Any] = {}
         if toggle.exists():
