@@ -8,6 +8,7 @@ const els = {
   modeBadge: document.getElementById('mode-badge'),
   connDot: document.getElementById('conn-dot'),
   connLabel: document.getElementById('conn-label'),
+  tokenInput: document.getElementById('token-input'),
   toggleWrap: document.getElementById('toggle-wrap'),
   toggleBtn: document.getElementById('toggle-btn'),
   toggleLabel: document.getElementById('toggle-label'),
@@ -36,6 +37,13 @@ let pollTimer = null;
 let justCompleted = new Set(); // "target::stage" keys that flipped to complete
 let hidePending = localStorage.getItem('cronpypeline.hidePending') === '1';
 let lanesAnimated = false;    // entrance animation only on first render per config
+let apiToken = localStorage.getItem('cronpypeline.apiToken') || '';
+
+els.tokenInput.value = apiToken;
+els.tokenInput.addEventListener('input', () => {
+  apiToken = els.tokenInput.value.trim();
+  localStorage.setItem('cronpypeline.apiToken', apiToken);
+});
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -204,7 +212,7 @@ els.toggleBtn.addEventListener('click', async () => {
   const target = !els.toggleBtn.classList.contains('on');
   els.toggleBtn.classList.add('busy');
   try {
-    const res = await fetch('/api/toggle?config=' + encodeURIComponent(currentConfig), {
+    const res = await fetch('/api/toggle?config=' + encodeURIComponent(currentConfig) + '&token=' + encodeURIComponent(apiToken), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: target }),

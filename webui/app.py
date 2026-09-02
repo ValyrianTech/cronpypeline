@@ -24,6 +24,7 @@ from cronpypeline.targets import load_targets_with_config
 
 HERE = Path(__file__).resolve().parent
 CONFIGS_DIR = Path(os.environ.get("CRONPYPELINE_CONFIGS_DIR", HERE.parent / "configs")).resolve()
+WEBUI_TOKEN = os.environ.get("CRONPYPELINE_WEBUI_TOKEN", "")
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -41,6 +42,21 @@ def _config_toggle_path(config: PipelineConfig) -> Path | None:
     if not path.is_absolute():
         path = Path(config.workspace_dir) / path
     return path
+
+
+def _is_path_within(path: Path, directory: Path) -> bool:
+    """Return whether a path resides within a directory, resolving symlinks.
+
+    Symlinks are resolved on both paths so that a symlink inside ``directory``
+    pointing outside it is treated as outside, preventing symlink-based escapes.
+
+    :param path: Path to check.
+    :param directory: Directory that must contain the path.
+    :returns: True if the resolved path is within the resolved directory.
+    """
+    resolved_path = Path(path).resolve()
+    resolved_directory = Path(directory).resolve()
+    return resolved_path.is_relative_to(resolved_directory)
 
 
 def _read_enabled(config: PipelineConfig) -> bool | None:
@@ -384,18 +400,31 @@ def _build_app():
         enabled: bool
 
     @app.post("/api/toggle")
-    def toggle_pipeline(body: ToggleRequest, config: str = Query(...)) -> dict[str, Any]:
+    def toggle_pipeline(body: ToggleRequest, config: str = Query(...), token: str = Query("")) -> dict[str, Any]:
         """Enable or disable a pipeline by writing its config_file toggle.
 
         :param body: Request body with the desired enabled state.
         :param config: Config filename.
+        :param token: Auth token required to enable/disable a pipeline.
         :returns: Dict with the new enabled state.
-        :raises HTTPException: If the pipeline has no config_file toggle.
+        :raises HTTPException: If no auth token is configured (403), the token
+            is invalid or missing (401), the pipeline has no config_file
+            toggle (409), or the toggle path resolves outside the workspace
+            and configs directory (400).
         """
+        if not WEBUI_TOKEN:
+            raise HTTPException(status_code=403, detail="Toggle is disabled: no auth token configured")
+        if token != WEBUI_TOKEN:
+            raise HTTPException(status_code=401, detail="Invalid or missing auth token")
+
         cfg = _load_config(config)
         toggle = _config_toggle_path(cfg)
         if toggle is None:
             raise HTTPException(status_code=409, detail="This pipeline has no config_file toggle")
+
+        workspace_dir = Path(cfg.workspace_dir)
+        if not _is_path_within(toggle, workspace_dir) and not _is_path_within(toggle, CONFIGS_DIR):
+            raise HTTPException(status_code=400, detail="Toggle path is outside the workspace or configs directory")
 
         existing: dict[str, Any] = {}
         if toggle.exists():
@@ -442,7 +471,7 @@ def main() -> None:
     Exits with a non-zero code if the app could not be built (e.g. missing
     fastapi/pydantic).
     """
-    global CONFIGS_DIR
+    global CONFIGS_DIR, WEBUI_TOKEN
 
     if app is None:
         print("cronpypeline dashboard requires fastapi and pydantic. Install them with: pip install fastapi pydantic", file=sys.stderr)
@@ -454,9 +483,11 @@ def main() -> None:
     parser.add_argument("--configs-dir", default=str(CONFIGS_DIR), help="Directory with pipeline JSON configs")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8600)
+    parser.add_argument("--token", default=WEBUI_TOKEN, help="Auth token required for the toggle endpoint")
     args = parser.parse_args()
 
     CONFIGS_DIR = Path(args.configs_dir).resolve()
+    WEBUI_TOKEN = args.token
     uvicorn.run(app, host=args.host, port=args.port)
 
 
