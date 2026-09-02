@@ -24,6 +24,7 @@ from cronpypeline.targets import load_targets_with_config
 
 HERE = Path(__file__).resolve().parent
 CONFIGS_DIR = Path(os.environ.get("CRONPYPELINE_CONFIGS_DIR", HERE.parent / "configs")).resolve()
+WEBUI_TOKEN = os.environ.get("CRONPYPELINE_WEBUI_TOKEN", "")
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -384,14 +385,22 @@ def _build_app():
         enabled: bool
 
     @app.post("/api/toggle")
-    def toggle_pipeline(body: ToggleRequest, config: str = Query(...)) -> dict[str, Any]:
+    def toggle_pipeline(body: ToggleRequest, config: str = Query(...), token: str = Query("")) -> dict[str, Any]:
         """Enable or disable a pipeline by writing its config_file toggle.
 
         :param body: Request body with the desired enabled state.
         :param config: Config filename.
+        :param token: Auth token required to enable/disable a pipeline.
         :returns: Dict with the new enabled state.
-        :raises HTTPException: If the pipeline has no config_file toggle.
+        :raises HTTPException: If no auth token is configured (403), the token
+            is invalid or missing (401), or the pipeline has no config_file
+            toggle (409).
         """
+        if not WEBUI_TOKEN:
+            raise HTTPException(status_code=403, detail="Toggle is disabled: no auth token configured")
+        if token != WEBUI_TOKEN:
+            raise HTTPException(status_code=401, detail="Invalid or missing auth token")
+
         cfg = _load_config(config)
         toggle = _config_toggle_path(cfg)
         if toggle is None:
@@ -442,7 +451,7 @@ def main() -> None:
     Exits with a non-zero code if the app could not be built (e.g. missing
     fastapi/pydantic).
     """
-    global CONFIGS_DIR
+    global CONFIGS_DIR, WEBUI_TOKEN
 
     if app is None:
         print("cronpypeline dashboard requires fastapi and pydantic. Install them with: pip install fastapi pydantic", file=sys.stderr)
@@ -454,9 +463,11 @@ def main() -> None:
     parser.add_argument("--configs-dir", default=str(CONFIGS_DIR), help="Directory with pipeline JSON configs")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8600)
+    parser.add_argument("--token", default=WEBUI_TOKEN, help="Auth token required for the toggle endpoint")
     args = parser.parse_args()
 
     CONFIGS_DIR = Path(args.configs_dir).resolve()
+    WEBUI_TOKEN = args.token
     uvicorn.run(app, host=args.host, port=args.port)
 
 

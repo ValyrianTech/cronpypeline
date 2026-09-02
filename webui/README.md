@@ -45,6 +45,20 @@ python app.py --configs-dir /path/to/configs --port 8600
 CRONPYPELINE_CONFIGS_DIR=/path/to/configs uvicorn app:app --port 8600
 ```
 
+To enable the enable/disable toggle you must configure an auth token. Set it
+via the `--token` CLI flag or the `CRONPYPELINE_WEBUI_TOKEN` environment
+variable:
+
+```bash
+# Via CLI flag
+python app.py --token my-secret-token
+
+# Via environment variable
+CRONPYPELINE_WEBUI_TOKEN=my-secret-token python app.py
+```
+
+If no token is configured, the toggle endpoint is disabled and returns HTTP 403.
+
 Then open http://127.0.0.1:8600
 
 The module can be imported even when the web stack is unavailable or broken — the FastAPI app is built lazily via `_build_app()`, and the module-level `app` is `None` when app construction fails for any reason (missing fastapi/pydantic, or any other error during app construction). This is useful for importing helper functions without installing the web stack.
@@ -56,10 +70,10 @@ The module can be imported even when the web stack is unavailable or broken — 
 - Stages without markers (custom plugin-managed stages) are shown with a dashed
   "stateless" node.
 - If a pipeline defines no `config_file`, the enable/disable toggle is hidden.
-- The toggle endpoint only writes to toggle paths that resolve within the
-  pipeline's workspace directory or the configs directory. A toggle path that
-  resolves outside both (including via a symlink pointing outside) is rejected
-  with an HTTP 400 error. This is a security hardening measure preventing
-  arbitrary file writes outside the workspace/configs directories.
+- The toggle endpoint requires an auth token (configured via `--token` or the
+  `CRONPYPELINE_WEBUI_TOKEN` env var); it returns HTTP 403 if no token is
+  configured and HTTP 401 if an invalid or missing token is supplied. The
+  dashboard stores the token you type in `localStorage` and sends it with each
+  toggle request.
 - If the workspace or registry paths in a config don't exist on this machine,
   the UI shows an error banner instead of data.
