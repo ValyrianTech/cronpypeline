@@ -774,6 +774,8 @@ Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` 
 
 `create_issue()` rejects issue IDs containing `..` (e.g. `../../evil`, `foo..bar`, or `..`) by raising a `ValueError`, preventing path traversal attacks via malicious issue IDs; single dots remain allowed (e.g. `foo.bar`). For other characters, the issue ID is sanitized before use as a filename: any character that is not alphanumeric, dot, underscore, or hyphen is replaced with `-`, and leading/trailing dashes are stripped. If the sanitized ID is empty (e.g. an ID consisting only of special characters or slashes), it falls back to `issue`. The resolved path is validated with `.resolve()`/`is_relative_to()` — if the sanitized filename would still escape the issues directory, a `ValueError` is raised. This prevents path traversal attacks via malicious issue IDs (e.g. absolute paths like `/etc/passwd`).
 
+`create_issue()` also refuses to overwrite an existing issue file: if a different issue ID sanitizes to a filename that is already used by an existing issue (a filename collision), it raises a `ValueError` instead of overwriting the existing issue (previously it emitted a `UserWarning` and overwrote the file).
+
 The issue-fix plugin's `_finalize_issue_outcome` also sanitizes the issue ID through `issue_filename()` before constructing the issue file path (`.SWE/issues/{id}.md`), instead of using the raw issue ID directly. An issue ID containing `..` (e.g. `../../escape`) now raises a `ValueError` instead of writing an issue file outside the issues directory, closing the same path traversal vector in the gate-finalization path.
 
 **SWE diagnostics** (`cronpypeline.plugins.swe_diagnostics`):
