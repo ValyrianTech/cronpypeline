@@ -1701,7 +1701,7 @@ class TestRunIssueFixStateMachine:
             assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), verbose=True) is True
         assert not td.exists()
 
-    def test_corrupt_task_json_dry_run(self, tmp_path, monkeypatch):
+    def test_corrupt_task_json_dry_run(self, tmp_path, monkeypatch, capsys):
         """Corrupted task.json + dry_run — should not mutate, return True."""
         t = _make_target_dir(tmp_path)
         _init_git(t)
@@ -1712,8 +1712,10 @@ class TestRunIssueFixStateMachine:
         monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tasks_dir)
         monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
         monkeypatch.setattr("cronpypeline.plugins.issue_fix._find_active_task", lambda repo_name: td)
-        assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), dry_run=True) is True
+        assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), dry_run=True, verbose=True) is True
         assert td.exists()
+        out = capsys.readouterr().out
+        assert "corrupted task" in out
 
 
 class TestIsQueueEmpty:

@@ -1278,6 +1278,8 @@ def run_issue_fix_state_machine(repo_dir: Path, repo_name: str,
         task = _read_task(active)
         if task is None:
             # Corrupted task.json — clean it up and select a new task
+            if verbose:
+                print(f"  corrupted task at {active} (unreadable {TASK_FILE}) — cleaning up")
             if not dry_run:
                 _cleanup_stale_task(repo_dir, active, verbose=verbose)
                 return run_select(repo_dir, repo_name, target_config, context,
