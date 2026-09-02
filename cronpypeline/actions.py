@@ -203,8 +203,13 @@ def _validate_ssrf(url: str, params: dict) -> tuple[list[str] | None, str | None
 
     Returns a tuple of (validated_ips, error_message). On success, validated_ips
     is a list of resolved public IP addresses (or None if resolve_private_ip is
-    disabled) and error_message is None. On failure, validated_ips is None and
-    error_message describes the failure.
+    disabled, meaning the connection is not pinned) and error_message is None.
+    On failure, validated_ips is None and error_message describes the failure.
+
+    DNS resolution and private-IP validation always run to prevent SSRF. The
+    ``resolve_private_ip`` option only controls whether the connection is pinned
+    to the validated public IPs (to prevent DNS rebinding) or left to normal DNS
+    resolution at connection time. Private IPs are always blocked.
     """
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname
@@ -223,21 +228,22 @@ def _validate_ssrf(url: str, params: dict) -> tuple[list[str] | None, str | None
     if blocked_hosts and any(_host_matches(host, pattern) for pattern in blocked_hosts):
         return None, f"Host blocked: {host!r}"
 
-    if _as_bool(params.get("resolve_private_ip", True)):
-        try:
-            infos = socket.getaddrinfo(host, None)
-        except socket.gaierror:
-            return None, f"Could not resolve host: {host!r}"
-        public_ips = []
-        for info in infos:
-            ip = str(info[4][0])
-            if _is_private_ip(ip):
-                return None, f"SSRF blocked: host {host!r} resolves to private IP {ip!r}"
-            public_ips.append(ip)
-        # All resolved IPs are public - return all of them for connection pinning
-        if public_ips:
-            return public_ips, None
-
+    # DNS resolution and private-IP validation always run to prevent SSRF.
+    # resolve_private_ip only controls whether the connection is pinned to the
+    # validated public IPs (to prevent DNS rebinding) or left to normal DNS.
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return None, f"Could not resolve host: {host!r}"
+    public_ips = []
+    for info in infos:
+        ip = str(info[4][0])
+        if _is_private_ip(ip):
+            return None, f"SSRF blocked: host {host!r} resolves to private IP {ip!r}"
+        public_ips.append(ip)
+    # All resolved IPs are public.
+    if _as_bool(params.get("resolve_private_ip", True)) and public_ips:
+        return public_ips, None
     return None, None
 
 
