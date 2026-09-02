@@ -19,7 +19,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request
 
-from cronpypeline.actions import ActionResult, ActionSpec, NoRedirectHandler, TickContext
+from cronpypeline.actions import (
+    ActionResult,
+    ActionSpec,
+    NoRedirectHandler,
+    TickContext,
+)
 from cronpypeline.plugins.issue_store import (
     create_issue,
     issue_filename,

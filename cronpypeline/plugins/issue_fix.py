@@ -23,7 +23,13 @@ from typing import Any
 
 from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
-from cronpypeline.plugins.issue_store import Issue, load_issues, set_issue_status
+from cronpypeline.plugins.issue_store import (
+    Issue,
+    _write_issue_file,
+    issue_filename,
+    load_issues,
+    set_issue_status,
+)
 from cronpypeline.plugins.swe_plugin import (
     COVERAGE_TARGET,
     INTEGRATION_BRANCH,
@@ -354,10 +360,10 @@ def _finalize_issue_outcome(issue: Issue, repo_dir: Path, passed: bool,
     set_issue_status(repo_dir, issue.id, status)
     issue.attempts = attempts
     issue.status = status
+    safe_id = issue_filename(issue.id)
     issues_dir = repo_dir / SWE_SUBDIR / "issues"
-    issue_path = issues_dir / f"{issue.id}.md"
+    issue_path = issues_dir / f"{safe_id}.md"
     if issue_path.exists():
-        from cronpypeline.plugins.issue_store import _write_issue_file
         _write_issue_file(issue_path, issue)
 
     if verbose and not passed:

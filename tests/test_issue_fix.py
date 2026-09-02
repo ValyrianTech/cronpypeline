@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.plugins.issue_fix import (
     ALL_REPORT_SUBDIRS,
@@ -455,6 +457,13 @@ class TestFinalizeIssueOutcome:
         i = _write_issue(t / ".SWE" / "issues", "1", status="open", attempts=MAX_ATTEMPTS - 1)
         s, a = _finalize_issue_outcome(i, t, passed=False, verbose=True)
         assert s == "discarded" and a == MAX_ATTEMPTS
+
+    def test_path_traversal_id_raises(self, tmp_path):
+        t = _make_target_dir(tmp_path)
+        issue = Issue(id="../../escape", status="open")
+        with pytest.raises(ValueError):
+            _finalize_issue_outcome(issue, t, passed=True)
+        assert not (tmp_path / "escape.md").exists()
 
 
 class TestCaptureDiff:
