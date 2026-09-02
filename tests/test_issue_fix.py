@@ -1680,7 +1680,7 @@ class TestRunIssueFixStateMachine:
         assert run_issue_fix_state_machine(t, "repo", {}, ctx, dry_run=True) is True
         assert not (td / GATE_RESULT_FILE).exists()
 
-    def test_corrupt_task_json(self, tmp_path, monkeypatch):
+    def test_corrupt_task_json(self, tmp_path, monkeypatch, capsys):
         """Corrupted task.json (recent mtime) — cleanup then select a new task."""
         t = _make_target_dir(tmp_path)
         (t / ".SWE" / "repo_briefing.md").write_text("b")
@@ -1700,6 +1700,8 @@ class TestRunIssueFixStateMachine:
         with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=h):
             assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), verbose=True) is True
         assert not td.exists()
+        out = capsys.readouterr().out
+        assert "corrupted task" in out
 
     def test_corrupt_task_json_dry_run(self, tmp_path, monkeypatch, capsys):
         """Corrupted task.json + dry_run — should not mutate, return True."""
