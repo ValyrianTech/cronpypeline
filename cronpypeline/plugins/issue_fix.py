@@ -374,13 +374,21 @@ def _finalize_issue_outcome(issue: Issue, repo_dir: Path, passed: bool,
 # ─── Task dir + state detection ──────────────────────────────────────────────
 
 
-def _read_task(task_dir: Path) -> dict[str, Any]:
+def _read_task(task_dir: Path) -> dict[str, Any] | None:
     """Read task.json from a task directory.
 
+    Returns None if the file is missing or corrupted.
+
     :param task_dir: Task directory path.
-    :returns: Task dict.
+    :returns: Task dict, or None if missing/corrupted.
     """
-    return json.loads((task_dir / TASK_FILE).read_text(encoding="utf-8"))
+    task_file = task_dir / TASK_FILE
+    if not task_file.exists():
+        return None
+    try:
+        return json.loads(task_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _task_created_at(task_dir: Path, task: dict[str, Any]) -> datetime:
@@ -462,6 +470,8 @@ def _cleanup_stale_task(repo_dir: Path, task_dir: Path,
     :returns: True if cleanup succeeded.
     """
     task = _read_task(task_dir)
+    if task is None:
+        task = {}
     task_id = task.get("task_id", task_dir.name)
     branch = task.get("branch", _task_branch_name(task_id))
     default_branch = task.get("default_branch", "main")
@@ -515,20 +525,28 @@ def _cleanup_stale_task(repo_dir: Path, task_dir: Path,
 
 
 def _cleanup_orphaned_task_dirs(repo_name: str, verbose: bool = False) -> None:
-    """Remove task dirs for *repo_name* that have no task.json.
+    """Remove task dirs for *repo_name* that have no readable task.json.
+
+    Removes dirs where task.json is missing OR exists but fails to parse.
 
     :param repo_name: Repo name to match.
     :param verbose: If True, print progress.
     """
     safe_repo = _safe_slug(repo_name)
     for task_dir in _iter_task_dirs():
-        if (task_dir / TASK_FILE).exists():
-            continue
+        task_file = task_dir / TASK_FILE
+        if task_file.exists():
+            try:
+                json.loads(task_file.read_text(encoding="utf-8"))
+                continue  # valid task.json - keep
+            except (OSError, json.JSONDecodeError):
+                pass  # corrupt/unreadable - fall through to cleanup
         parts = task_dir.name.split("_", 1)
         if len(parts) < 2 or not parts[1].startswith(f"{safe_repo}_"):
             continue
         if verbose:
-            print(f"  {repo_name}: removing orphaned task dir {task_dir.name} (no {TASK_FILE})")
+            reason = f"no {TASK_FILE}" if not task_file.exists() else f"corrupt {TASK_FILE}"
+            print(f"  {repo_name}: removing orphaned task dir {task_dir.name} ({reason})")
         if not task_dir.resolve().is_relative_to(TASKS_DIR.resolve()):
             print(f"  [task] ERROR: task_dir escapes TASKS_DIR: {task_dir}")
             continue
@@ -1065,6 +1083,13 @@ def run_gate(repo_dir: Path, task_dir: Path,
     :returns: True on success (passed or resolved out-of-tree).
     """
     task = _read_task(task_dir)
+    if task is None:
+        # Corrupted task.json — clean up the task dir
+        if verbose:
+            print(f"  corrupted task at {task_dir} (unreadable {TASK_FILE}) — cleaning up")
+        if not dry_run:
+            _cleanup_stale_task(repo_dir, task_dir, verbose=verbose)
+        return True
     issue_type = (task.get("issue_type") or "security").lower()
     source_issue_id = task.get("source_issue_id", "")
     marker_path = task_dir / CODING_COMPLETE_MARKER
@@ -1259,6 +1284,15 @@ def run_issue_fix_state_machine(repo_dir: Path, repo_name: str,
 
         # Check if agent finished but forgot marker
         task = _read_task(active)
+        if task is None:
+            # Corrupted task.json — clean it up and select a new task
+            if verbose:
+                print(f"  corrupted task at {active} (unreadable {TASK_FILE}) — cleaning up")
+            if not dry_run:
+                _cleanup_stale_task(repo_dir, active, verbose=verbose)
+                return run_select(repo_dir, repo_name, target_config, context,
+                                  dry_run=dry_run, verbose=verbose)
+            return True
         task_age = (datetime.now(timezone.utc) -
                     _task_created_at(active, task)).total_seconds() / 60
         if task_age >= 2 and task.get("issue_type") == "review":
