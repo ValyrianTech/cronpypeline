@@ -605,8 +605,10 @@ class TestBuildApp:
         built, fastapi_module, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(enabled=True), config="swe.json")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
         assert excinfo.value.status_code == 409
 
     def test_toggle_write_success(self, tmp_path):
@@ -622,8 +624,8 @@ class TestBuildApp:
         built, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
-            result = handler(types.SimpleNamespace(enabled=False), config="swe.json")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
+            result = handler(types.SimpleNamespace(enabled=False), config="swe.json", token="test-token")
         assert result["enabled"] is False
         assert (workspace / "toggle.json").exists()
         assert json.loads((workspace / "toggle.json").read_text())["enabled"] is False
@@ -642,8 +644,8 @@ class TestBuildApp:
         built, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
-            handler(types.SimpleNamespace(enabled=True), config="swe.json")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
         data = json.loads((workspace / "toggle.json").read_text())
         assert data["other"] == "keep"
         assert data["enabled"] is True
@@ -662,8 +664,8 @@ class TestBuildApp:
         built, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
-            handler(types.SimpleNamespace(enabled=True), config="swe.json")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
         data = json.loads((workspace / "toggle.json").read_text())
         assert data == {"enabled": True}
 
@@ -681,9 +683,10 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
                 mock.patch("pathlib.Path.write_text", side_effect=OSError("disk full")), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(enabled=True), config="swe.json")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
         assert excinfo.value.status_code == 500
 
     def test_toggle_allows_path_outside_safe_dirs(self, tmp_path):
@@ -701,8 +704,8 @@ class TestBuildApp:
         built, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
-            result = handler(types.SimpleNamespace(enabled=True), config="swe.json")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
+            result = handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
         assert result["enabled"] is True
         assert (outside / "toggle.json").exists()
         assert json.loads((outside / "toggle.json").read_text())["enabled"] is True
@@ -721,8 +724,8 @@ class TestBuildApp:
         built, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
-            result = handler(types.SimpleNamespace(enabled=False), config="swe.json")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
+            result = handler(types.SimpleNamespace(enabled=False), config="swe.json", token="test-token")
         assert result["enabled"] is False
         assert (configs_dir / "toggle.json").exists()
         assert json.loads((configs_dir / "toggle.json").read_text())["enabled"] is False
@@ -740,10 +743,48 @@ class TestBuildApp:
         built, *_ = self._build_app()
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
-            result = handler(types.SimpleNamespace(enabled=True), config="swe.json")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
+            result = handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
         assert result["enabled"] is True
         assert (workspace / "toggle.json").exists()
+
+    def test_toggle_no_token_configured(self, tmp_path):
+        """Toggle returns 403 when no auth token is configured."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "config_file": "toggle.json",
+            "stages": [],
+        })
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/toggle"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", ""):
+            with pytest.raises(fastapi_module.HTTPException) as excinfo:
+                handler(types.SimpleNamespace(enabled=True), config="swe.json", token="")
+        assert excinfo.value.status_code == 403
+
+    def test_toggle_wrong_token(self, tmp_path):
+        """Toggle returns 401 when the provided token is wrong."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "config_file": "toggle.json",
+            "stages": [],
+        })
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/toggle"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"):
+            with pytest.raises(fastapi_module.HTTPException) as excinfo:
+                handler(types.SimpleNamespace(enabled=True), config="swe.json", token="wrong")
+        assert excinfo.value.status_code == 401
 
     def test_index_serves_frontend(self):
         built, _fastapi_module, responses_module, *_ = self._build_app()
@@ -840,6 +881,23 @@ class TestMain:
         finally:
             app.app = original
             app.CONFIGS_DIR = original_configs_dir
+
+    def test_main_accepts_token_arg(self):
+        """main() should accept --token and update WEBUI_TOKEN."""
+        original = app.app
+        original_configs_dir = app.CONFIGS_DIR
+        original_token = app.WEBUI_TOKEN
+        try:
+            app.app = mock.Mock()
+            fake_uvicorn = mock.Mock()
+            with mock.patch.dict(sys.modules, {"uvicorn": fake_uvicorn}), mock.patch("sys.argv", ["app.py", "--token", "my-secret"]):
+                app.main()
+            assert app.WEBUI_TOKEN == "my-secret"
+            fake_uvicorn.run.assert_called_once()
+        finally:
+            app.app = original
+            app.CONFIGS_DIR = original_configs_dir
+            app.WEBUI_TOKEN = original_token
 
     def test_main_block_runs_when_module_executed_as_script(self, capsys):
         """The `if __name__ == "__main__"` block should call main()."""
