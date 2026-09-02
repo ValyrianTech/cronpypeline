@@ -450,10 +450,13 @@ def my_action(action, context):
 class TestHttpRequestActionHandler:
     """Tests for the HTTP request action handler."""
 
+    def _mock_public_dns(self):
+        return [("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))]
+
     def test_successful_get(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
+            params={"url": "http://example.com:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -465,7 +468,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_resp.getheaders.return_value = [("Content-Type", "application/json")]
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -476,7 +479,7 @@ class TestHttpRequestActionHandler:
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={
-                "url": "http://93.184.216.34:12345/api",
+                "url": "http://example.com:12345/api",
                 "method": "POST",
                 "body": '{"title": "test"}',
                 "headers": {"Content-Type": "application/json"},
@@ -491,7 +494,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -503,7 +506,7 @@ class TestHttpRequestActionHandler:
     def test_dry_run_does_not_execute(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
+            params={"url": "http://example.com:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=True, verbose=False)
         handler = HttpRequestActionHandler()
@@ -518,7 +521,7 @@ class TestHttpRequestActionHandler:
     def test_non_2xx_response_is_failure(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
+            params={"url": "http://example.com:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -529,7 +532,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -539,7 +542,7 @@ class TestHttpRequestActionHandler:
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={
-                "url": "http://93.184.216.34:12345/api",
+                "url": "http://example.com:12345/api",
                 "method": "GET",
                 "auth_token_env": "GITHUB_TOKEN",
             },
@@ -556,7 +559,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -567,7 +570,7 @@ class TestHttpRequestActionHandler:
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={
-                "url": "http://93.184.216.34:12345/api",
+                "url": "http://example.com:12345/api",
                 "method": "GET",
                 "auth_token": "ghp_direct_token",
             },
@@ -581,7 +584,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -592,7 +595,7 @@ class TestHttpRequestActionHandler:
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={
-                "url": "http://93.184.216.34:12345/api/1",
+                "url": "http://example.com:12345/api/1",
                 "method": "PATCH",
                 "body": '{"state": "closed"}',
                 "headers": {"Content-Type": "application/json"},
@@ -607,7 +610,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -617,13 +620,13 @@ class TestHttpRequestActionHandler:
     def test_url_error_is_failure(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
+            params={"url": "http://example.com:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
 
         from urllib.error import URLError
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=URLError("Connection refused")):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=URLError("Connection refused")):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -632,7 +635,7 @@ class TestHttpRequestActionHandler:
     def test_default_method_is_get(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api"},
+            params={"url": "http://example.com:12345/api"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -643,7 +646,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -653,7 +656,7 @@ class TestHttpRequestActionHandler:
     def test_response_data_included(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
+            params={"url": "http://example.com:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -664,7 +667,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
             result = handler.execute(action, ctx)
 
         assert result.success is True
@@ -673,14 +676,14 @@ class TestHttpRequestActionHandler:
     def test_timeout(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
+            params={"url": "http://example.com:12345/api", "method": "GET"},
             timeout_seconds=1,
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
 
         from urllib.error import URLError
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=URLError(TimeoutError("timed out"))):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=URLError(TimeoutError("timed out"))):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -690,7 +693,7 @@ class TestHttpRequestActionHandler:
         """Default timeout of 30s is passed when timeout_seconds is None."""
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
+            params={"url": "http://example.com:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -701,7 +704,7 @@ class TestHttpRequestActionHandler:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             handler.execute(action, ctx)
 
         assert mock_urlopen.call_args.kwargs["timeout"] == 30
@@ -1005,6 +1008,9 @@ def my_action(action, context):
 class TestHttpRequestActionHandlerErrors:
     """Tests for HTTP request handler error handling."""
 
+    def _mock_public_dns(self):
+        return [("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))]
+
     def test_unsupported_url_scheme_is_rejected(self, tmp_path):
         """Non-http(s) URL schemes should be rejected before any request."""
         action = ActionSpec(
@@ -1029,14 +1035,14 @@ class TestHttpRequestActionHandlerErrors:
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
+            params={"url": "http://example.com:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
 
         error = HTTPError("http://localhost:12345/api", 500, "Internal Server Error", {}, None)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=error):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=error):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1050,7 +1056,7 @@ class TestHttpRequestActionHandlerErrors:
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
+            params={"url": "http://example.com:12345/api", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1058,7 +1064,7 @@ class TestHttpRequestActionHandlerErrors:
         error = HTTPError("http://localhost:12345/api", 503, "Service Unavailable", {}, None)
         error.read = MagicMock(side_effect=OSError("read failed"))
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=error):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=error):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1071,13 +1077,13 @@ class TestHttpRequestActionHandlerErrors:
 
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "http://93.184.216.34:12345/api", "method": "GET"},
+            params={"url": "http://example.com:12345/api", "method": "GET"},
             timeout_seconds=1,
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=URLError(TimeoutError("timed out"))):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", side_effect=URLError(TimeoutError("timed out"))):
             result = handler.execute(action, ctx)
 
         assert result.success is False
@@ -1126,10 +1132,13 @@ class TestRedactUrl:
 class TestHttpRequestActionHandlerRedaction:
     """Tests for URL redaction in HTTP request handler result data."""
 
+    def _mock_public_dns(self):
+        return [("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))]
+
     def test_success_result_redacts_url(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
-            params={"url": "https://user:pass@93.184.216.34:12345/api?api_key=secret", "method": "GET"},
+            params={"url": "https://user:pass@example.com:12345/api?api_key=secret", "method": "GET"},
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = HttpRequestActionHandler()
@@ -1140,11 +1149,11 @@ class TestHttpRequestActionHandlerRedaction:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp):
             result = handler.execute(action, ctx)
 
         assert result.success is True
-        assert result.data["url"] == "https://93.184.216.34:12345/api"
+        assert result.data["url"] == "https://example.com:12345/api"
 
     def test_http_error_result_redacts_url(self, tmp_path):
         from urllib.error import HTTPError
