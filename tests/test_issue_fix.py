@@ -979,6 +979,32 @@ class TestCleanupOrphanedTaskDirs:
         _cleanup_orphaned_task_dirs("repo")
         assert td.exists()
 
+    def test_removes_corrupt_task_json(self, tmp_path, monkeypatch):
+        td = tmp_path / "2025-01-01" / "20250101_repo_iss1"
+        td.mkdir(parents=True)
+        (td / TASK_FILE).write_text("{not valid json")
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("repo")
+        assert not td.exists()
+
+    def test_keeps_corrupt_task_json_for_other_repo(self, tmp_path, monkeypatch):
+        td = tmp_path / "2025-01-01" / "20250101_other_iss1"
+        td.mkdir(parents=True)
+        (td / TASK_FILE).write_text("{not valid json")
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("repo")
+        assert td.exists()
+
+    def test_verbose_removes_corrupt_task_json(self, tmp_path, monkeypatch, capsys):
+        td = tmp_path / "2025-01-01" / "20250101_repo_iss1"
+        td.mkdir(parents=True)
+        (td / TASK_FILE).write_text("{not valid json")
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("repo", verbose=True)
+        assert not td.exists()
+        out = capsys.readouterr().out
+        assert "corrupt" in out
+
     def test_symlink_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
         tasks_dir = tmp_path / "tasks"
         tasks_dir.mkdir()
