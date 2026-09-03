@@ -27,9 +27,10 @@ CONFIGS_DIR = Path(os.environ.get("CRONPYPELINE_CONFIGS_DIR", HERE.parent / "con
 WEBUI_TOKEN = os.environ.get("CRONPYPELINE_WEBUI_TOKEN", "")
 
 # Cache for parsed log ticks, keyed by resolved log file path.
-# Value: (mtime, size, sorted_ticks_list) where sorted_ticks_list is bounded to
-# the most recent 500 ticks.
-_log_ticks_cache: dict[str, tuple[float, int, list[dict[str, Any]]]] = {}
+# Value: (inode, mtime, size, offset, ticks_by_id) where offset is the byte
+# offset up to which the file has been parsed (always at a line boundary) and
+# ticks_by_id maps tick_id to the accumulated tick dict (unbounded).
+_log_ticks_cache: dict[str, tuple[int, float, int, int, dict[str, dict[str, Any]]]] = {}
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -102,47 +103,22 @@ def _read_mode(config: PipelineConfig) -> str | None:
         return None
 
 
-def _read_log_ticks(config: PipelineConfig, limit: int = 50) -> list[dict[str, Any]]:
-    """Read recent execution log ticks for a pipeline config.
+def _parse_log_entries(log_path: Path, start_offset: int = 0) -> tuple[list[dict[str, Any]], int] | None:
+    """Parse JSONL log entries from ``start_offset`` to the end of the file.
 
-    Parses the pipeline's JSONL execution log (``config.log_file``, resolved
-    relative to ``config.workspace_dir``), groups entries by ``tick_id``, and
-    returns the most recent ``limit`` ticks (sorted by tick_start timestamp,
-    newest first).
+    Opens the file in text mode, seeks to ``start_offset``, and parses each
+    non-blank line as JSON. Invalid JSON and non-dict entries are skipped.
 
-    :param config: Pipeline config.
-    :param limit: Maximum number of ticks to return.
-    :returns: List of tick dicts, most recent first. Empty if no log file is
-        configured, the file is missing, or it contains no ticks.
+    :param log_path: Path to the JSONL log file.
+    :param start_offset: Byte offset to start reading from.
+    :returns: Tuple of (entries, new_offset) where new_offset is the file size
+        after reading, or None on OSError.
     """
-    if not config.log_file:
-        return []
-    log_path = Path(config.log_file)
-    if not log_path.is_absolute():
-        log_path = Path(config.workspace_dir) / log_path
-
-    cache_key = str(log_path)
-    if not log_path.is_file():
-        _log_ticks_cache.pop(cache_key, None)
-        return []
-
-    try:
-        stat = log_path.stat()
-    except OSError:
-        _log_ticks_cache.pop(cache_key, None)
-        return []
-    mtime = stat.st_mtime
-    size = stat.st_size
-
-    cached = _log_ticks_cache.get(cache_key)
-    if cached is not None:
-        cached_mtime, cached_size, cached_ticks = cached
-        if cached_mtime == mtime and cached_size == size:
-            return cached_ticks[:limit]
-
     entries: list[dict[str, Any]] = []
     try:
         with open(log_path, "r", encoding="utf-8") as f:
+            if start_offset:
+                f.seek(start_offset)
             for line in f:
                 line = line.strip()
                 if not line:
@@ -153,17 +129,24 @@ def _read_log_ticks(config: PipelineConfig, limit: int = 50) -> list[dict[str, A
                     continue
                 if isinstance(entry, dict):
                     entries.append(entry)
+            new_offset = os.fstat(f.fileno()).st_size
     except OSError:
-        _log_ticks_cache.pop(cache_key, None)
-        return []
+        return None
+    return entries, new_offset
 
-    ticks: dict[str, dict[str, Any]] = {}
+
+def _merge_entries_into_ticks(ticks_by_id: dict[str, dict[str, Any]], entries: list[dict[str, Any]]) -> None:
+    """Merge parsed log entries into an accumulated tick dict in place.
+
+    :param ticks_by_id: Existing mapping of tick_id to tick dict (mutated).
+    :param entries: New log entries to merge.
+    """
     for entry in entries:
         tick_id = entry.get("tick_id")
         if not tick_id:
             continue
-        if tick_id not in ticks:
-            ticks[tick_id] = {
+        if tick_id not in ticks_by_id:
+            ticks_by_id[tick_id] = {
                 "tick_id": tick_id,
                 "target": entry.get("target", ""),
                 "start_time": "",
@@ -177,7 +160,7 @@ def _read_log_ticks(config: PipelineConfig, limit: int = 50) -> list[dict[str, A
                 "dry_run": False,
                 "stages": [],
             }
-        tick = ticks[tick_id]
+        tick = ticks_by_id[tick_id]
         event = entry.get("event")
         if event == "tick_start":
             tick["start_time"] = entry.get("timestamp", "")
@@ -206,11 +189,72 @@ def _read_log_ticks(config: PipelineConfig, limit: int = 50) -> list[dict[str, A
                 "timestamp": entry.get("timestamp", ""),
             })
 
-    result = list(ticks.values())
-    result.sort(key=lambda t: t.get("start_time", ""), reverse=True)
-    result = result[:500]
-    _log_ticks_cache[cache_key] = (mtime, size, result)
-    return result[:limit]
+
+def _read_log_ticks(config: PipelineConfig, limit: int = 50) -> list[dict[str, Any]]:
+    """Read recent execution log ticks for a pipeline config.
+
+    Parses the pipeline's JSONL execution log (``config.log_file``, resolved
+    relative to ``config.workspace_dir``), groups entries by ``tick_id``, and
+    returns the most recent ``limit`` ticks (sorted by tick_start timestamp,
+    newest first). Reads incrementally so appended entries are parsed without
+    re-reading the entire file.
+
+    :param config: Pipeline config.
+    :param limit: Maximum number of ticks to return.
+    :returns: List of tick dicts, most recent first. Empty if no log file is
+        configured, the file is missing, or it contains no ticks.
+    """
+    if not config.log_file:
+        return []
+    log_path = Path(config.log_file)
+    if not log_path.is_absolute():
+        log_path = Path(config.workspace_dir) / log_path
+
+    cache_key = str(log_path)
+    if not log_path.is_file():
+        _log_ticks_cache.pop(cache_key, None)
+        return []
+
+    try:
+        stat = log_path.stat()
+    except OSError:
+        _log_ticks_cache.pop(cache_key, None)
+        return []
+    inode = stat.st_ino
+    mtime = stat.st_mtime
+    size = stat.st_size
+
+    def _finalize(ticks_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        result = list(ticks_by_id.values())
+        result.sort(key=lambda t: t.get("start_time", ""), reverse=True)
+        return result[:500]
+
+    cached = _log_ticks_cache.get(cache_key)
+    if cached is not None:
+        cached_inode, cached_mtime, cached_size, cached_offset, cached_ticks = cached
+        if cached_inode == inode and cached_mtime == mtime and cached_size == size:
+            return _finalize(cached_ticks)[:limit]
+
+        if cached_inode == inode and size > cached_size and cached_offset <= size:
+            parsed = _parse_log_entries(log_path, cached_offset)
+            if parsed is None:
+                _log_ticks_cache.pop(cache_key, None)
+                return []
+            new_entries, new_offset = parsed
+            merged = dict(cached_ticks)
+            _merge_entries_into_ticks(merged, new_entries)
+            _log_ticks_cache[cache_key] = (inode, mtime, size, new_offset, merged)
+            return _finalize(merged)[:limit]
+
+    parsed = _parse_log_entries(log_path, 0)
+    if parsed is None:
+        _log_ticks_cache.pop(cache_key, None)
+        return []
+    new_entries, new_offset = parsed
+    ticks_by_id: dict[str, dict[str, Any]] = {}
+    _merge_entries_into_ticks(ticks_by_id, new_entries)
+    _log_ticks_cache[cache_key] = (inode, mtime, size, new_offset, ticks_by_id)
+    return _finalize(ticks_by_id)[:limit]
 
 
 def _active_stages(config: PipelineConfig, mode: str | None) -> list:
