@@ -460,6 +460,26 @@ def _iter_task_dirs() -> list[Path]:
     return result
 
 
+def _task_dir_belongs_to_repo(task_dir_name: str, repo_name: str) -> bool:
+    """Return True if a task dir name belongs to the given repo.
+
+    Task dir names use the format ``{date}_{safe_repo}_{task_id}`` where
+    ``date`` is an 8-digit ``YYYYMMDD`` string. The repo slug is matched via a
+    trailing-underscore prefix check so that e.g. ``my-repo`` does not match a
+    dir belonging to ``my-repo-extra``.
+
+    :param task_dir_name: Task directory name.
+    :param repo_name: Repo name to match.
+    :returns: True if the directory belongs to the repo.
+    """
+    safe_repo = _safe_slug(repo_name)
+    parts = task_dir_name.split("_", 1)
+    if len(parts) < 2:
+        return False
+    rest = parts[1]
+    return rest.startswith(f"{safe_repo}_") and len(rest) > len(safe_repo) + 1
+
+
 def _cleanup_stale_task(repo_dir: Path, task_dir: Path, repo_name: str,
                         verbose: bool = False) -> bool:
     """Clean up a stale task: reset git state, reset issue, delete task dir.
@@ -484,8 +504,7 @@ def _cleanup_stale_task(repo_dir: Path, task_dir: Path, repo_name: str,
     else:
         # No repo_name in task.json — fall back to the directory name.
         # Format: {date}_{safe_repo}_{task_id}
-        parts = task_dir.name.split("_", 1)
-        if len(parts) < 2 or parts[1].split("_", 1)[0] != _safe_slug(repo_name):
+        if not _task_dir_belongs_to_repo(task_dir.name, repo_name):
             print(f"  [task] ERROR: cannot verify task at {task_dir} belongs to "
                   f"repo '{repo_name}' — refusing cleanup")
             return False
@@ -550,7 +569,6 @@ def _cleanup_orphaned_task_dirs(repo_name: str, verbose: bool = False) -> None:
     :param repo_name: Repo name to match.
     :param verbose: If True, print progress.
     """
-    safe_repo = _safe_slug(repo_name)
     for task_dir in _iter_task_dirs():
         task_file = task_dir / TASK_FILE
         if task_file.exists():
@@ -559,11 +577,7 @@ def _cleanup_orphaned_task_dirs(repo_name: str, verbose: bool = False) -> None:
                 continue  # valid task.json - keep
             except (OSError, json.JSONDecodeError):
                 pass  # corrupt/unreadable - fall through to cleanup
-        parts = task_dir.name.split("_", 1)
-        if len(parts) < 2:
-            continue
-        repo_part = parts[1].split("_", 1)[0]
-        if repo_part != safe_repo:
+        if not _task_dir_belongs_to_repo(task_dir.name, repo_name):
             continue
         if verbose:
             reason = f"no {TASK_FILE}" if not task_file.exists() else f"corrupt {TASK_FILE}"

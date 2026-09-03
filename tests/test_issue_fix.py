@@ -896,6 +896,26 @@ class TestCleanupStaleTask:
         assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
         assert not task_dir.exists()
 
+    def test_cleans_repo_with_underscores(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_ipfs_dict_chain_iss1"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, "ipfs_dict_chain", verbose=True) is True
+        assert not task_dir.exists()
+
+    def test_refuses_repo_with_underscore_prefix_mismatch(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_ipfs_other_iss1"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, "ipfs_dict_chain") is False
+        assert task_dir.exists()
+
     def test_rmtree_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
         """Covers the containment check failure path."""
         target = _make_target_dir(tmp_path)
@@ -1099,6 +1119,30 @@ class TestCleanupOrphanedTaskDirs:
         remove.mkdir(parents=True)
         monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
         _cleanup_orphaned_task_dirs("my-repo")
+        assert keep.exists()
+        assert not remove.exists()
+
+    def test_removes_orphaned_repo_with_underscores(self, tmp_path, monkeypatch):
+        td = tmp_path / "2025-01-01" / "20250101_ipfs_dict_chain_iss1"
+        td.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("ipfs_dict_chain")
+        assert not td.exists()
+
+    def test_keeps_orphaned_dir_of_repo_with_underscore_prefix(self, tmp_path, monkeypatch):
+        td = tmp_path / "2025-01-01" / "20250101_ipfs_other_iss1"
+        td.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("ipfs_dict_chain")
+        assert td.exists()
+
+    def test_removes_matching_underscore_repo_after_prefix_check(self, tmp_path, monkeypatch):
+        keep = tmp_path / "2025-01-01" / "20250101_ipfs_other_iss1"
+        keep.mkdir(parents=True)
+        remove = tmp_path / "2025-01-01" / "20250101_ipfs_dict_chain_iss1"
+        remove.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("ipfs_dict_chain")
         assert keep.exists()
         assert not remove.exists()
 
