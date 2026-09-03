@@ -1094,6 +1094,12 @@ class TestGitIssueAlreadyIngested:
         issue_path.write_text(_long_frontmatter({"source": "github", "github_number": "1"}) + "# Issue\n")
         assert _git_issue_already_ingested(target, 1) is True
 
+    def test_quoted_github_number_is_detected(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "github-42.md"
+        issue_path.write_text('---\nsource: github\ngithub_number: "42"\n---\n# Issue\n')
+        assert _git_issue_already_ingested(target, 42) is True
+
 
 # ─── detect_b1_issue_gathering ──────────────────────────────────────────────
 

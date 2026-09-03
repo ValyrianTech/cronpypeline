@@ -893,7 +893,7 @@ def _git_issue_already_ingested(target_dir: Path, gh_number: int) -> bool:
             continue
         if fm.get("source") != "github":
             continue
-        if fm.get("github_number") == gh_number:
+        if str(fm.get("github_number", "")) == str(gh_number):
             return True
     return False
 
