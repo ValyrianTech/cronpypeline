@@ -402,21 +402,25 @@ class Pipeline:
         try:
             return self._tick_inner(targets, target_config_map, dry_run, verbose)
         except PipelineTickError as e:
-            return TickResult(
+            result = TickResult(
                 target=e.target,
                 stage_id=None,
                 status=TickResultStatus.ACTION_FAILED,
                 message=f"Unhandled {type(e.original).__name__}: {e.original}",
                 stderr=traceback.format_exc(),
             )
+            self._log_tick_end(result)
+            return result
         except Exception as e:  # noqa: BLE001
-            return TickResult(
+            result = TickResult(
                 target=target or "*",
                 stage_id=None,
                 status=TickResultStatus.ACTION_FAILED,
                 message=f"Unhandled {type(e).__name__}: {e}",
                 stderr=traceback.format_exc(),
             )
+            self._log_tick_end(result)
+            return result
         finally:
             self.lock.release()
 
@@ -457,13 +461,15 @@ class Pipeline:
                     if result.status != TickResultStatus.NO_WORK:
                         results.append(result)
                 except Exception as e:  # noqa: BLE001
-                    results.append(TickResult(
+                    result = TickResult(
                         target=t,
                         stage_id=None,
                         status=TickResultStatus.ACTION_FAILED,
                         message=f"Unhandled {type(e).__name__}: {e}",
                         stderr=traceback.format_exc(),
-                    ))
+                    )
+                    self._log_tick_end(result)
+                    results.append(result)
             return results
         finally:
             self.lock.release()
