@@ -5961,6 +5961,47 @@ class TestRunCPrStatusAlreadyHandled:
         assert result.success is True
         assert result.data["pr_state"] == "open"
 
+    def test_filed_issue_done_with_long_frontmatter_pushes(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7, "pr_state": "changes_requested",
+            "last_review_id": 400, "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 1,
+        }))
+        (target / ".SWE" / "issues" / "pr-revision-7-1.md").write_text(
+            _long_frontmatter({"status": "done"}) + "# Done\n"
+        )
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]), \
+             patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="abc12345"), \
+             patch("cronpypeline.plugins.swe_plugin.subprocess.run",
+                   return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+
+    def test_filed_issue_not_done_with_long_frontmatter_idles(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7, "pr_state": "changes_requested",
+            "last_review_id": 500, "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 1,
+        }))
+        (target / ".SWE" / "issues" / "pr-revision-7-1.md").write_text(
+            _long_frontmatter({"status": "open"}) + "# Not done\n"
+        )
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 500, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+
 
 class TestParsePipAuditVulnerabilitiesEmptyLine:
     def test_breaks_on_empty_line_after_header(self):

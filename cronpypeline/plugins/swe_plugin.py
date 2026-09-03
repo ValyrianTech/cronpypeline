@@ -2107,9 +2107,8 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
             for issue_id in pr_data.get("filed_issues", []):
                 issue_path = target_dir / SWE_SUBDIR / "issues" / f"{issue_id}.md"
                 if issue_path.exists():
-                    head = issue_path.read_text(encoding="utf-8")[:500]
-                    sm = re.search(r"(?m)^status:\s*(\S+)", head)
-                    if (sm.group(1) if sm else "") not in ("done", "discarded"):
+                    fm, _ = parse_frontmatter(issue_path.read_text(encoding="utf-8"))
+                    if fm.get("status") not in ("done", "discarded"):
                         all_done = False
                         break
                 else:
