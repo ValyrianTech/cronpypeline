@@ -150,6 +150,19 @@ def _make_tick_context(
     )
 
 
+def _long_frontmatter(extra_fields: dict[str, str], pad_key: str = "padding") -> str:
+    """Create frontmatter text where the given fields appear after 800+ chars."""
+    lines = ["---"]
+    # Add many padding fields to push content past 800 chars
+    for i in range(50):
+        lines.append(f"{pad_key}_{i}: value_{i}")
+    # Add the actual fields
+    for k, v in extra_fields.items():
+        lines.append(f"{k}: {v}")
+    lines.append("---")
+    return "\n".join(lines) + "\n"
+
+
 # ─── detect_deadcode_trigger ────────────────────────────────────────────────
 
 
@@ -1075,6 +1088,12 @@ class TestGitIssueAlreadyIngested:
         issue_path.write_text("no frontmatter here")
         assert _git_issue_already_ingested(target, 1) is False
 
+    def test_finds_issue_with_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "github-1.md"
+        issue_path.write_text(_long_frontmatter({"source": "github", "github_number": "1"}) + "# Issue\n")
+        assert _git_issue_already_ingested(target, 1) is True
+
 
 # ─── detect_b1_issue_gathering ──────────────────────────────────────────────
 
@@ -1345,6 +1364,12 @@ class TestCountOpenReviewIssues:
         issue_path.write_text("no frontmatter")
         assert _count_open_review_issues(target) == 0
 
+    def test_counts_open_review_with_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "review-1.md"
+        issue_path.write_text(_long_frontmatter({"status": "open", "source": "review"}) + "# Review\n")
+        assert _count_open_review_issues(target) == 1
+
 
 # ─── detect_c_review_ranking ────────────────────────────────────────────────
 
@@ -1568,6 +1593,12 @@ class TestOpenIssueCount:
         issue_path = target / ".SWE" / "issues" / "bad.md"
         issue_path.write_text("no frontmatter")
         assert _open_issue_count(target) == 0
+
+    def test_counts_open_with_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "i1.md"
+        issue_path.write_text(_long_frontmatter({"status": "open"}) + "# Issue\n")
+        assert _open_issue_count(target) == 1
 
 
 # ─── _a1_is_pass ────────────────────────────────────────────────────────────
@@ -1865,6 +1896,17 @@ class TestBuildPrBody:
         body = _build_pr_body(target, "repo", "main")
         assert "90%" in body
 
+    def test_counts_done_issues_with_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        for i, itype in enumerate(["bug", "refactor", "enhancement"]):
+            issue_path = target / ".SWE" / "issues" / f"i{i}.md"
+            issue_path.write_text(_long_frontmatter({"status": "done", "type": itype}) + "# Issue\n")
+        body = _build_pr_body(target, "repo", "main")
+        assert "1 bugs" in body
+        assert "1 refactors" in body
+        assert "1 enhancements" in body
+        assert "3 issues fixed" in body
+
 
 # ─── _build_doc_sync_prompt ─────────────────────────────────────────────────
 
@@ -2033,6 +2075,12 @@ class TestCountDoneReviewIssues:
         issue_path.write_text("no frontmatter")
         assert _count_done_review_issues(target) == 0
 
+    def test_counts_done_review_with_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "review-abc12345.md"
+        issue_path.write_text(_long_frontmatter({"status": "done", "type": "review"}) + "# Review\n")
+        assert _count_done_review_issues(target) == 1
+
 
 # ─── _find_previous_review_sha ──────────────────────────────────────────────
 
@@ -2067,6 +2115,12 @@ class TestFindPreviousReviewSha:
         issue_path = target / ".SWE" / "issues" / "review-badname.md"
         issue_path.write_text("---\nstatus: done\ntype: review\n---\n# Review\n")
         assert _find_previous_review_sha(target) is None
+
+    def test_returns_sha_with_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "review-abc12345.md"
+        issue_path.write_text(_long_frontmatter({"status": "done", "type": "review"}) + "# Review\n")
+        assert _find_previous_review_sha(target) == "abc12345"
 
 
 # ─── detect_c_coverage_issue ────────────────────────────────────────────────
@@ -2149,6 +2203,28 @@ class TestDetectCCoverageIssue:
         issue_id = f"coverage-{sha[:8]}"
         issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
         issue_path.write_text("---\nstatus: discarded\n---\n# Coverage\n")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_coverage_issue(ctx) is True
+
+    def test_does_not_fire_when_existing_non_discarded_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_passing(target, pct=80.0)
+        self._setup_git(target)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"coverage-{sha[:8]}"
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.write_text(_long_frontmatter({"status": "open"}) + "# Coverage\n")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_coverage_issue(ctx) is False
+
+    def test_fires_when_existing_discarded_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_passing(target, pct=80.0)
+        self._setup_git(target)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"coverage-{sha[:8]}"
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.write_text(_long_frontmatter({"status": "discarded"}) + "# Coverage\n")
         ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
         assert detect_c_coverage_issue(ctx) is True
 
@@ -2295,6 +2371,28 @@ class TestDetectCReviewIssue:
         issue_id = f"review-{sha[:8]}"
         issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
         issue_path.write_text("---\nstatus: discarded\n---\n# Review\n")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_review_issue(ctx) is True
+
+    def test_does_not_fire_when_existing_non_discarded_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_passing_with_coverage(target)
+        self._setup_git(target)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"review-{sha[:8]}"
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.write_text(_long_frontmatter({"status": "open"}) + "# Review\n")
+        ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
+        assert detect_c_review_issue(ctx) is False
+
+    def test_fires_when_existing_discarded_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_passing_with_coverage(target)
+        self._setup_git(target)
+        sha = integration_head_sha(target, "main")
+        issue_id = f"review-{sha[:8]}"
+        issue_path = target / ".SWE" / "issues" / f"{issue_id}.md"
+        issue_path.write_text(_long_frontmatter({"status": "discarded"}) + "# Review\n")
         ctx = {"target_dir": str(target), "target_config": {"default_branch": "main"}}
         assert detect_c_review_issue(ctx) is True
 
@@ -5987,6 +6085,12 @@ class TestHasOpenCoverageIssues:
         issue_path.write_text("---\nstatus: open\ntype: coverage\n---\n# Coverage\n")
         with patch("pathlib.Path.read_text", side_effect=OSError("permission denied")):
             assert _has_open_coverage_issues(target) is False
+
+    def test_true_with_long_frontmatter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        issue_path = target / ".SWE" / "issues" / "cov1.md"
+        issue_path.write_text(_long_frontmatter({"status": "open", "type": "coverage"}) + "# Coverage\n")
+        assert _has_open_coverage_issues(target) is True
 
 
 class TestShouldBlockOnOpenIssues:

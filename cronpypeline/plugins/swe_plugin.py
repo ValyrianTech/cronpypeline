@@ -885,16 +885,15 @@ def _git_issue_already_ingested(target_dir: Path, gh_number: int) -> bool:
         return False
     for path in sorted(issues_dir.glob("*.md")):
         try:
-            head = path.read_text(encoding="utf-8")[:800]
+            text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if not head.startswith("---"):
+        fm, _ = parse_frontmatter(text)
+        if not fm:
             continue
-        sm = re.search(r"(?m)^source:\s*(\S+)", head)
-        if not sm or sm.group(1) != "github":
+        if fm.get("source") != "github":
             continue
-        nm = re.search(r"(?m)^github_number:\s*(\d+)", head)
-        if nm and int(nm.group(1)) == gh_number:
+        if fm.get("github_number") == gh_number:
             return True
     return False
 
@@ -1081,16 +1080,15 @@ def _count_open_review_issues(target_dir: Path) -> int:
         return 0
     for path in sorted(issues_dir.glob("*.md")):
         try:
-            head = path.read_text(encoding="utf-8")[:800]
+            text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if not head.startswith("---"):
+        fm, _ = parse_frontmatter(text)
+        if not fm:
             continue
-        sm = re.search(r"(?m)^status:\s*(\S+)", head)
-        if not sm or sm.group(1) != "open":
+        if fm.get("status") != "open":
             continue
-        sm = re.search(r"(?m)^source:\s*(\S+)", head)
-        if not sm or sm.group(1) != "review":
+        if fm.get("source") != "review":
             continue
         count += 1
     return count
@@ -1356,17 +1354,16 @@ def _open_issue_count(target_dir: Path) -> int:
         return 0
     for path in sorted(issues_dir.glob("*.md")):
         try:
-            head = path.read_text(encoding="utf-8")[:800]
+            text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if not head.startswith("---"):
+        fm, _ = parse_frontmatter(text)
+        if not fm:
             continue
-        sm = re.search(r"(?m)^status:\s*(\S+)", head)
-        if not sm or sm.group(1) != "open":
+        if fm.get("status") != "open":
             continue
         if github_only:
-            sm2 = re.search(r"(?m)^source:\s*(\S+)", head)
-            if not sm2 or sm2.group(1) != "github":
+            if fm.get("source") != "github":
                 continue
         count += 1
     return count
@@ -1469,16 +1466,15 @@ def _has_open_coverage_issues(target_dir: Path) -> bool:
         return False
     for path in sorted(issues_dir.glob("*.md")):
         try:
-            head = path.read_text(encoding="utf-8")[:800]
+            text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if not head.startswith("---"):
+        fm, _ = parse_frontmatter(text)
+        if not fm:
             continue
-        sm = re.search(r"(?m)^status:\s*(\S+)", head)
-        if not sm or sm.group(1) != "open":
+        if fm.get("status") != "open":
             continue
-        tm = re.search(r"(?m)^type:\s*(\S+)", head)
-        if tm and tm.group(1).strip().lower() == "coverage":
+        if str(fm.get("type", "")).strip().lower() == "coverage":
             return True
     return False
 
@@ -1626,16 +1622,15 @@ def _count_done_issues(target_dir: Path) -> tuple[int, int, int]:
     if issues_dir.is_dir():
         for path in sorted(issues_dir.glob("*.md")):
             try:
-                head = path.read_text(encoding="utf-8")[:800]
+                text = path.read_text(encoding="utf-8")
             except OSError:
                 continue
-            if not head.startswith("---"):
+            fm, _ = parse_frontmatter(text)
+            if not fm:
                 continue
-            sm = re.search(r"(?m)^status:\s*(\S+)", head)
-            if not sm or sm.group(1) != "done":
+            if fm.get("status") != "done":
                 continue
-            tm = re.search(r"(?m)^type:\s*(\S+)", head)
-            itype = tm.group(1) if tm else ""
+            itype = fm.get("type", "")
             if itype == "bug":
                 bug_count += 1
             elif itype == "refactor":
@@ -2196,9 +2191,9 @@ def detect_c_coverage_issue(context: dict[str, Any]) -> bool:
     existing = _find_issue_by_id(target_dir, issue_id)
     if existing is not None:
         try:
-            head = existing.read_text(encoding="utf-8")[:800]
-            sm = re.search(r"(?m)^status:\s*(\S+)", head)
-            if sm and sm.group(1) != "discarded":
+            text = existing.read_text(encoding="utf-8")
+            fm, _ = parse_frontmatter(text)
+            if fm.get("status") not in (None, "discarded"):
                 return False
         except OSError:
             pass
@@ -2591,21 +2586,20 @@ def _count_done_review_issues(
         return 0
     for path in sorted(issues_dir.glob("*.md")):
         try:
-            head = path.read_text(encoding="utf-8")[:800]
+            text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if not head.startswith("---"):
+        fm, _ = parse_frontmatter(text)
+        if not fm:
             continue
-        sm = re.search(r"(?m)^status:\s*(\S+)", head)
-        if not sm or sm.group(1) != "done":
+        if fm.get("status") != "done":
             continue
-        tm = re.search(r"(?m)^type:\s*(\S+)", head)
-        if not tm or tm.group(1) != "review":
+        if fm.get("type") != "review":
             continue
         if since_dt is not None:
-            cm = re.search(r"(?m)^created_at:\s*(.+)", head)
-            if cm:
-                created = _parse_utc_datetime(cm.group(1).strip())
+            created_raw = fm.get("created_at")
+            if created_raw:
+                created = _parse_utc_datetime(str(created_raw).strip())
                 if created is not None and created < since_dt:
                     continue
         count += 1
@@ -2632,21 +2626,20 @@ def _find_previous_review_sha(
         return None
     for path in sorted(issues_dir.glob("*.md")):
         try:
-            head = path.read_text(encoding="utf-8")[:800]
+            text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if not head.startswith("---"):
+        fm, _ = parse_frontmatter(text)
+        if not fm:
             continue
-        sm = re.search(r"(?m)^status:\s*(\S+)", head)
-        if not sm or sm.group(1) != "done":
+        if fm.get("status") != "done":
             continue
-        tm = re.search(r"(?m)^type:\s*(\S+)", head)
-        if not tm or tm.group(1) != "review":
+        if fm.get("type") != "review":
             continue
         if since_dt is not None:
-            cm = re.search(r"(?m)^created_at:\s*(.+)", head)
-            if cm:
-                created = _parse_utc_datetime(cm.group(1).strip())
+            created_raw = fm.get("created_at")
+            if created_raw:
+                created = _parse_utc_datetime(str(created_raw).strip())
                 if created is None:
                     continue
                 if created < since_dt or (best_created is not None and created <= best_created):
@@ -2751,9 +2744,9 @@ def detect_c_review_issue(context: dict[str, Any]) -> bool:
     existing = _find_issue_by_id(target_dir, issue_id)
     if existing is not None:
         try:
-            head = existing.read_text(encoding="utf-8")[:800]
-            sm = re.search(r"(?m)^status:\s*(\S+)", head)
-            if sm and sm.group(1) != "discarded":
+            text = existing.read_text(encoding="utf-8")
+            fm, _ = parse_frontmatter(text)
+            if fm.get("status") not in (None, "discarded"):
                 return False
         except OSError:
             pass
