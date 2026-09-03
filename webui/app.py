@@ -26,6 +26,11 @@ HERE = Path(__file__).resolve().parent
 CONFIGS_DIR = Path(os.environ.get("CRONPYPELINE_CONFIGS_DIR", HERE.parent / "configs")).resolve()
 WEBUI_TOKEN = os.environ.get("CRONPYPELINE_WEBUI_TOKEN", "")
 
+# Cache for parsed log ticks, keyed by resolved log file path.
+# Value: (mtime, size, sorted_ticks_list) where sorted_ticks_list is bounded to
+# the most recent 500 ticks.
+_log_ticks_cache: dict[str, tuple[float, int, list[dict[str, Any]]]] = {}
+
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -115,8 +120,25 @@ def _read_log_ticks(config: PipelineConfig, limit: int = 50) -> list[dict[str, A
     log_path = Path(config.log_file)
     if not log_path.is_absolute():
         log_path = Path(config.workspace_dir) / log_path
+
+    cache_key = str(log_path)
     if not log_path.is_file():
+        _log_ticks_cache.pop(cache_key, None)
         return []
+
+    try:
+        stat = log_path.stat()
+    except OSError:
+        _log_ticks_cache.pop(cache_key, None)
+        return []
+    mtime = stat.st_mtime
+    size = stat.st_size
+
+    cached = _log_ticks_cache.get(cache_key)
+    if cached is not None:
+        cached_mtime, cached_size, cached_ticks = cached
+        if cached_mtime == mtime and cached_size == size:
+            return cached_ticks[:limit]
 
     entries: list[dict[str, Any]] = []
     try:
@@ -132,6 +154,7 @@ def _read_log_ticks(config: PipelineConfig, limit: int = 50) -> list[dict[str, A
                 if isinstance(entry, dict):
                     entries.append(entry)
     except OSError:
+        _log_ticks_cache.pop(cache_key, None)
         return []
 
     ticks: dict[str, dict[str, Any]] = {}
@@ -185,6 +208,8 @@ def _read_log_ticks(config: PipelineConfig, limit: int = 50) -> list[dict[str, A
 
     result = list(ticks.values())
     result.sort(key=lambda t: t.get("start_time", ""), reverse=True)
+    result = result[:500]
+    _log_ticks_cache[cache_key] = (mtime, size, result)
     return result[:limit]
 
 
