@@ -413,8 +413,25 @@ _HTTP_OPENER = urllib.request.build_opener(
     _PinnedHTTPSHandler(),
 )
 _MAX_REDIRECTS = 5
-_SENSITIVE_HEADER_PREFIXES = ("x-",)
 _SENSITIVE_HEADERS = {"authorization", "cookie", "proxy-authorization"}
+_SENSITIVE_HEADER_KEYWORDS = ("auth", "token", "key", "secret", "credential", "password")
+
+
+def _is_sensitive_header(name: str) -> bool:
+    """Return True if a header name indicates it may carry credentials.
+
+    A header is considered sensitive when its lowercase name is one of the
+    well-known credential headers in ``_SENSITIVE_HEADERS`` or when it
+    contains a credential-related keyword such as ``auth``, ``token``,
+    ``key``, ``secret``, ``credential``, or ``password``.
+
+    :param name: Header name to inspect.
+    :returns: ``True`` if the header may carry credentials, else ``False``.
+    """
+    lowered = name.lower()
+    if lowered in _SENSITIVE_HEADERS:
+        return True
+    return any(keyword in lowered for keyword in _SENSITIVE_HEADER_KEYWORDS)
 
 
 def format_template(template: str, variables: dict[str, Any]) -> str:
@@ -822,8 +839,7 @@ class HttpRequestActionHandler(ActionHandler):
                     if redirect_parsed.netloc != original_parsed.netloc:
                         headers = {
                             k: v for k, v in headers.items()
-                            if k.lower() not in _SENSITIVE_HEADERS
-                            and not k.lower().startswith(_SENSITIVE_HEADER_PREFIXES)
+                            if not _is_sensitive_header(k)
                         }
                     # Match urllib's default redirect behavior for method/body
                     if e.code in (301, 302, 303) and method == "POST":

@@ -1825,6 +1825,57 @@ class TestHttpRequestActionHandlerRedirects:
         assert second_req.get_header("Content-type") == "application/json"
         assert second_req.get_header("Accept") == "application/json"
 
+    def test_redirect_to_different_host_keeps_non_credential_x_headers(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={
+                "X-Forwarded-For": "1.2.3.4",
+                "X-Request-ID": "req-123",
+                "X-Content-Type-Options": "nosniff",
+            },
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("X-forwarded-for") == "1.2.3.4"
+        assert second_req.get_header("X-request-id") == "req-123"
+        assert second_req.get_header("X-content-type-options") == "nosniff"
+
+    def test_redirect_to_different_host_strips_custom_credential_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"X-Custom-Api-Key": "secret-key", "X-Secret-Token": "secret-token"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("X-custom-api-key") is None
+        assert second_req.get_header("X-secret-token") is None
+
     def test_redirect_to_same_host_keeps_sensitive_headers(self, tmp_path):
         action = self._action(
             "http://example.com/start",
