@@ -764,7 +764,7 @@ class Pipeline:
                     self._log_stage(stage, "skipped")
         else:
             for stage in active_stages:
-                candidate: StageState | None = target_state.stage_states.get(stage.id)
+                candidate = target_state.stage_states.get(stage.id)
                 if candidate is None:
                     self._log_stage(stage, "no_state")
                     continue
@@ -822,30 +822,30 @@ class Pipeline:
             pipeline=self,
         )
         start_time = time.monotonic()
-        result = execute_action(stage.action, ctx)
+        action_result = execute_action(stage.action, ctx)
         duration_ms = int((time.monotonic() - start_time) * 1000)
 
-        if result.success:
+        if action_result.success:
             self._current_tick_actions_executed += 1
             self._log_stage(stage, "action_executed", duration_ms=duration_ms,
-                            stdout=result.stdout, stderr=result.stderr,
-                            action_command=result.command)
+                            stdout=action_result.stdout, stderr=action_result.stderr,
+                            action_command=action_result.command)
         else:
             self._current_tick_failures += 1
             self._log_stage(stage, "action_failed", duration_ms=duration_ms,
-                            stdout=result.stdout, stderr=result.stderr,
-                            action_command=result.command)
+                            stdout=action_result.stdout, stderr=action_result.stderr,
+                            action_command=action_result.command)
 
         # Update processing marker with result data (for stale detection and tracking)
-        if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers and result.success and result.data:
+        if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers and action_result.success and action_result.data:
             processing_spec = replace(stage.markers["processing"], content={
                 **stage.markers["processing"].content,
                 "retry_count": retry_count,
-                **result.data,
+                **action_result.data,
             })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
-        if not result.success:
+        if not action_result.success:
             # Run on_fail if configured
             if stage.on_fail:
                 fail_ctx = TickContext(
@@ -861,9 +861,9 @@ class Pipeline:
                 target=target,
                 stage_id=stage.id,
                 status=TickResultStatus.ACTION_FAILED,
-                message=f"Action failed: {result.stderr or result.stdout}",
-                stdout=result.stdout,
-                stderr=result.stderr,
+                message=f"Action failed: {action_result.stderr or action_result.stdout}",
+                stdout=action_result.stdout,
+                stderr=action_result.stderr,
             )
             self._log_tick_end(result_tick)
             return result_tick
@@ -878,7 +878,7 @@ class Pipeline:
         if (
             stage.action.type != ActionType.QUEUE_AGENT
             and "completion" in stage.markers
-            and not result.data.get("async", False)
+            and not action_result.data.get("async", False)
             and not (
                 stage.markers["completion"].type == MarkerType.SYMLINK
                 and stage.markers["completion"].target is None
@@ -894,13 +894,13 @@ class Pipeline:
         if (
             stage.action.type == ActionType.CUSTOM
             and "processing" in stage.markers
-            and result.success
-            and result.data.get("async", False)
+            and action_result.success
+            and action_result.data.get("async", False)
         ):
             processing_spec = replace(stage.markers["processing"], content={
                 **stage.markers["processing"].content,
                 "retry_count": 0,
-                **result.data,
+                **action_result.data,
             })
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
@@ -913,7 +913,7 @@ class Pipeline:
         if (
             stage.chain
             and stage.action.type != ActionType.QUEUE_AGENT
-            and not result.data.get("async", False)
+            and not action_result.data.get("async", False)
         ):
             chained_result = self._try_chain(target, target_dir, target_config, target_state, active_stages, dry_run, verbose, stage)
             if chained_result:
@@ -947,7 +947,7 @@ class Pipeline:
             stage_id=stage.id,
             status=TickResultStatus.ACTION_EXECUTED,
             message=f"Executed {stage.name}",
-            stdout=result.stdout,
+            stdout=action_result.stdout,
             chained_stages=chained,
         )
         self._log_tick_end(result_tick)
@@ -1181,21 +1181,21 @@ class Pipeline:
             pipeline=self,
         )
         start_time = time.monotonic()
-        result = execute_action(stage.action, ctx)
+        action_result = execute_action(stage.action, ctx)
         duration_ms = int((time.monotonic() - start_time) * 1000)
 
-        if result.success:
+        if action_result.success:
             self._current_tick_actions_executed += 1
             self._log_stage(stage, "action_executed", duration_ms=duration_ms,
-                            stdout=result.stdout, stderr=result.stderr,
-                            action_command=result.command)
+                            stdout=action_result.stdout, stderr=action_result.stderr,
+                            action_command=action_result.command)
         else:
             self._current_tick_failures += 1
             self._log_stage(stage, "action_failed", duration_ms=duration_ms,
-                            stdout=result.stdout, stderr=result.stderr,
-                            action_command=result.command)
+                            stdout=action_result.stdout, stderr=action_result.stderr,
+                            action_command=action_result.command)
 
-        if not result.success:
+        if not action_result.success:
             # Run on_fail if configured
             if stage.on_fail:
                 fail_ctx = TickContext(
@@ -1211,28 +1211,28 @@ class Pipeline:
                 target=target,
                 stage_id=stage.id,
                 status=TickResultStatus.ACTION_FAILED,
-                message=f"Action failed: {result.stderr or result.stdout}",
-                stdout=result.stdout,
-                stderr=result.stderr,
+                message=f"Action failed: {action_result.stderr or action_result.stdout}",
+                stdout=action_result.stdout,
+                stderr=action_result.stderr,
             )
 
         # Update processing marker with result data, or delete it for sync actions
-        if result.success and "processing" in stage.markers:
+        if action_result.success and "processing" in stage.markers:
             is_async = (
                 stage.action.type == ActionType.QUEUE_AGENT
-                or (stage.action.type == ActionType.CUSTOM and result.data.get("async", False))
+                or (stage.action.type == ActionType.CUSTOM and action_result.data.get("async", False))
             )
             if is_async:
                 # Async custom actions are treated as a fresh start (retry_count reset to 0),
                 # matching the normal execution path.
                 new_retry_count = 0 if (
                     stage.action.type == ActionType.CUSTOM
-                    and result.data.get("async", False)
+                    and action_result.data.get("async", False)
                 ) else retry_count + 1
                 processing_spec = replace(stage.markers["processing"], content={
                     **stage.markers["processing"].content,
                     "retry_count": new_retry_count,
-                    **result.data,
+                    **action_result.data,
                 })
                 create_marker(processing_spec, target_dir, context=marker_ctx)
             else:
@@ -1250,7 +1250,7 @@ class Pipeline:
         if (
             stage.action.type != ActionType.QUEUE_AGENT
             and "completion" in stage.markers
-            and not result.data.get("async", False)
+            and not action_result.data.get("async", False)
             and not (
                 stage.markers["completion"].type == MarkerType.SYMLINK
                 and stage.markers["completion"].target is None
@@ -1271,7 +1271,7 @@ class Pipeline:
         if (
             stage.chain
             and stage.action.type != ActionType.QUEUE_AGENT
-            and not result.data.get("async", False)
+            and not action_result.data.get("async", False)
         ):
             chained_result = self._try_chain(target, target_dir, target_config, target_state, active_stages, dry_run, verbose, stage)
             if chained_result:
@@ -1301,7 +1301,7 @@ class Pipeline:
             stage_id=stage.id,
             status=TickResultStatus.ACTION_EXECUTED,
             message=f"Re-queued stale stage (retry {retry_count + 1})",
-            stdout=result.stdout,
+            stdout=action_result.stdout,
             chained_stages=chained,
         )
 
