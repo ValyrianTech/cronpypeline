@@ -10,6 +10,7 @@ import fnmatch
 import http.client
 import ipaddress
 import os
+import re
 import shlex
 import socket
 import ssl
@@ -423,7 +424,12 @@ def _is_sensitive_header(name: str) -> bool:
     A header is considered sensitive when its lowercase name is one of the
     well-known credential headers in ``_SENSITIVE_HEADERS`` or when it
     contains a credential-related keyword such as ``auth``, ``token``,
-    ``key``, ``secret``, ``credential``, or ``password``.
+    ``key``, ``secret``, ``credential``, or ``password`` as a whole word.
+
+    Keyword matching uses word boundaries so that a keyword appearing only as
+    a substring of a larger word (e.g. ``key`` in ``monkey`` or ``keyless``)
+    does not flag a header as sensitive. Hyphens and other non-word characters
+    act as boundaries, so ``x-api-key`` is still flagged.
 
     :param name: Header name to inspect.
     :returns: ``True`` if the header may carry credentials, else ``False``.
@@ -431,7 +437,10 @@ def _is_sensitive_header(name: str) -> bool:
     lowered = name.lower()
     if lowered in _SENSITIVE_HEADERS:
         return True
-    return any(keyword in lowered for keyword in _SENSITIVE_HEADER_KEYWORDS)
+    return any(
+        re.search(r"\b" + re.escape(keyword) + r"\b", lowered)
+        for keyword in _SENSITIVE_HEADER_KEYWORDS
+    )
 
 
 def format_template(template: str, variables: dict[str, Any]) -> str:
