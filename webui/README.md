@@ -23,6 +23,11 @@ tick loop checks).
   from `.SWE/issues/*.md` — the detail panel for PR-related stages shows the
   raw PR/session JSON
 - Auto-refresh via polling every 4 seconds
+- Recent Activity section listing recent execution-log ticks (fetched from the
+  `/api/log` endpoint) with expandable per-stage details — tick ID, target,
+  final status, duration, stage/action/failure counts, dry-run flag, and
+  per-stage result badges showing `action_command`, `stdout`, and `stderr`.
+  Requires the pipeline config to set `log_file`.
 
 ## Setup
 

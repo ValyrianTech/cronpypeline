@@ -29,6 +29,7 @@
 - **SWE pipeline plugins**: Issue store (YAML frontmatter), diagnostic report handlers with output parsers, prompt builders for fix/coder/review agents, GitHub session adapter.
 - **VNN pipeline plugins**: Story state sync, inconsistent state cleanup, global queue-empty gate, completed compilation checks, story discovery, rejection audit trail.
 - **Crash-safe**: If a process is killed mid-tick, the next tick re-derives state from whatever markers were already written.
+- **Execution log**: Optional structured JSONL log (via the `log_file` config option) records every tick and stage evaluation — tick IDs, durations, stage results, and resolved action commands — with automatic rotation.
 - **Minimal dependencies**: Pure Python stdlib. No heavy framework. Python 3.10+.
 
 ## Installation
@@ -235,6 +236,22 @@ cron fires → script starts → acquire lock → derive state from filesystem �
 
 The pipeline takes **one action per tick** and exits. State is derived fresh from the filesystem on every tick — there is no in-memory state between invocations. This makes the pipeline fully crash-safe.
 
+### Execution log
+
+When the top-level `log_file` config option is set, the pipeline writes a structured JSONL execution log to that path (relative paths are resolved relative to `workspace_dir`), creating parent directories as needed. Each tick generates a unique tick ID formatted as `YYYYMMDD-HHMMSS-XXXXXX` (a timestamp plus 6 random hex characters). Every tick outcome is logged — lock failures, disabled pipelines, no work, pre-tick hook skips, gave-up, stale handling, dry-runs, and action execution/failure — including chained stage results.
+
+Three event types are written, one JSON object per line:
+
+| Event | Key fields |
+|---|---|
+| `tick_start` | `event`, `tick_id`, `target`, `dry_run`, `timestamp` |
+| `stage` | `event`, `tick_id`, `target`, `stage_id`, `stage_name`, `trigger_type`, `action_type`, `result`, `duration_ms`, `dry_run`, `chained`, plus optional `action_command`, `stdout`, `stderr`, `mode` |
+| `tick_end` | `event`, `tick_id`, `target`, `total_duration_ms`, `stages_checked`, `actions_executed`, `failures`, `final_status`, `final_stage_id` |
+
+Stage `result` values include `complete`, `processing`, `given_up`, `blocked`, `trigger_fired`, `skipped`, `dry_run`, `action_executed`, `action_failed`, `gave_up`, `no_state`, `would_give_up`, and `would_requeue`. The `action_command` field records the resolved action command/prompt/url/callable (with template variables substituted).
+
+When the log file exceeds 10 MB, it is rotated to `.1`, shifting older backups up to `.5` (a maximum of 5 backups). The webui dashboard can display recent activity read from this log (see the "Recent Activity" section in `webui/README.md`).
+
 ### Stage detector chain
 
 Stages are evaluated in array order (first-match-wins). The first stage whose trigger condition is met gets executed. If no stage triggers, the tick returns `NO_WORK`.
@@ -316,7 +333,7 @@ The filesystem is the source of truth — no database, no in-memory state:
 | `config_file` | string | no | `null` | Optional pipeline config toggle file (`{"enabled": false}` disables). Relative paths are resolved relative to `workspace_dir` |
 | `targets` | object | no | `null` | Target specification (see below) |
 | `action_handler` | object | no | `null` | Action handler plugin config (wired automatically) |
-| `log_file` | string | no | `null` | Optional log file path |
+| `log_file` | string | no | `null` | Optional JSONL execution log path. When set, every tick writes structured log entries (`tick_start`, `tick_end`, and `stage` events) with tick IDs, durations, stage results, and action commands. Relative paths are resolved relative to `workspace_dir`. The log rotates at 10 MB with up to 5 backups (`.1`–`.5`) |
 | `mode_file` | string | no | `null` | Path to JSON file with `{"mode": "..."}` for mode switching. Relative paths are resolved relative to `workspace_dir` |
 | `target_lock` | bool | no | `false` | Cross-stage lock — blocks all stages for a target while any stage is processing |
 | `pre_tick` | object | no | `null` | Pre-tick hook config (`{"callable": "module.func"}`) |
@@ -875,7 +892,7 @@ configs/
 └── vnn_pipeline.json         # Full VNN pipeline example config
 ```
 
-The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) for visualizing pipeline state. The webui module can now be imported even when the web stack is unavailable or broken — the FastAPI app is built lazily via a `_build_app()` function, and the module-level `app` is `None` when app construction fails for any reason (missing fastapi/pydantic, or any other error during app construction). This is useful for importing helper functions without installing the web stack. The enable/disable toggle endpoint restricts its writes to toggle paths that resolve within the pipeline's workspace directory or the configs directory (security hardening), rejecting paths that resolve outside both.
+The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) for visualizing pipeline state. The dashboard also shows a "Recent Activity" section that lists recent execution-log ticks (read from the pipeline's `log_file` via the `/api/log` endpoint), with expandable per-stage details including `action_command`, `stdout`, and `stderr`. The webui module can now be imported even when the web stack is unavailable or broken — the FastAPI app is built lazily via a `_build_app()` function, and the module-level `app` is `None` when app construction fails for any reason (missing fastapi/pydantic, or any other error during app construction). This is useful for importing helper functions without installing the web stack. The enable/disable toggle endpoint restricts its writes to toggle paths that resolve within the pipeline's workspace directory or the configs directory (security hardening), rejecting paths that resolve outside both.
 
 ## Testing
 
