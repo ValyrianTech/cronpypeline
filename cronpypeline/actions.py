@@ -413,6 +413,8 @@ _HTTP_OPENER = urllib.request.build_opener(
     _PinnedHTTPSHandler(),
 )
 _MAX_REDIRECTS = 5
+_SENSITIVE_HEADER_PREFIXES = ("x-",)
+_SENSITIVE_HEADERS = {"authorization", "cookie", "proxy-authorization"}
 
 
 def format_template(template: str, variables: dict[str, Any]) -> str:
@@ -818,7 +820,11 @@ class HttpRequestActionHandler(ActionHandler):
                     redirect_parsed = urllib.parse.urlparse(current_url)
                     original_parsed = urllib.parse.urlparse(original_url)
                     if redirect_parsed.netloc != original_parsed.netloc:
-                        headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
+                        headers = {
+                            k: v for k, v in headers.items()
+                            if k.lower() not in _SENSITIVE_HEADERS
+                            and not k.lower().startswith(_SENSITIVE_HEADER_PREFIXES)
+                        }
                     # Match urllib's default redirect behavior for method/body
                     if e.code in (301, 302, 303) and method == "POST":
                         method = "GET"

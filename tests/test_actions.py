@@ -1714,6 +1714,140 @@ class TestHttpRequestActionHandlerRedirects:
         second_req = mock_open.call_args_list[1][0][0]
         assert second_req.get_header("Authorization") == "token secret-token"
 
+    def test_redirect_to_different_host_strips_cookie_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"Cookie": "session=abc123"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("Cookie") is None
+
+    def test_redirect_to_different_host_strips_proxy_authorization_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"Proxy-Authorization": "Basic abc123"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("Proxy-Authorization") is None
+
+    def test_redirect_to_different_host_strips_x_api_key_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"x-api-key": "secret-key"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("X-API-Key") is None
+
+    def test_redirect_to_different_host_strips_x_auth_token_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"X-Auth-Token": "secret-token"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("X-Auth-Token") is None
+
+    def test_redirect_to_different_host_keeps_non_sensitive_headers(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("Content-type") == "application/json"
+        assert second_req.get_header("Accept") == "application/json"
+
+    def test_redirect_to_same_host_keeps_sensitive_headers(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"Cookie": "session=abc123", "X-API-Key": "secret-key"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("Cookie") == "session=abc123"
+        assert second_req.get_header("X-api-key") == "secret-key"
+
     def test_redirect_to_private_ip_is_blocked(self, tmp_path):
         action = self._action("http://93.184.216.34/start")
         ctx = self._ctx(tmp_path)
