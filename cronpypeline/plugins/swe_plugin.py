@@ -1362,9 +1362,8 @@ def _open_issue_count(target_dir: Path) -> int:
             continue
         if fm.get("status") != "open":
             continue
-        if github_only:
-            if fm.get("source") != "github":
-                continue
+        if github_only and fm.get("source") != "github":
+            continue
         count += 1
     return count
 
