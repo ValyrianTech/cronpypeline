@@ -71,6 +71,7 @@ class ActionResult:
     :ivar timed_out: Whether the action timed out.
     :ivar dry_run: Whether this was a dry run.
     :ivar data: Additional result data (e.g. queue_file, entry_id).
+    :ivar command: The resolved action command/prompt/url/callable.
     """
 
     success: bool
@@ -80,6 +81,7 @@ class ActionResult:
     timed_out: bool = False
     dry_run: bool = False
     data: dict[str, Any] = dc_field(default_factory=dict)
+    command: str = ""
 
     def __post_init__(self) -> None:
         """Initialize the result after construction.
@@ -427,6 +429,52 @@ def format_template(template: str, variables: dict[str, Any]) -> str:
         raise ValueError(f"Template substitution failed for: {template!r}: {e}") from e
 
 
+def resolved_command(action: ActionSpec, context: TickContext) -> str:
+    """Resolve an action's command/prompt/url/callable for logging.
+
+    Produces a human-readable string describing what the action will do, with
+    ``{target}``, ``{target_dir}``, and ``{workspace_dir}`` template variables
+    (plus flattened ``target_config`` keys) substituted. Substitution failures
+    fall back to the raw template so logging never raises.
+
+    :param action: Action specification.
+    :param context: Tick context for template substitution.
+    :returns: Resolved command string (empty for unknown action types).
+    """
+    params = action.params
+    variables = {
+        "target": context.target,
+        "target_dir": str(context.target_dir),
+        "workspace_dir": str(context.workspace_dir),
+    }
+    for k, v in context.target_config.items():
+        if k not in variables:
+            variables[k] = v
+
+    def _subst(template: str) -> str:
+        try:
+            return format_template(template, variables)
+        except ValueError:
+            return template
+
+    if action.type == ActionType.COMMAND:
+        return _subst(params.get("command", ""))
+    if action.type == ActionType.SUBPROCESS:
+        script = _subst(params.get("script", ""))
+        args = [str(a) for a in params.get("args", [])]
+        return shlex.join([script] + args)
+    if action.type == ActionType.HTTP_REQUEST:
+        return _subst(params.get("url", ""))
+    if action.type == ActionType.CUSTOM:
+        return params.get("callable", "")
+    if action.type == ActionType.QUEUE_AGENT:
+        agent = params.get("agent", "")
+        prompt = params.get("prompt", "") or params.get("prompt_template", "")
+        resolved_prompt = _subst(prompt)
+        return resolved_prompt or agent
+    return ""
+
+
 class ActionHandler:
     """Base class / interface for action handlers."""
 
@@ -483,8 +531,10 @@ class CommandActionHandler(ActionHandler):
         :param context: Tick context for template substitution and working directory.
         :returns: Result with stdout, stderr, and exit code.
         """
+        command_str = resolved_command(action, context)
+
         if context.dry_run:
-            return ActionResult(success=True, dry_run=True)
+            return ActionResult(success=True, dry_run=True, command=command_str)
 
         cmd = action.params.get("command", "")
         cwd = action.params.get("cwd", str(context.target_dir))
@@ -506,10 +556,11 @@ class CommandActionHandler(ActionHandler):
             cmd = format_template(cmd, cmd_variables)
             cwd = format_template(cwd, cwd_variables)
         except ValueError as e:
-            return ActionResult(success=False, stderr=str(e))
+            return ActionResult(success=False, stderr=str(e), command=command_str)
 
         result = self._validate_cwd(cwd, context.workspace_dir)
         if result is not None:
+            result.command = command_str
             return result
 
         timeout = action.timeout_seconds or 300  # Default to 5 minutes
@@ -519,7 +570,7 @@ class CommandActionHandler(ActionHandler):
         try:
             cmd_args = shlex.split(cmd)
         except ValueError as e:
-            return ActionResult(success=False, stderr=f"Invalid command: {e}")
+            return ActionResult(success=False, stderr=f"Invalid command: {e}", command=command_str)
 
         try:
             proc = subprocess.run(
@@ -537,6 +588,7 @@ class CommandActionHandler(ActionHandler):
                 stdout=proc.stdout,
                 stderr=proc.stderr,
                 exit_code=proc.returncode,
+                command=command_str,
             )
         except subprocess.TimeoutExpired:
             return ActionResult(
@@ -544,6 +596,7 @@ class CommandActionHandler(ActionHandler):
                 timed_out=True,
                 exit_code=-1,
                 stderr=f"Command timed out after {timeout}s",
+                command=command_str,
             )
 
 
@@ -557,8 +610,10 @@ class SubprocessActionHandler(ActionHandler):
         :param context: Tick context for working directory and environment.
         :returns: Result with stdout, stderr, and exit code.
         """
+        command_str = resolved_command(action, context)
+
         if context.dry_run:
-            return ActionResult(success=True, dry_run=True)
+            return ActionResult(success=True, dry_run=True, command=command_str)
 
         script = action.params.get("script", "")
         args = action.params.get("args", [])
@@ -572,10 +627,11 @@ class SubprocessActionHandler(ActionHandler):
         try:
             cwd = format_template(cwd, cwd_variables)
         except ValueError as e:
-            return ActionResult(success=False, stderr=str(e))
+            return ActionResult(success=False, stderr=str(e), command=command_str)
 
         result = self._validate_cwd(cwd, context.workspace_dir)
         if result is not None:
+            result.command = command_str
             return result
 
         timeout = action.timeout_seconds or 300  # Default to 5 minutes
@@ -602,6 +658,7 @@ class SubprocessActionHandler(ActionHandler):
                 stdout=proc.stdout,
                 stderr=proc.stderr,
                 exit_code=proc.returncode,
+                command=command_str,
             )
         except subprocess.TimeoutExpired:
             return ActionResult(
@@ -609,6 +666,7 @@ class SubprocessActionHandler(ActionHandler):
                 timed_out=True,
                 exit_code=-1,
                 stderr=f"Subprocess timed out after {timeout}s",
+                command=command_str,
             )
 
 
@@ -622,30 +680,34 @@ class CustomActionHandler(ActionHandler):
         :param context: Tick context passed to the callable.
         :returns: Result adapted from the callable's return value.
         """
-        if context.dry_run:
-            return ActionResult(success=True, dry_run=True)
-
         callable_path = action.params.get("callable", "")
+
+        if context.dry_run:
+            return ActionResult(success=True, dry_run=True, command=callable_path)
+
         func = resolve_custom_callable(callable_path)
 
         result = func(action, context)
 
         if isinstance(result, ActionResult):
+            if not result.command:
+                result.command = callable_path
             return result
         elif isinstance(result, tuple):
             success, output = result
-            return ActionResult(success=success, stdout=str(output))
+            return ActionResult(success=success, stdout=str(output), command=callable_path)
         elif isinstance(result, bool):
-            return ActionResult(success=result)
+            return ActionResult(success=result, command=callable_path)
         elif isinstance(result, dict):
             result_dict: dict[str, Any] = result
             return ActionResult(
                 success=result_dict.get("success", True),
                 stdout=str(result_dict.get("output", "")),
                 data=result_dict,
+                command=callable_path,
             )
         else:
-            return ActionResult(success=True, stdout=str(result))
+            return ActionResult(success=True, stdout=str(result), command=callable_path)
 
 
 class HttpRequestActionHandler(ActionHandler):
@@ -661,8 +723,10 @@ class HttpRequestActionHandler(ActionHandler):
         :param context: Tick context for auth token resolution from env.
         :returns: Result with response body, status code, and request metadata.
         """
+        command_str = resolved_command(action, context)
+
         if context.dry_run:
-            return ActionResult(success=True, dry_run=True)
+            return ActionResult(success=True, dry_run=True, command=command_str)
 
         params = action.params
         url = params.get("url", "")
@@ -690,6 +754,7 @@ class HttpRequestActionHandler(ActionHandler):
                 success=False,
                 exit_code=-1,
                 stderr=f"Unsupported URL scheme: {parsed_url.scheme!r}",
+                command=command_str,
             )
 
         current_url = url
@@ -701,6 +766,7 @@ class HttpRequestActionHandler(ActionHandler):
                     success=False,
                     exit_code=-1,
                     stderr=f"Unsupported URL scheme: {parsed_url.scheme!r}",
+                    command=command_str,
                 )
 
             # Validate SSRF for the current URL
@@ -710,6 +776,7 @@ class HttpRequestActionHandler(ActionHandler):
                     success=False,
                     exit_code=-1,
                     stderr=ssrf_error,
+                    command=command_str,
                 )
 
             req = urllib.request.Request(current_url, data=data, method=method, headers=headers)
@@ -726,6 +793,7 @@ class HttpRequestActionHandler(ActionHandler):
                         stdout=body_str,
                         exit_code=status,
                         data={"status_code": status, "url": _redact_url(current_url), "method": method},
+                        command=command_str,
                     )
             except urllib.error.HTTPError as e:
                 if 300 <= e.code < 400:
@@ -737,6 +805,7 @@ class HttpRequestActionHandler(ActionHandler):
                             success=False,
                             exit_code=e.code,
                             stderr=f"HTTP {e.code}: Redirect without Location header",
+                            command=command_str,
                         )
                     original_url = current_url
                     current_url = urllib.parse.urljoin(current_url, location)
@@ -757,6 +826,7 @@ class HttpRequestActionHandler(ActionHandler):
                             stderr=f"HTTP {e.code}: {e.reason}",
                             exit_code=e.code,
                             data={"status_code": e.code, "url": _redact_url(original_url), "method": method},
+                            command=command_str,
                         )
                     continue
                 body_str = ""
@@ -770,6 +840,7 @@ class HttpRequestActionHandler(ActionHandler):
                     stderr=f"HTTP {e.code}: {e.reason}",
                     exit_code=e.code,
                     data={"status_code": e.code, "url": _redact_url(current_url), "method": method},
+                    command=command_str,
                 )
             except urllib.error.URLError as e:
                 if isinstance(e.reason, socket.timeout):
@@ -778,17 +849,20 @@ class HttpRequestActionHandler(ActionHandler):
                         timed_out=True,
                         exit_code=-1,
                         stderr=f"Request timed out after {timeout}s",
+                        command=command_str,
                     )
                 return ActionResult(
                     success=False,
                     exit_code=-1,
                     stderr=str(e.reason),
+                    command=command_str,
                 )
 
         return ActionResult(
             success=False,
             exit_code=-1,
             stderr=f"Too many redirects (max {_MAX_REDIRECTS})",
+            command=command_str,
         )
 
 

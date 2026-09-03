@@ -9,7 +9,11 @@ Each tick:
 6. Release lock → exit
 """
 
+import datetime
 import json
+import random
+import string
+import time
 import traceback
 from dataclasses import dataclass, replace
 from dataclasses import field as dc_field
@@ -198,6 +202,24 @@ class Pipeline:
                     raise ValueError(f"queue_dir contains path traversal: {handler.queue_dir}")
             register_handler(ActionType.QUEUE_AGENT, handler)
 
+        # Execution log setup
+        self.log_file_path: Path | None = None
+        if config.log_file:
+            log_path = Path(config.log_file)
+            if not log_path.is_absolute():
+                log_path = self.workspace_dir / log_path
+            self.log_file_path = log_path
+            self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self._current_tick_id: str | None = None
+        self._current_tick_target: str | None = None
+        self._current_tick_dry_run: bool = False
+        self._current_tick_start_time: float | None = None
+        self._current_tick_stages_checked: int = 0
+        self._current_tick_actions_executed: int = 0
+        self._current_tick_failures: int = 0
+        self._current_tick_mode: str | None = None
+
     @classmethod
     def from_config(cls, path: Path | str | None = None) -> "Pipeline":
         """Create a Pipeline from a JSON config file.
@@ -207,6 +229,131 @@ class Pipeline:
         """
         config = PipelineConfig.from_file(path)
         return cls(config)
+
+    def _log(self, entry: dict[str, Any]) -> None:
+        """Write a JSONL log entry with rotation."""
+        if not self.log_file_path:
+            return
+        entry.setdefault("timestamp", datetime.datetime.now().isoformat())
+        try:
+            with open(self.log_file_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+            self._rotate_log()
+        except OSError:
+            pass
+
+    def _rotate_log(self) -> None:
+        """Rotate the log file if it exceeds max_bytes."""
+        if not self.log_file_path:
+            return
+        max_bytes = 10 * 1024 * 1024  # 10 MB
+        max_backups = 5
+        try:
+            if self.log_file_path.stat().st_size < max_bytes:
+                return
+        except OSError:
+            return
+        # Shift backups: .N -> .N+1
+        for i in range(max_backups - 1, 0, -1):
+            src = Path(f"{self.log_file_path}.{i}")
+            dst = Path(f"{self.log_file_path}.{i + 1}")
+            try:
+                if src.exists():
+                    if dst.exists():
+                        dst.unlink()
+                    src.rename(dst)
+            except OSError:
+                pass
+        # Rotate current file to .1
+        backup = Path(f"{self.log_file_path}.1")
+        try:
+            if backup.exists():
+                backup.unlink()
+            self.log_file_path.rename(backup)
+        except OSError:
+            pass
+        # Delete oldest backup beyond max_backups
+        oldest = Path(f"{self.log_file_path}.{max_backups + 1}")
+        try:
+            if oldest.exists():
+                oldest.unlink()
+        except OSError:
+            pass
+
+    def _generate_tick_id(self) -> str:
+        """Generate a unique tick ID: YYYYMMDD-HHMMSS-XXXXXX."""
+        now = datetime.datetime.now()
+        suffix = "".join(random.choices(string.hexdigits.lower(), k=6))
+        return f"{now.strftime('%Y%m%d-%H%M%S')}-{suffix}"
+
+    def _log_tick_start(self, target: str, dry_run: bool) -> None:
+        """Log the start of a tick for a target."""
+        self._current_tick_id = self._generate_tick_id()
+        self._current_tick_target = target
+        self._current_tick_dry_run = dry_run
+        self._current_tick_start_time = time.monotonic()
+        self._current_tick_stages_checked = 0
+        self._current_tick_actions_executed = 0
+        self._current_tick_failures = 0
+        self._current_tick_mode = self._get_current_mode()
+        self._log({
+            "event": "tick_start",
+            "tick_id": self._current_tick_id,
+            "target": target,
+            "dry_run": dry_run,
+        })
+
+    def _log_tick_end(self, result: TickResult) -> None:
+        """Log the end of a tick for a target."""
+        if not self._current_tick_id:
+            return
+        total_ms = 0
+        if self._current_tick_start_time:
+            total_ms = int((time.monotonic() - self._current_tick_start_time) * 1000)
+        self._log({
+            "event": "tick_end",
+            "tick_id": self._current_tick_id,
+            "target": self._current_tick_target or result.target,
+            "total_duration_ms": total_ms,
+            "stages_checked": self._current_tick_stages_checked,
+            "actions_executed": self._current_tick_actions_executed,
+            "failures": self._current_tick_failures,
+            "final_status": result.status.value,
+            "final_stage_id": result.stage_id,
+        })
+        self._current_tick_id = None
+        self._current_tick_target = None
+        self._current_tick_start_time = None
+
+    def _log_stage(self, stage: Stage, result: str, duration_ms: int = 0,
+                   stdout: str = "", stderr: str = "", action_command: str = "",
+                   chained: bool = False) -> None:
+        """Log a stage evaluation."""
+        if not self._current_tick_id:
+            return
+        self._current_tick_stages_checked += 1
+        entry = {
+            "event": "stage",
+            "tick_id": self._current_tick_id,
+            "target": self._current_tick_target or "",
+            "stage_id": stage.id,
+            "stage_name": stage.name,
+            "trigger_type": stage.trigger.type.value,
+            "action_type": stage.action.type.value,
+            "result": result,
+            "duration_ms": duration_ms,
+            "dry_run": self._current_tick_dry_run,
+            "chained": chained,
+        }
+        if action_command:
+            entry["action_command"] = action_command
+        if stdout:
+            entry["stdout"] = stdout
+        if stderr:
+            entry["stderr"] = stderr
+        if self._current_tick_mode:
+            entry["mode"] = self._current_tick_mode
+        self._log(entry)
 
     def tick(
         self,
@@ -242,12 +389,15 @@ class Pipeline:
         # Acquire lock (skip in dry-run)
         self.lock.dry_run = dry_run
         if not self.lock.acquire():
-            return TickResult(
+            result = TickResult(
                 target=target or "*",
                 stage_id=None,
                 status=TickResultStatus.LOCK_FAILED,
                 message="Could not acquire lock",
             )
+            self._log_tick_start(target or "*", dry_run)
+            self._log_tick_end(result)
+            return result
 
         try:
             return self._tick_inner(targets, target_config_map, dry_run, verbose)
@@ -289,12 +439,15 @@ class Pipeline:
 
         self.lock.dry_run = dry_run
         if not self.lock.acquire():
-            return [TickResult(
+            result = TickResult(
                 target="*",
                 stage_id=None,
                 status=TickResultStatus.LOCK_FAILED,
                 message="Could not acquire lock",
-            )]
+            )
+            self._log_tick_start("*", dry_run)
+            self._log_tick_end(result)
+            return [result]
 
         try:
             results = []
@@ -337,22 +490,28 @@ class Pipeline:
                 try:
                     toggle_data = json.loads(toggle_path.read_text())
                     if toggle_data.get("enabled") is False:
-                        return TickResult(
+                        result = TickResult(
                             target="*",
                             stage_id=None,
                             status=TickResultStatus.DISABLED,
                             message="Pipeline disabled by config_file",
                         )
+                        self._log_tick_start("*", dry_run)
+                        self._log_tick_end(result)
+                        return result
                 except (json.JSONDecodeError, OSError):
                     pass  # Treat unreadable config as enabled
 
         if not targets:
-            return TickResult(
+            result = TickResult(
                 target="*",
                 stage_id=None,
                 status=TickResultStatus.NO_WORK,
                 message="No targets configured",
             )
+            self._log_tick_start("*", dry_run)
+            self._log_tick_end(result)
+            return result
 
         # If multiple targets, pick the first one with work
         if len(targets) > 1:
@@ -368,12 +527,15 @@ class Pipeline:
             state.derive(targets, target_configs=target_config_map)
             target = state.get_target_with_work(targets)
             if target is None:
-                return TickResult(
+                result = TickResult(
                     target="*",
                     stage_id=None,
                     status=TickResultStatus.NO_WORK,
                     message="No targets with pending work",
                 )
+                self._log_tick_start("*", dry_run)
+                self._log_tick_end(result)
+                return result
         else:
             target = targets[0]
 
@@ -414,12 +576,15 @@ class Pipeline:
             hook_fn = resolve_custom_callable(self.config.pre_tick.callable)
             proceed = hook_fn(hook_context)
             if proceed is False:
-                return TickResult(
+                result = TickResult(
                     target=target,
                     stage_id=None,
                     status=TickResultStatus.NO_WORK,
                     message="Tick skipped by pre_tick hook",
                 )
+                self._log_tick_start(target, dry_run)
+                self._log_tick_end(result)
+                return result
 
         result = self._tick_single_inner(target, target_config, dry_run, verbose)
 
@@ -464,6 +629,7 @@ class Pipeline:
         """
         target_dir = self.workspace_dir / target
         target_dir.mkdir(parents=True, exist_ok=True)
+        self._log_tick_start(target, dry_run)
 
         # Derive state
         current_mode = self._get_current_mode()
@@ -480,12 +646,14 @@ class Pipeline:
         target_state = state.target_states.get(target)
 
         if target_state is None:
-            return TickResult(
+            result = TickResult(
                 target=target,
                 stage_id=None,
                 status=TickResultStatus.NO_WORK,
                 message="No state derived",
             )
+            self._log_tick_end(result)
+            return result
 
         # Clean up orphaned processing markers for completed stages.
         # When a queue_agent action completes externally (the agent creates
@@ -509,12 +677,15 @@ class Pipeline:
                         create_marker(ss.stage.markers["give_up"], target_dir, context=marker_ctx)
                     if "rejection" in ss.stage.markers:
                         delete_marker(ss.stage.markers["rejection"], target_dir, context=marker_ctx)
-                    return TickResult(
+                    result = TickResult(
                         target=target,
                         stage_id=ss.stage.id,
                         status=TickResultStatus.GAVE_UP,
                         message=f"Stage {ss.stage.id} gave up after {ss.rejection_count} rejections",
                     )
+                    self._log_stage(ss.stage, "gave_up")
+                    self._log_tick_end(result)
+                    return result
                 else:
                     # Below max — only increment if the stage's trigger actually fires
                     # (i.e., the stage will actually be re-processed this tick)
@@ -546,7 +717,9 @@ class Pipeline:
         # (e.g. agent finished and produced completion) should not trigger re-queue.
         for ss in target_state.stage_states.values():
             if ss.is_stale and ss.is_processing and not ss.is_complete:
-                return self._handle_stale(ss, target, target_dir, target_config, target_state, active_stages, dry_run, verbose)
+                result = self._handle_stale(ss, target, target_dir, target_config, target_state, active_stages, dry_run, verbose)
+                self._log_tick_end(result)
+                return result
 
         # Find first actionable stage whose trigger condition is met
         trigger_context = {
@@ -560,27 +733,49 @@ class Pipeline:
         if not (self.config.target_lock and target_state.has_processing):
             for stage in active_stages:
                 candidate: StageState | None = target_state.stage_states.get(stage.id)
-                if candidate is not None and candidate.is_actionable and evaluate_trigger(
-                    stage.trigger, target_dir, context=trigger_context
-                ):
+                if candidate is None:
+                    self._log_stage(stage, "no_state")
+                    continue
+                if not candidate.is_actionable:
+                    if candidate.is_complete:
+                        self._log_stage(stage, "complete")
+                    elif candidate.is_processing:
+                        self._log_stage(stage, "processing")
+                    elif candidate.is_given_up:
+                        self._log_stage(stage, "given_up")
+                    else:
+                        self._log_stage(stage, "blocked")
+                    continue
+                if evaluate_trigger(stage.trigger, target_dir, context=trigger_context):
                     stage_state = candidate
+                    self._log_stage(stage, "trigger_fired")
                     break
+                else:
+                    self._log_stage(stage, "skipped")
+        else:
+            for stage in active_stages:
+                self._log_stage(stage, "blocked")
         if stage_state is None:
-            return TickResult(
+            result = TickResult(
                 target=target,
                 stage_id=None,
                 status=TickResultStatus.NO_WORK,
                 message="All stages complete or blocked",
             )
+            self._log_tick_end(result)
+            return result
 
         # Dry run
         if dry_run:
-            return TickResult(
+            result = TickResult(
                 target=target,
                 stage_id=stage_state.stage.id,
                 status=TickResultStatus.DRY_RUN,
                 message=f"Would execute {stage_state.stage.name}",
             )
+            self._log_stage(stage_state.stage, "dry_run")
+            self._log_tick_end(result)
+            return result
 
         # Create processing marker for async actions (queue_agent)
         stage = stage_state.stage
@@ -605,7 +800,20 @@ class Pipeline:
             target_config=target_config,
             pipeline=self,
         )
+        start_time = time.monotonic()
         result = execute_action(stage.action, ctx)
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+
+        if result.success:
+            self._current_tick_actions_executed += 1
+            self._log_stage(stage, "action_executed", duration_ms=duration_ms,
+                            stdout=result.stdout, stderr=result.stderr,
+                            action_command=result.command)
+        else:
+            self._current_tick_failures += 1
+            self._log_stage(stage, "action_failed", duration_ms=duration_ms,
+                            stdout=result.stdout, stderr=result.stderr,
+                            action_command=result.command)
 
         # Update processing marker with result data (for stale detection and tracking)
         if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers and result.success and result.data:
@@ -628,7 +836,7 @@ class Pipeline:
                     pipeline=self,
                 )
                 execute_action(stage.on_fail, fail_ctx)
-            return TickResult(
+            result_tick = TickResult(
                 target=target,
                 stage_id=stage.id,
                 status=TickResultStatus.ACTION_FAILED,
@@ -636,6 +844,8 @@ class Pipeline:
                 stdout=result.stdout,
                 stderr=result.stderr,
             )
+            self._log_tick_end(result_tick)
+            return result_tick
 
         # Create produced markers
         for marker_spec in stage.action.produces:
@@ -689,7 +899,7 @@ class Pipeline:
                 final_stage_id, chained, failed_stage_id, failed_result = chained_result
                 if failed_stage_id is not None:
                     detail = failed_result.stderr or failed_result.stdout if failed_result else None
-                    return TickResult(
+                    result_tick = TickResult(
                         target=target,
                         stage_id=failed_stage_id,
                         status=TickResultStatus.ACTION_FAILED,
@@ -699,15 +909,19 @@ class Pipeline:
                         chained_stages=chained,
                         failed_chained_stages=[failed_stage_id],
                     )
-                return TickResult(
+                    self._log_tick_end(result_tick)
+                    return result_tick
+                result_tick = TickResult(
                     target=target,
                     stage_id=final_stage_id,
                     status=TickResultStatus.ACTION_EXECUTED,
                     message="Chained through stages",
                     chained_stages=chained,
                 )
+                self._log_tick_end(result_tick)
+                return result_tick
 
-        return TickResult(
+        result_tick = TickResult(
             target=target,
             stage_id=stage.id,
             status=TickResultStatus.ACTION_EXECUTED,
@@ -715,6 +929,8 @@ class Pipeline:
             stdout=result.stdout,
             chained_stages=chained,
         )
+        self._log_tick_end(result_tick)
+        return result_tick
 
     def _try_chain(
         self,
@@ -786,9 +1002,15 @@ class Pipeline:
                 target_config=target_config,
                 pipeline=self,
             )
+            start_time = time.monotonic()
             result = execute_action(next_stage.action, ctx)
+            duration_ms = int((time.monotonic() - start_time) * 1000)
 
             if not result.success:
+                self._current_tick_failures += 1
+                self._log_stage(next_stage, "action_failed", duration_ms=duration_ms,
+                                stdout=result.stdout, stderr=result.stderr,
+                                action_command=result.command, chained=True)
                 if next_stage.on_fail:
                     fail_ctx = TickContext(
                         target=target,
@@ -803,6 +1025,11 @@ class Pipeline:
                         on_fail_err = fail_result.stderr or fail_result.stdout
                         result.stderr = (result.stderr + "\n[on_fail] " + on_fail_err).strip() if on_fail_err else result.stderr
                 return (current_stage.id, chained, next_stage.id, result)
+
+            self._current_tick_actions_executed += 1
+            self._log_stage(next_stage, "action_executed", duration_ms=duration_ms,
+                            stdout=result.stdout, stderr=result.stderr,
+                            action_command=result.command, chained=True)
 
             marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
 
@@ -885,8 +1112,10 @@ class Pipeline:
         if dry_run:
             if retry_count >= stage.max_retries:
                 message = f"Would give up on stale stage {stage.id} (retry {retry_count} >= max {stage.max_retries})"
+                self._log_stage(stage, "would_give_up")
             else:
                 message = f"Would re-queue stale stage {stage.id} (retry {retry_count + 1})"
+                self._log_stage(stage, "would_requeue")
             return TickResult(
                 target=target,
                 stage_id=stage.id,
@@ -903,6 +1132,7 @@ class Pipeline:
             # Give up
             if "give_up" in stage.markers:
                 create_marker(stage.markers["give_up"], target_dir, context=marker_ctx)
+            self._log_stage(stage, "gave_up")
             return TickResult(
                 target=target,
                 stage_id=stage.id,
@@ -929,7 +1159,20 @@ class Pipeline:
             retry_data=stage_state.processing_data,
             pipeline=self,
         )
+        start_time = time.monotonic()
         result = execute_action(stage.action, ctx)
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+
+        if result.success:
+            self._current_tick_actions_executed += 1
+            self._log_stage(stage, "action_executed", duration_ms=duration_ms,
+                            stdout=result.stdout, stderr=result.stderr,
+                            action_command=result.command)
+        else:
+            self._current_tick_failures += 1
+            self._log_stage(stage, "action_failed", duration_ms=duration_ms,
+                            stdout=result.stdout, stderr=result.stderr,
+                            action_command=result.command)
 
         if not result.success:
             # Run on_fail if configured

@@ -362,3 +362,32 @@ pre.json-blob {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* Recent Activity */
+.tick-card {
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  background: #0d1322;
+  padding: 10px 14px;
+}
+.tick-header:hover { background: rgba(30, 41, 59, 0.3); }
+.tick-header.expanded .tick-chevron { transform: rotate(90deg); }
+.tick-chevron { transition: transform 0.2s; display: inline-block; }
+.activity-stage {
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #0a0e17;
+}
+.log-pre {
+  background: #0a0e17;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
