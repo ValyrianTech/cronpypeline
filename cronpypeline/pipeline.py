@@ -216,6 +216,7 @@ class Pipeline:
         self._current_tick_dry_run: bool = False
         self._current_tick_start_time: float | None = None
         self._current_tick_stages_checked: int = 0
+        self._current_tick_logged_stage_ids: set[str] = set()
         self._current_tick_actions_executed: int = 0
         self._current_tick_failures: int = 0
         self._current_tick_mode: str | None = None
@@ -293,6 +294,7 @@ class Pipeline:
         self._current_tick_dry_run = dry_run
         self._current_tick_start_time = time.monotonic()
         self._current_tick_stages_checked = 0
+        self._current_tick_logged_stage_ids = set()
         self._current_tick_actions_executed = 0
         self._current_tick_failures = 0
         self._current_tick_mode = self._get_current_mode()
@@ -331,7 +333,9 @@ class Pipeline:
         """Log a stage evaluation."""
         if not self._current_tick_id:
             return
-        self._current_tick_stages_checked += 1
+        if stage.id not in self._current_tick_logged_stage_ids:
+            self._current_tick_logged_stage_ids.add(stage.id)
+            self._current_tick_stages_checked += 1
         entry = {
             "event": "stage",
             "tick_id": self._current_tick_id,

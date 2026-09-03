@@ -395,6 +395,9 @@ class TestLogInternal:
         stage = make_command_stage("A0", "A", "a.md")
         pipeline._log_stage(stage, "skipped")
         pipeline._log_stage(stage, "trigger_fired")
+        assert pipeline._current_tick_stages_checked == 1
+        stage2 = make_command_stage("A1", "B", "b.md")
+        pipeline._log_stage(stage2, "skipped")
         assert pipeline._current_tick_stages_checked == 2
 
 
