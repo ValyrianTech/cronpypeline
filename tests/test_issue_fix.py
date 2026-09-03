@@ -1429,6 +1429,18 @@ class TestRunGate:
         assert run_gate(t, td, "repo", dry_run=True) is True
         assert td.exists()
 
+    def test_corrupt_task_json_cleanup_refused(self, tmp_path, monkeypatch):
+        """run_gate returns False when _cleanup_stale_task refuses cleanup."""
+        t = _make_target_dir(tmp_path)
+        _init_git(t)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        # Dir name doesn't match repo 'repo' — cleanup will be refused
+        td = tmp_path / "tasks" / "d" / "20250101_other_t"
+        td.mkdir(parents=True)
+        (td / TASK_FILE).write_text("not valid json{")
+        assert run_gate(t, td, "repo", verbose=True) is False
+        assert td.exists()  # cleanup refused, dir still there
+
     def _setup_git_with_branch(self, tmp_path):
         t = _make_target_dir(tmp_path)
         _write_issue(t / ".SWE" / "issues", "iss-1", status="open")

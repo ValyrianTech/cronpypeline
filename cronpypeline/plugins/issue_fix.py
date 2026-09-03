@@ -1121,7 +1121,7 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
         if verbose:
             print(f"  corrupted task at {task_dir} (unreadable {TASK_FILE}) — cleaning up")
         if not dry_run:
-            _cleanup_stale_task(repo_dir, task_dir, repo_name, verbose=verbose)
+            return _cleanup_stale_task(repo_dir, task_dir, repo_name, verbose=verbose)
         return True
     issue_type = (task.get("issue_type") or "security").lower()
     source_issue_id = task.get("source_issue_id", "")
