@@ -97,6 +97,97 @@ def _read_mode(config: PipelineConfig) -> str | None:
         return None
 
 
+def _read_log_ticks(config: PipelineConfig, limit: int = 50) -> list[dict[str, Any]]:
+    """Read recent execution log ticks for a pipeline config.
+
+    Parses the pipeline's JSONL execution log (``config.log_file``, resolved
+    relative to ``config.workspace_dir``), groups entries by ``tick_id``, and
+    returns the most recent ``limit`` ticks (sorted by tick_start timestamp,
+    newest first).
+
+    :param config: Pipeline config.
+    :param limit: Maximum number of ticks to return.
+    :returns: List of tick dicts, most recent first. Empty if no log file is
+        configured, the file is missing, or it contains no ticks.
+    """
+    if not config.log_file:
+        return []
+    log_path = Path(config.log_file)
+    if not log_path.is_absolute():
+        log_path = Path(config.workspace_dir) / log_path
+    if not log_path.is_file():
+        return []
+
+    entries: list[dict[str, Any]] = []
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(entry, dict):
+                    entries.append(entry)
+    except OSError:
+        return []
+
+    ticks: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        tick_id = entry.get("tick_id")
+        if not tick_id:
+            continue
+        if tick_id not in ticks:
+            ticks[tick_id] = {
+                "tick_id": tick_id,
+                "target": entry.get("target", ""),
+                "start_time": "",
+                "end_time": "",
+                "total_duration_ms": 0,
+                "stages_checked": 0,
+                "actions_executed": 0,
+                "failures": 0,
+                "final_status": "",
+                "final_stage_id": None,
+                "dry_run": False,
+                "stages": [],
+            }
+        tick = ticks[tick_id]
+        event = entry.get("event")
+        if event == "tick_start":
+            tick["start_time"] = entry.get("timestamp", "")
+            tick["dry_run"] = bool(entry.get("dry_run", False))
+            tick["target"] = entry.get("target", tick["target"])
+        elif event == "tick_end":
+            tick["end_time"] = entry.get("timestamp", "")
+            tick["total_duration_ms"] = entry.get("total_duration_ms", 0)
+            tick["stages_checked"] = entry.get("stages_checked", 0)
+            tick["actions_executed"] = entry.get("actions_executed", 0)
+            tick["failures"] = entry.get("failures", 0)
+            tick["final_status"] = entry.get("final_status", "")
+            tick["final_stage_id"] = entry.get("final_stage_id")
+        elif event == "stage":
+            tick["stages"].append({
+                "event": "stage",
+                "stage_id": entry.get("stage_id", ""),
+                "stage_name": entry.get("stage_name", ""),
+                "result": entry.get("result", ""),
+                "duration_ms": entry.get("duration_ms", 0),
+                "stdout": entry.get("stdout", ""),
+                "stderr": entry.get("stderr", ""),
+                "action_command": entry.get("action_command", ""),
+                "dry_run": entry.get("dry_run", False),
+                "chained": entry.get("chained", False),
+                "timestamp": entry.get("timestamp", ""),
+            })
+
+    result = list(ticks.values())
+    result.sort(key=lambda t: t.get("start_time", ""), reverse=True)
+    return result[:limit]
+
+
 def _active_stages(config: PipelineConfig, mode: str | None) -> list:
     """Return enabled stages active in the given mode.
 
@@ -390,6 +481,18 @@ def _build_app():
             "mode": mode,
             "enabled": _read_enabled(cfg),
         }
+
+    @app.get("/api/log")
+    def pipeline_log(config: str = Query(...), limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+        """Read recent execution log ticks for a pipeline config.
+
+        :param config: Config filename.
+        :param limit: Maximum number of ticks to return (1-500).
+        :returns: Dict with ``ticks`` (most recent first) and ``count``.
+        """
+        cfg = _load_config(config)
+        ticks = _read_log_ticks(cfg, limit=limit)
+        return {"ticks": ticks, "count": len(ticks)}
 
     class ToggleRequest(BaseModel):
         """Request body for the enable/disable toggle.
