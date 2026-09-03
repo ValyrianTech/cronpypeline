@@ -814,6 +814,11 @@ class HttpRequestActionHandler(ActionHandler):
                         )
                     original_url = current_url
                     current_url = urllib.parse.urljoin(current_url, location)
+                    # Don't forward auth headers to a different host
+                    redirect_parsed = urllib.parse.urlparse(current_url)
+                    original_parsed = urllib.parse.urlparse(original_url)
+                    if redirect_parsed.netloc != original_parsed.netloc:
+                        headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
                     # Match urllib's default redirect behavior for method/body
                     if e.code in (301, 302, 303) and method == "POST":
                         method = "GET"

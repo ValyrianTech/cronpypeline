@@ -1670,6 +1670,50 @@ class TestHttpRequestActionHandlerRedirects:
         assert result.success is True
         assert result.exit_code == 200
 
+    def test_redirect_to_different_host_strips_authorization_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            auth_token="secret-token",
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("Authorization") is None
+
+    def test_redirect_to_same_host_keeps_authorization_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            auth_token="secret-token",
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("Authorization") == "token secret-token"
+
     def test_redirect_to_private_ip_is_blocked(self, tmp_path):
         action = self._action("http://93.184.216.34/start")
         ctx = self._ctx(tmp_path)
