@@ -464,20 +464,17 @@ def _task_dir_belongs_to_repo(task_dir_name: str, repo_name: str) -> bool:
     """Return True if a task dir name belongs to the given repo.
 
     Task dir names use the format ``{date}_{safe_repo}_{task_id}`` where
-    ``date`` is an 8-digit ``YYYYMMDD`` string. The repo slug is matched via a
-    trailing-underscore prefix check so that e.g. ``my-repo`` does not match a
-    dir belonging to ``my-repo-extra``.
+    ``date`` is an 8-digit ``YYYYMMDD`` string. The repo slug is matched
+    exactly and the task-id component must be a single non-underscore token,
+    so e.g. ``my`` does not match a dir belonging to ``my_repo``.
 
     :param task_dir_name: Task directory name.
     :param repo_name: Repo name to match.
     :returns: True if the directory belongs to the repo.
     """
     safe_repo = _safe_slug(repo_name)
-    parts = task_dir_name.split("_", 1)
-    if len(parts) < 2:
-        return False
-    rest = parts[1]
-    return rest.startswith(f"{safe_repo}_") and len(rest) > len(safe_repo) + 1
+    pattern = rf"^\d{{8}}_{re.escape(safe_repo)}_[^_]+$"
+    return re.match(pattern, task_dir_name) is not None
 
 
 def _cleanup_stale_task(repo_dir: Path, task_dir: Path, repo_name: str,
