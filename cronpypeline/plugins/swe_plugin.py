@@ -906,7 +906,7 @@ def detect_b1_issue_gathering(context: dict[str, Any]) -> bool:
 
     Mirrors the original ``detect_b1_issue_gathering`` logic:
     - No active GitHub session
-    - No completed session (or recheck interval elapsed)
+    - Idle or completed session (or recheck interval elapsed)
     - Token available
     - Slug configured (contains '/')
 
@@ -920,12 +920,11 @@ def detect_b1_issue_gathering(context: dict[str, Any]) -> bool:
     if session is not None:
         if session.get("active"):
             return False
-        if session.get("completed"):
-            return False
-        # Idle check state — re-check only after interval
-        checked_at = session.get("checked_at", "")
-        if checked_at:
-            last = _parse_utc_datetime(checked_at)
+        # Determine the recheck reference timestamp.
+        # Completed sessions use completed_at; idle sessions use checked_at.
+        recheck_at = session.get("completed_at", "") or session.get("checked_at", "")
+        if recheck_at:
+            last = _parse_utc_datetime(recheck_at)
             if last is not None:
                 ago = (datetime.now(timezone.utc) - last).total_seconds()
                 if ago < GITHUB_RECHECK_SECONDS:
@@ -3373,8 +3372,8 @@ def sync_session_mode(context: dict[str, Any], mode_file: str | None = None) -> 
     """Pre-tick hook: sync .SWE/github_session.json to the pipeline mode_file.
 
     Reads the GitHub session file from the target's ``.SWE`` directory. If the session
-    is active, writes ``{"mode": "github"}`` to the mode_file. Otherwise writes
-    ``{"mode": "default"}``.
+    is active (and not completed), writes ``{"mode": "github"}`` to the mode_file.
+    Otherwise (including completed sessions) writes ``{"mode": "default"}``.
 
     The mode_file path can be passed explicitly or resolved from target_config.
 
@@ -3403,16 +3402,10 @@ def sync_session_mode(context: dict[str, Any], mode_file: str | None = None) -> 
             # A completed session is no longer active
             if session_data.get("active") is True and session_data.get("completed") is not True:
                 mode = "github"
-            # Write mode file even when skipping the tick
-            mode_path.parent.mkdir(parents=True, exist_ok=True)
-            mode_path.write_text(json.dumps({"mode": mode}))
-            # Skip tick entirely if the session is completed
-            if session_data.get("completed") is True:
-                return False
         except (json.JSONDecodeError, OSError):
             pass
 
-    # Write mode file (for the non-session-file path)
+    # Write mode file
     mode_path.parent.mkdir(parents=True, exist_ok=True)
     mode_path.write_text(json.dumps({"mode": mode}))
 
