@@ -5660,6 +5660,19 @@ class TestRunA9DepAudit:
             result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.data["issues_created"] == 1  # only weirdlib
 
+    def test_failed_audit_with_no_issues_returns_failure(self, tmp_path):
+        """When audit fails but no issues can be created, preserve failure."""
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        # Empty stdout means no vulnerabilities parsed, issues_created = 0
+        result_mock = self._mock_result(stdout="No table here\n")
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=result_mock):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "No vulnerability issues could be created" in result.stderr
+        assert result.data["issues_created"] == 0
+
 
 # ─── review issue counting/finding with since_dt ────────────────────────────
 
