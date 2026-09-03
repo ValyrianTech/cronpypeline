@@ -18,6 +18,7 @@ from cronpypeline.actions import (
     _as_bool,
     _host_matches,
     _is_private_ip,
+    _is_sensitive_header,
     _PinnedHTTPConnection,
     _PinnedHTTPHandler,
     _PinnedHTTPSConnection,
@@ -2587,3 +2588,57 @@ class TestPinnedConnections:
         assert result.success is True
         req = mock_urlopen.call_args[0][0]
         assert req._validated_ips is None
+
+
+class TestIsSensitiveHeader:
+    """Tests for _is_sensitive_header word-boundary matching."""
+
+    def test_exact_sensitive_headers(self):
+        for header in ("authorization", "cookie", "proxy-authorization"):
+            assert _is_sensitive_header(header) is True
+
+    def test_whole_word_keywords(self):
+        for header in (
+            "x-api-key",
+            "x-auth-token",
+            "x-secret-token",
+            "x-custom-api-key",
+            "x-api-secret",
+            "x-password",
+            "x-credential",
+        ):
+            assert _is_sensitive_header(header) is True
+
+    def test_keyword_as_substring_not_sensitive(self):
+        for header in (
+            "x-monkey",
+            "x-keyless",
+            "x-keychain",
+            "x-tokenizer",
+            "x-keyboard",
+            "x-monkey-business",
+            "x-tokenized",
+            "x-keyring",
+            "x-keyhole",
+        ):
+            assert _is_sensitive_header(header) is False
+
+    def test_case_insensitivity(self):
+        assert _is_sensitive_header("X-API-Key") is True
+        assert _is_sensitive_header("X-Auth-Token") is True
+        assert _is_sensitive_header("X-Monkey") is False
+        assert _is_sensitive_header("X-Keyless") is False
+
+    def test_non_sensitive_headers(self):
+        for header in (
+            "content-type",
+            "accept",
+            "x-request-id",
+            "x-forwarded-for",
+        ):
+            assert _is_sensitive_header(header) is False
+
+    def test_keyword_at_start_or_end(self):
+        assert _is_sensitive_header("key") is True
+        assert _is_sensitive_header("api-key") is True
+        assert _is_sensitive_header("key-holder") is True
