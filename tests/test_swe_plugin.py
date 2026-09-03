@@ -5673,6 +5673,35 @@ class TestRunA9DepAudit:
         assert "No vulnerability issues could be created" in result.stderr
         assert result.data["issues_created"] == 0
 
+    def test_all_tooling_vulnerabilities_returns_success(self, tmp_path):
+        """All found vulnerabilities are excluded tooling packages."""
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        pip_only_stdout = (
+            "Name      Version  ID                  Fix Versions\n"
+            "--------  -------  ------------------  ------------\n"
+            "pip       22.0.0   PYSEC-2022-000      22.1.0\n"
+            "Found 1 known vulnerabilities in 1 package\n"
+        )
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result(stdout=pip_only_stdout)):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["issues_created"] == 0
+        assert not list((target / ".SWE" / "issues").glob("dep-audit-*.md"))
+
+    def test_all_vulnerabilities_already_exist_returns_success(self, tmp_path):
+        """All vulnerability issues already exist, so dedup skips them all."""
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "issues" / "dep-audit-requests-pysec-2023-74.md").write_text("---\nstatus: open\n---\n# Existing")
+        (target / ".SWE" / "issues" / "dep-audit-weirdlib-ghsa-1234-5678.md").write_text("---\nstatus: open\n---\n# Existing")
+        ctx = _make_tick_context(target)
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result()):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["issues_created"] == 0
+
 
 # ─── review issue counting/finding with since_dt ────────────────────────────
 
