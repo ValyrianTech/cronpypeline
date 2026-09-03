@@ -786,6 +786,7 @@ class TestCleanupStaleTask:
             "branch": "swe-pipeline/task_task1",
             "default_branch": "main",
             "source_issue_id": issue_id,
+            "repo_name": "repo",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }))
         subprocess.run(["git", "-C", str(target), "checkout", "-b", "swe-pipeline/task_task1"], capture_output=True, check=True)
@@ -793,7 +794,7 @@ class TestCleanupStaleTask:
 
     def test_cleans_dir_and_branch(self, tmp_path, monkeypatch):
         target, task_dir = self._setup(tmp_path, monkeypatch)
-        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+        assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
         assert not task_dir.exists()
         branches = subprocess.run(["git", "-C", str(target), "branch", "--list"], capture_output=True, text=True, check=False).stdout
         assert "swe-pipeline/task_task1" not in branches
@@ -804,7 +805,7 @@ class TestCleanupStaleTask:
         venv_pkg.mkdir(parents=True)
         (venv_pkg / "__init__.py").write_text("x")
         (target / "generated_artifact.txt").write_text("artifact")
-        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+        assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
         assert (venv_pkg / "__init__.py").exists()
         assert (target / "generated_artifact.txt").exists()
 
@@ -820,9 +821,10 @@ class TestCleanupStaleTask:
         (task_dir / TASK_FILE).write_text(json.dumps({
             "task_id": "t", "branch": "b", "default_branch": "main",
             "source_issue_id": "iss-1",
+            "repo_name": "repo",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }))
-        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+        assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
         content = (target / ".SWE" / "issues" / "iss-1.md").read_text()
         assert "open" in content or "discarded" in content
 
@@ -835,9 +837,10 @@ class TestCleanupStaleTask:
         (task_dir / TASK_FILE).write_text(json.dumps({
             "task_id": "t", "branch": "b", "default_branch": "main",
             "source_issue_id": "",
+            "repo_name": "repo",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }))
-        assert _cleanup_stale_task(target, task_dir) is True
+        assert _cleanup_stale_task(target, task_dir, "repo") is True
 
     def test_rmtree_error(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
@@ -848,10 +851,11 @@ class TestCleanupStaleTask:
         (task_dir / TASK_FILE).write_text(json.dumps({
             "task_id": "t", "branch": "b", "default_branch": "main",
             "source_issue_id": "",
+            "repo_name": "repo",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }))
         with patch("cronpypeline.plugins.issue_fix.shutil.rmtree", side_effect=OSError("x")):
-            assert _cleanup_stale_task(target, task_dir) is False
+            assert _cleanup_stale_task(target, task_dir, "repo") is False
 
     def test_verbose_no_created_at(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
@@ -862,8 +866,9 @@ class TestCleanupStaleTask:
         (task_dir / TASK_FILE).write_text(json.dumps({
             "task_id": "t", "branch": "b", "default_branch": "main",
             "source_issue_id": "",
+            "repo_name": "repo",
         }))
-        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+        assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
 
     def test_verbose_old_mtime_no_created_at(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
@@ -875,20 +880,41 @@ class TestCleanupStaleTask:
         task_file.write_text(json.dumps({
             "task_id": "t", "branch": "b", "default_branch": "main",
             "source_issue_id": "",
+            "repo_name": "repo",
         }))
         old = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).timestamp()
         os.utime(task_file, (old, old))
-        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+        assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
 
     def test_corrupt_task_json(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         _init_git(target)
         monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
-        task_dir = tmp_path / "tasks" / "d" / "t"
+        task_dir = tmp_path / "tasks" / "d" / "20250101_repo_t"
         task_dir.mkdir(parents=True)
         (task_dir / TASK_FILE).write_text("not valid json{")
-        assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+        assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
         assert not task_dir.exists()
+
+    def test_cleans_repo_with_underscores(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_ipfs_dict_chain_iss1"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, "ipfs_dict_chain", verbose=True) is True
+        assert not task_dir.exists()
+
+    def test_refuses_repo_with_underscore_prefix_mismatch(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_ipfs_other_iss1"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, "ipfs_dict_chain") is False
+        assert task_dir.exists()
 
     def test_rmtree_escapes_tasks_dir(self, tmp_path, monkeypatch, capsys):
         """Covers the containment check failure path."""
@@ -902,9 +928,10 @@ class TestCleanupStaleTask:
         (task_dir / TASK_FILE).write_text(json.dumps({
             "task_id": "t", "branch": "b", "default_branch": "main",
             "source_issue_id": "",
+            "repo_name": "repo",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }))
-        assert _cleanup_stale_task(target, task_dir) is False
+        assert _cleanup_stale_task(target, task_dir, "repo") is False
         assert task_dir.exists()
         out = capsys.readouterr().out
         assert "ERROR" in out and "escapes TASKS_DIR" in out
@@ -921,12 +948,13 @@ class TestCleanupStaleTask:
         (outside_dir / TASK_FILE).write_text(json.dumps({
             "task_id": "t", "branch": "b", "default_branch": "main",
             "source_issue_id": "",
+            "repo_name": "repo",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }))
         task_dir = tasks_dir / "d" / "link"
         task_dir.parent.mkdir(parents=True)
         task_dir.symlink_to(outside_dir, target_is_directory=True)
-        assert _cleanup_stale_task(target, task_dir) is False
+        assert _cleanup_stale_task(target, task_dir, "repo") is False
         assert outside_dir.exists()
         out = capsys.readouterr().out
         assert "ERROR" in out and "escapes TASKS_DIR" in out
@@ -943,14 +971,69 @@ class TestCleanupStaleTask:
         (outside_dir / TASK_FILE).write_text(json.dumps({
             "task_id": "t", "branch": "b", "default_branch": "main",
             "source_issue_id": "",
+            "repo_name": "repo",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }))
         (tasks_dir / "d").mkdir()
         task_dir = tasks_dir / "d" / ".." / ".." / "outside" / "t"
-        assert _cleanup_stale_task(target, task_dir) is False
+        assert _cleanup_stale_task(target, task_dir, "repo") is False
         assert outside_dir.exists()
         out = capsys.readouterr().out
         assert "ERROR" in out and "escapes TASKS_DIR" in out
+
+    def test_refuses_wrong_repo_name(self, tmp_path, monkeypatch, capsys):
+        """Refuse to clean a task whose task.json repo_name doesn't match."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_repo_t"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text(json.dumps({
+            "task_id": "t", "branch": "b", "default_branch": "main",
+            "source_issue_id": "", "repo_name": "other-repo",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        assert _cleanup_stale_task(target, task_dir, "repo") is False
+        assert task_dir.exists()
+        out = capsys.readouterr().out
+        assert "refusing cleanup" in out
+
+    def test_refuses_corrupt_task_json_mismatched_dir_name(self, tmp_path, monkeypatch, capsys):
+        """Refuse to clean a corrupt task whose dir name doesn't match the repo."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_other_t"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, "repo") is False
+        assert task_dir.exists()
+        out = capsys.readouterr().out
+        assert "refusing cleanup" in out
+
+    def test_refuses_corrupt_task_json_prefix_false_positive(self, tmp_path, monkeypatch, capsys):
+        """A repo name that is a prefix of the dir's repo slug must not match."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_my_repo_iss1"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, "my") is False
+        assert task_dir.exists()
+        out = capsys.readouterr().out
+        assert "refusing cleanup" in out
+
+    def test_cleans_corrupt_task_json_exact_repo_match(self, tmp_path, monkeypatch):
+        """A corrupt task whose dir name matches the repo exactly is cleaned up."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_my_repo_iss1"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, "my_repo", verbose=True) is True
+        assert not task_dir.exists()
 
 
 # ─── _cleanup_orphaned_task_dirs ─────────────────────────────────────────────
@@ -1035,6 +1118,64 @@ class TestCleanupOrphanedTaskDirs:
         assert outside_dir.exists()
         out = capsys.readouterr().out
         assert "ERROR" in out and "escapes TASKS_DIR" in out
+
+    def test_does_not_remove_prefix_repo(self, tmp_path, monkeypatch):
+        """A repo name that is a prefix of another repo must not match it."""
+        td = tmp_path / "2025-01-01" / "20250101_my-repo-extra_iss1"
+        td.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("my-repo")
+        assert td.exists()
+
+    def test_skips_dir_name_without_underscore(self, tmp_path, monkeypatch):
+        """A task dir name without a repo component is left untouched."""
+        td = tmp_path / "2025-01-01" / "orphaned"
+        td.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("repo")
+        assert td.exists()
+
+    def test_removes_matching_repo_after_prefix_check(self, tmp_path, monkeypatch):
+        """Exact repo match still gets removed even when a prefix sibling exists."""
+        keep = tmp_path / "2025-01-01" / "20250101_my-repo-extra_iss1"
+        keep.mkdir(parents=True)
+        remove = tmp_path / "2025-01-01" / "20250101_my-repo_iss1"
+        remove.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("my-repo")
+        assert keep.exists()
+        assert not remove.exists()
+
+    def test_removes_orphaned_repo_with_underscores(self, tmp_path, monkeypatch):
+        td = tmp_path / "2025-01-01" / "20250101_ipfs_dict_chain_iss1"
+        td.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("ipfs_dict_chain")
+        assert not td.exists()
+
+    def test_keeps_orphaned_dir_of_repo_with_underscore_prefix(self, tmp_path, monkeypatch):
+        td = tmp_path / "2025-01-01" / "20250101_ipfs_other_iss1"
+        td.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("ipfs_dict_chain")
+        assert td.exists()
+
+    def test_removes_matching_underscore_repo_after_prefix_check(self, tmp_path, monkeypatch):
+        keep = tmp_path / "2025-01-01" / "20250101_ipfs_other_iss1"
+        keep.mkdir(parents=True)
+        remove = tmp_path / "2025-01-01" / "20250101_ipfs_dict_chain_iss1"
+        remove.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("ipfs_dict_chain")
+        assert keep.exists()
+        assert not remove.exists()
+
+    def test_does_not_remove_dir_of_repo_with_longer_slug(self, tmp_path, monkeypatch):
+        td = tmp_path / "2025-01-01" / "20250101_my_repo_iss1"
+        td.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("my")
+        assert td.exists()
 
 
 # ─── _recover_orphaned_triaged ──────────────────────────────────────────────
@@ -1239,14 +1380,14 @@ class TestRunGate:
 
     def test_dry_run(self, tmp_path):
         td = tmp_path / "t"; self._make_task(tmp_path, td)
-        assert run_gate(tmp_path, td, dry_run=True) is True
+        assert run_gate(tmp_path, td, "repo", dry_run=True) is True
 
     def test_unfixable(self, tmp_path):
         t = _make_target_dir(tmp_path)
         _write_issue(t / ".SWE" / "issues", "iss-1", status="open")
         td = tmp_path / "t"; self._make_task(tmp_path, td)
         (td / CODING_COMPLETE_MARKER).write_text("UNFIXABLE: nope")
-        assert run_gate(t, td, verbose=True) is True
+        assert run_gate(t, td, "repo", verbose=True) is True
         gate = json.loads((td / GATE_RESULT_FILE).read_text())
         assert gate["passed"] is False and gate["unfixable"] is True
         assert "discarded" in (t / ".SWE" / "issues" / "iss-1.md").read_text()
@@ -1254,28 +1395,28 @@ class TestRunGate:
     def test_unfixable_dry_run(self, tmp_path):
         td = tmp_path / "t"; self._make_task(tmp_path, td)
         (td / CODING_COMPLETE_MARKER).write_text("UNFIXABLE: nope")
-        assert run_gate(tmp_path, td, dry_run=True) is True
+        assert run_gate(tmp_path, td, "repo", dry_run=True) is True
         assert not (td / GATE_RESULT_FILE).exists()
 
     def test_review_gate(self, tmp_path):
         t = _make_target_dir(tmp_path)
         _write_issue(t / ".SWE" / "issues", "rev-1", status="open", source="review")
         td = tmp_path / "t"; self._make_task(tmp_path, td, issue_type="review", source_issue_id="rev-1")
-        assert run_gate(t, td, verbose=True) is True
+        assert run_gate(t, td, "repo", verbose=True) is True
         assert json.loads((td / GATE_RESULT_FILE).read_text())["passed"] is True
 
     def test_review_gate_dry_run(self, tmp_path):
         td = tmp_path / "t"; self._make_task(tmp_path, td, issue_type="review")
-        assert run_gate(tmp_path, td, dry_run=True) is True
+        assert run_gate(tmp_path, td, "repo", dry_run=True) is True
 
     def test_corrupt_task_json(self, tmp_path, monkeypatch):
         t = _make_target_dir(tmp_path)
         _init_git(t)
         monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
-        td = tmp_path / "tasks" / "d" / "t"
+        td = tmp_path / "tasks" / "d" / "20250101_repo_t"
         td.mkdir(parents=True)
         (td / TASK_FILE).write_text("not valid json{")
-        assert run_gate(t, td, verbose=True) is True
+        assert run_gate(t, td, "repo", verbose=True) is True
         assert not td.exists()
 
     def test_corrupt_task_json_dry_run(self, tmp_path, monkeypatch):
@@ -1285,8 +1426,20 @@ class TestRunGate:
         td = tmp_path / "tasks" / "d" / "t"
         td.mkdir(parents=True)
         (td / TASK_FILE).write_text("not valid json{")
-        assert run_gate(t, td, dry_run=True) is True
+        assert run_gate(t, td, "repo", dry_run=True) is True
         assert td.exists()
+
+    def test_corrupt_task_json_cleanup_refused(self, tmp_path, monkeypatch):
+        """run_gate returns False when _cleanup_stale_task refuses cleanup."""
+        t = _make_target_dir(tmp_path)
+        _init_git(t)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        # Dir name doesn't match repo 'repo' — cleanup will be refused
+        td = tmp_path / "tasks" / "d" / "20250101_other_t"
+        td.mkdir(parents=True)
+        (td / TASK_FILE).write_text("not valid json{")
+        assert run_gate(t, td, "repo", verbose=True) is False
+        assert td.exists()  # cleanup refused, dir still there
 
     def _setup_git_with_branch(self, tmp_path):
         t = _make_target_dir(tmp_path)
@@ -1303,7 +1456,7 @@ class TestRunGate:
         subprocess.run(["git", "-C", str(t), "commit", "-m", "fix"], capture_output=True, check=True)
         td = tmp_path / "t"; self._make_task(tmp_path, td)
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "", "")):
-            assert run_gate(t, td, verbose=True) is True
+            assert run_gate(t, td, "repo", verbose=True) is True
         gate = json.loads((td / GATE_RESULT_FILE).read_text())
         assert gate["passed"] is True and gate["merged"] is True
 
@@ -1314,14 +1467,14 @@ class TestRunGate:
         subprocess.run(["git", "-C", str(t), "commit", "-m", "fix"], capture_output=True, check=True)
         td = tmp_path / "t"; self._make_task(tmp_path, td)
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(1, "", "err")):
-            assert run_gate(t, td, verbose=True) is False
+            assert run_gate(t, td, "repo", verbose=True) is False
         assert json.loads((td / GATE_RESULT_FILE).read_text())["passed"] is False
 
     def test_resolved_out_of_tree(self, tmp_path):
         t = self._setup_git_with_branch(tmp_path)
         td = tmp_path / "t"; self._make_task(tmp_path, td)
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "", "")):
-            assert run_gate(t, td, verbose=True) is True
+            assert run_gate(t, td, "repo", verbose=True) is True
         gate = json.loads((td / GATE_RESULT_FILE).read_text())
         assert gate["resolved_out_of_tree"] is True and gate["passed"] is False
         assert "discarded" in (t / ".SWE" / "issues" / "iss-1.md").read_text()
@@ -1333,7 +1486,7 @@ class TestRunGate:
         subprocess.run(["git", "-C", str(t), "commit", "-m", "t"], capture_output=True, check=True)
         td = tmp_path / "t"; self._make_task(tmp_path, td, issue_type="coverage", coverage_cmd="cov")
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "TOTAL 100 0 100%\n5 passed", "")):
-            assert run_gate(t, td, verbose=True) is True
+            assert run_gate(t, td, "repo", verbose=True) is True
         gate = json.loads((td / GATE_RESULT_FILE).read_text())
         assert gate["passed"] is True and gate["coverage_pct"] == 100.0
 
@@ -1344,7 +1497,7 @@ class TestRunGate:
         subprocess.run(["git", "-C", str(t), "commit", "-m", "t"], capture_output=True, check=True)
         td = tmp_path / "t"; self._make_task(tmp_path, td, issue_type="coverage", coverage_cmd="cov")
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "TOTAL 100 50 50%\n5 passed", "")):
-            assert run_gate(t, td, verbose=True) is False
+            assert run_gate(t, td, "repo", verbose=True) is False
         assert json.loads((td / GATE_RESULT_FILE).read_text())["passed"] is False
 
     def test_coverage_custom_target_passes(self, tmp_path):
@@ -1355,7 +1508,7 @@ class TestRunGate:
         td = tmp_path / "t"
         self._make_task(tmp_path, td, issue_type="coverage", coverage_cmd="cov", coverage_target=80.0)
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "TOTAL 100 20 80%\n5 passed", "")):
-            assert run_gate(t, td, verbose=True) is True
+            assert run_gate(t, td, "repo", verbose=True) is True
         gate = json.loads((td / GATE_RESULT_FILE).read_text())
         assert gate["passed"] is True and gate["coverage_pct"] == 80.0
         assert gate["coverage_target"] == 80.0
@@ -1368,7 +1521,7 @@ class TestRunGate:
         td = tmp_path / "t"
         self._make_task(tmp_path, td, issue_type="coverage", coverage_cmd="cov", coverage_target=90.0)
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "TOTAL 100 20 80%\n5 passed", "")):
-            assert run_gate(t, td, verbose=True) is False
+            assert run_gate(t, td, "repo", verbose=True) is False
         gate = json.loads((td / GATE_RESULT_FILE).read_text())
         assert gate["passed"] is False and gate["coverage_pct"] == 80.0
         assert gate["coverage_target"] == 90.0
@@ -1381,7 +1534,7 @@ class TestRunGate:
         td = tmp_path / "t"; self._make_task(tmp_path, td, coverage_cmd="cov")
         cov = "TOTAL 100 0 100%\n5 passed"
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, cov, "")):
-            assert run_gate(t, td, verbose=True) is True
+            assert run_gate(t, td, "repo", verbose=True) is True
         gate = json.loads((td / GATE_RESULT_FILE).read_text())
         assert gate["passed"] is True and "baseline_pct" in gate
 
@@ -1401,7 +1554,7 @@ class TestRunGate:
         cov = "TOTAL 100 0 100%\n5 passed"
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git), \
              patch("cronpypeline.plugins.issue_fix._run", return_value=(0, cov, "")):
-            assert run_gate(t, td, verbose=True) is True
+            assert run_gate(t, td, "repo", verbose=True) is True
         assert "WARNING" in capsys.readouterr().out
 
     def test_verify_checkout_task_branch_fails(self, tmp_path, capsys):
@@ -1416,7 +1569,7 @@ class TestRunGate:
             return subprocess.CompletedProcess(["git"], 1, "", "checkout failed")
 
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
-            assert run_gate(t, td, verbose=True) is False
+            assert run_gate(t, td, "repo", verbose=True) is False
         out = capsys.readouterr().out
         assert "ERROR" in out
         gate = json.loads((td / GATE_RESULT_FILE).read_text())
@@ -1434,7 +1587,7 @@ class TestRunGate:
         subprocess.run(["git", "-C", str(t), "commit", "-m", "f"], capture_output=True, check=True)
         td = tmp_path / "t"; self._make_task(tmp_path, td, source_issue_id="")
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "", "")):
-            assert run_gate(t, td) is True
+            assert run_gate(t, td, "repo") is True
 
     def test_batch_not_full_after_merge(self, tmp_path):
         """Non-coverage merge with issues_per_pr > 1 uses partial invalidation."""
@@ -1445,7 +1598,7 @@ class TestRunGate:
         subprocess.run(["git", "-C", str(t), "commit", "-m", "f"], capture_output=True, check=True)
         td = tmp_path / "t"; self._make_task(tmp_path, td, issues_per_pr=3)
         with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "", "")):
-            assert run_gate(t, td, verbose=True) is True
+            assert run_gate(t, td, "repo", verbose=True) is True
         gate = json.loads((td / GATE_RESULT_FILE).read_text())
         assert gate["passed"] is True and gate["merged"] is True
         assert _batch_fixed_count(t) == 1
@@ -1834,12 +1987,13 @@ class TestCleanupStaleTaskGitError:
         (task_dir / TASK_FILE).write_text(json.dumps({
             "task_id": "t", "branch": "nonexistent-branch", "default_branch": "main",
             "source_issue_id": "",
+            "repo_name": "repo",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }))
         def fake_git(repo, *args, check=True):
             raise subprocess.CalledProcessError(1, "git", stderr="err")
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
-            assert _cleanup_stale_task(target, task_dir, verbose=True) is True
+            assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
         assert "WARNING" in capsys.readouterr().out
 
 

@@ -460,18 +460,52 @@ def _iter_task_dirs() -> list[Path]:
     return result
 
 
-def _cleanup_stale_task(repo_dir: Path, task_dir: Path,
+def _task_dir_belongs_to_repo(task_dir_name: str, repo_name: str) -> bool:
+    """Return True if a task dir name belongs to the given repo.
+
+    Task dir names use the format ``{date}_{safe_repo}_{task_id}`` where
+    ``date`` is an 8-digit ``YYYYMMDD`` string. The repo slug is matched
+    exactly and the task-id component must be a single non-underscore token,
+    so e.g. ``my`` does not match a dir belonging to ``my_repo``.
+
+    :param task_dir_name: Task directory name.
+    :param repo_name: Repo name to match.
+    :returns: True if the directory belongs to the repo.
+    """
+    safe_repo = _safe_slug(repo_name)
+    pattern = rf"^\d{{8}}_{re.escape(safe_repo)}_[^_]+$"
+    return re.match(pattern, task_dir_name) is not None
+
+
+def _cleanup_stale_task(repo_dir: Path, task_dir: Path, repo_name: str,
                         verbose: bool = False) -> bool:
     """Clean up a stale task: reset git state, reset issue, delete task dir.
 
     :param repo_dir: Target repo directory.
     :param task_dir: Stale task directory.
+    :param repo_name: Expected repo name the task must belong to.
     :param verbose: If True, print progress.
     :returns: True if cleanup succeeded.
     """
     task = _read_task(task_dir)
     if task is None:
         task = {}
+
+    # Verify the task belongs to the expected repo before touching anything.
+    task_repo = task.get("repo_name")
+    if task_repo is not None:
+        if task_repo != repo_name:
+            print(f"  [task] ERROR: task at {task_dir} belongs to repo "
+                  f"'{task_repo}', not '{repo_name}' — refusing cleanup")
+            return False
+    else:
+        # No repo_name in task.json — fall back to the directory name.
+        # Format: {date}_{safe_repo}_{task_id}
+        if not _task_dir_belongs_to_repo(task_dir.name, repo_name):
+            print(f"  [task] ERROR: cannot verify task at {task_dir} belongs to "
+                  f"repo '{repo_name}' — refusing cleanup")
+            return False
+
     task_id = task.get("task_id", task_dir.name)
     branch = task.get("branch", _task_branch_name(task_id))
     default_branch = task.get("default_branch", "main")
@@ -532,7 +566,6 @@ def _cleanup_orphaned_task_dirs(repo_name: str, verbose: bool = False) -> None:
     :param repo_name: Repo name to match.
     :param verbose: If True, print progress.
     """
-    safe_repo = _safe_slug(repo_name)
     for task_dir in _iter_task_dirs():
         task_file = task_dir / TASK_FILE
         if task_file.exists():
@@ -541,8 +574,7 @@ def _cleanup_orphaned_task_dirs(repo_name: str, verbose: bool = False) -> None:
                 continue  # valid task.json - keep
             except (OSError, json.JSONDecodeError):
                 pass  # corrupt/unreadable - fall through to cleanup
-        parts = task_dir.name.split("_", 1)
-        if len(parts) < 2 or not parts[1].startswith(f"{safe_repo}_"):
+        if not _task_dir_belongs_to_repo(task_dir.name, repo_name):
             continue
         if verbose:
             reason = f"no {TASK_FILE}" if not task_file.exists() else f"corrupt {TASK_FILE}"
@@ -1072,12 +1104,13 @@ def _gate_review(repo_dir: Path, task_dir: Path, task: dict[str, Any],
     return True
 
 
-def run_gate(repo_dir: Path, task_dir: Path,
+def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
              dry_run: bool = False, verbose: bool = False) -> bool:
     """GATE stage: re-run verification tools, capture diff, finalize issue.
 
     :param repo_dir: Target repo directory.
     :param task_dir: Task directory path.
+    :param repo_name: Expected repo name the task must belong to.
     :param dry_run: If True, don't mutate anything.
     :param verbose: If True, print progress.
     :returns: True on success (passed or resolved out-of-tree).
@@ -1088,7 +1121,7 @@ def run_gate(repo_dir: Path, task_dir: Path,
         if verbose:
             print(f"  corrupted task at {task_dir} (unreadable {TASK_FILE}) — cleaning up")
         if not dry_run:
-            _cleanup_stale_task(repo_dir, task_dir, verbose=verbose)
+            return _cleanup_stale_task(repo_dir, task_dir, repo_name, verbose=verbose)
         return True
     issue_type = (task.get("issue_type") or "security").lower()
     source_issue_id = task.get("source_issue_id", "")
@@ -1273,11 +1306,11 @@ def run_issue_fix_state_machine(repo_dir: Path, repo_name: str,
         marker_ready = (active / CODING_COMPLETE_MARKER).exists()
 
         if marker_ready:
-            return run_gate(repo_dir, active, dry_run=dry_run, verbose=verbose)
+            return run_gate(repo_dir, active, repo_name, dry_run=dry_run, verbose=verbose)
 
         if _is_task_stale(active):
             if not dry_run:
-                _cleanup_stale_task(repo_dir, active, verbose=verbose)
+                _cleanup_stale_task(repo_dir, active, repo_name, verbose=verbose)
                 return run_select(repo_dir, repo_name, target_config, context,
                                   dry_run=dry_run, verbose=verbose)
             return True
@@ -1289,7 +1322,7 @@ def run_issue_fix_state_machine(repo_dir: Path, repo_name: str,
             if verbose:
                 print(f"  corrupted task at {active} (unreadable {TASK_FILE}) — cleaning up")
             if not dry_run:
-                _cleanup_stale_task(repo_dir, active, verbose=verbose)
+                _cleanup_stale_task(repo_dir, active, repo_name, verbose=verbose)
                 return run_select(repo_dir, repo_name, target_config, context,
                                   dry_run=dry_run, verbose=verbose)
             return True
@@ -1301,7 +1334,7 @@ def run_issue_fix_state_machine(repo_dir: Path, repo_name: str,
                 if not dry_run:
                     if verbose:
                         print(f"  {repo_name}: review agent queue empty — gating")
-                    return run_gate(repo_dir, active, dry_run=False, verbose=verbose)
+                    return run_gate(repo_dir, active, repo_name, dry_run=False, verbose=verbose)
                 return True
         elif task_age >= 2 and task.get("issue_type") != "review":
             branch = task.get("branch", "")
@@ -1317,7 +1350,7 @@ def run_issue_fix_state_machine(repo_dir: Path, repo_name: str,
                 if not dry_run:
                     if verbose:
                         print(f"  {repo_name}: agent queue empty + commits on {branch} — gating")
-                    return run_gate(repo_dir, active, dry_run=False, verbose=verbose)
+                    return run_gate(repo_dir, active, repo_name, dry_run=False, verbose=verbose)
                 return True
 
         if not dry_run:

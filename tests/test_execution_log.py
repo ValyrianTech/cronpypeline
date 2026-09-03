@@ -6,11 +6,16 @@ import time
 from pathlib import Path
 from unittest import mock
 
-import pytest
-
 import cronpypeline.pipeline as pipeline_mod
 from cronpypeline.actions import TickContext, resolved_command
-from cronpypeline.config import ActionSpec, ActionType, HookConfig, PipelineConfig, Stage, TargetSpec
+from cronpypeline.config import (
+    ActionSpec,
+    ActionType,
+    HookConfig,
+    PipelineConfig,
+    Stage,
+    TargetSpec,
+)
 from cronpypeline.lock import FileLock
 from cronpypeline.pipeline import Pipeline, TickResultStatus
 
