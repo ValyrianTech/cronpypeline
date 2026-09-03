@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -285,6 +286,446 @@ class TestReadMode:
         assert app._read_mode(cfg) is None
 
 
+class TestReadLogTicks:
+    def _write_log(self, tmp_path, name="log.jsonl", lines=None):
+        path = tmp_path / name
+        path.write_text("\n".join(json.dumps(line) for line in (lines or [])) + "\n")
+        return path
+
+    def test_no_log_file(self, tmp_path):
+        cfg = _make_config(tmp_path)
+        assert app._read_log_ticks(cfg) == []
+
+    def test_missing_log_file(self, tmp_path):
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        assert app._read_log_ticks(cfg) == []
+
+    def test_absolute_log_path(self, tmp_path):
+        abs_path = tmp_path / "sub" / "log.jsonl"
+        abs_path.parent.mkdir()
+        self._write_log(tmp_path, name="sub/log.jsonl", lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "dry_run": False, "timestamp": "2024-01-01T00:00:00"},
+            {"event": "tick_end", "tick_id": "t1", "final_status": "no_work", "timestamp": "2024-01-01T00:00:01"},
+        ])
+        cfg = _make_config(tmp_path, log_file=str(abs_path))
+        ticks = app._read_log_ticks(cfg)
+        assert len(ticks) == 1
+        assert ticks[0]["tick_id"] == "t1"
+        assert ticks[0]["final_status"] == "no_work"
+
+    def test_groups_tick_entries(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "dry_run": False, "timestamp": "2024-01-01T00:00:00"},
+            {"event": "stage", "tick_id": "t1", "target": "repo1", "stage_id": "A0", "stage_name": "Step",
+             "result": "action_executed", "duration_ms": 5, "dry_run": False, "chained": False,
+             "action_command": "echo hi", "stdout": "out", "stderr": "err", "timestamp": "2024-01-01T00:00:05"},
+            {"event": "tick_end", "tick_id": "t1", "target": "repo1", "total_duration_ms": 10,
+             "stages_checked": 1, "actions_executed": 1, "failures": 0,
+             "final_status": "action_executed", "final_stage_id": "A0", "timestamp": "2024-01-01T00:00:10"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        ticks = app._read_log_ticks(cfg)
+        assert len(ticks) == 1
+        tick = ticks[0]
+        assert tick["tick_id"] == "t1"
+        assert tick["target"] == "repo1"
+        assert tick["start_time"] == "2024-01-01T00:00:00"
+        assert tick["end_time"] == "2024-01-01T00:00:10"
+        assert tick["total_duration_ms"] == 10
+        assert tick["stages_checked"] == 1
+        assert tick["actions_executed"] == 1
+        assert tick["failures"] == 0
+        assert tick["final_status"] == "action_executed"
+        assert tick["final_stage_id"] == "A0"
+        assert tick["dry_run"] is False
+        assert len(tick["stages"]) == 1
+        stage = tick["stages"][0]
+        assert stage["stage_id"] == "A0"
+        assert stage["stage_name"] == "Step"
+        assert stage["result"] == "action_executed"
+        assert stage["duration_ms"] == 5
+        assert stage["stdout"] == "out"
+        assert stage["stderr"] == "err"
+        assert stage["action_command"] == "echo hi"
+        assert stage["chained"] is False
+
+    def test_skips_invalid_json_lines(self, tmp_path):
+        path = tmp_path / "log.jsonl"
+        path.write_text(
+            "{broken\n"
+            + json.dumps({"event": "tick_start", "tick_id": "t1", "timestamp": "2024-01-01T00:00:00"}) + "\n"
+            + json.dumps({"event": "tick_end", "tick_id": "t1", "final_status": "no_work"}) + "\n"
+        )
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        ticks = app._read_log_ticks(cfg)
+        assert len(ticks) == 1
+        assert ticks[0]["tick_id"] == "t1"
+
+    def test_skips_blank_lines(self, tmp_path):
+        path = tmp_path / "log.jsonl"
+        path.write_text(
+            "\n"
+            "   \n"
+            + json.dumps({"event": "tick_start", "tick_id": "t1", "timestamp": "2024-01-01T00:00:00"}) + "\n"
+            + "\n"
+            + json.dumps({"event": "tick_end", "tick_id": "t1", "final_status": "no_work"}) + "\n"
+        )
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        ticks = app._read_log_ticks(cfg)
+        assert len(ticks) == 1
+        assert ticks[0]["tick_id"] == "t1"
+
+    def test_skips_non_dict_entries(self, tmp_path):
+        path = tmp_path / "log.jsonl"
+        path.write_text(
+            "[1, 2, 3]\n"
+            + json.dumps({"event": "tick_start", "tick_id": "t1", "timestamp": "2024-01-01T00:00:00"}) + "\n"
+        )
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        ticks = app._read_log_ticks(cfg)
+        assert len(ticks) == 1
+
+    def test_skips_entries_without_tick_id(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        assert app._read_log_ticks(cfg) == []
+
+    def test_oserror_returns_empty(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        with mock.patch("builtins.open", side_effect=OSError("boom")):
+            assert app._read_log_ticks(cfg) == []
+
+    def test_limit_respected(self, tmp_path):
+        lines = []
+        for i in range(5):
+            ts = f"2024-01-01T00:00:{i:02d}"
+            lines.append({"event": "tick_start", "tick_id": f"t{i}", "target": "repo", "timestamp": ts})
+            lines.append({"event": "tick_end", "tick_id": f"t{i}", "final_status": "no_work"})
+        self._write_log(tmp_path, lines=lines)
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        assert len(app._read_log_ticks(cfg, limit=2)) == 2
+        ticks = app._read_log_ticks(cfg, limit=2)
+        assert ticks[0]["tick_id"] == "t4"
+        assert ticks[1]["tick_id"] == "t3"
+
+
+class TestReadLogTicksCache:
+    """Tests for _read_log_ticks server-side caching."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        app._log_ticks_cache.clear()
+        yield
+        app._log_ticks_cache.clear()
+
+    def _write_log(self, tmp_path, name="log.jsonl", lines=None):
+        path = tmp_path / name
+        path.write_text("\n".join(json.dumps(line) for line in (lines or [])) + "\n")
+        return path
+
+    def test_returns_cached_result_without_reopening(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "timestamp": "2024-01-01T00:00:00"},
+            {"event": "tick_end", "tick_id": "t1", "final_status": "no_work", "timestamp": "2024-01-01T00:00:01"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        first = app._read_log_ticks(cfg)
+        assert len(first) == 1
+        with mock.patch("builtins.open", side_effect=OSError("should not re-read")):
+            second = app._read_log_ticks(cfg)
+        assert second == first
+
+    def test_invalidates_cache_when_file_changes(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        first = app._read_log_ticks(cfg)
+        assert len(first) == 1
+        path = tmp_path / "log.jsonl"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"event": "tick_start", "tick_id": "t2", "target": "repo1", "timestamp": "2024-01-01T00:00:01"}) + "\n")
+        second = app._read_log_ticks(cfg)
+        assert len(second) == 2
+
+    def test_cache_bounded_to_500(self, tmp_path):
+        lines = []
+        for i in range(600):
+            ts = f"2024-01-01T00:{i // 60:02d}:{i % 60:02d}"
+            lines.append({"event": "tick_start", "tick_id": f"t{i}", "target": "repo", "timestamp": ts})
+            lines.append({"event": "tick_end", "tick_id": f"t{i}", "final_status": "no_work"})
+        self._write_log(tmp_path, lines=lines)
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        result = app._read_log_ticks(cfg, limit=600)
+        assert len(result) == 500
+        cache_key = str(tmp_path / "log.jsonl")
+        _inode, _mtime, _size, _offset, cached_ticks_by_id = app._log_ticks_cache[cache_key]
+        assert isinstance(cached_ticks_by_id, dict)
+        assert len(cached_ticks_by_id) == 600
+
+    def test_missing_file_clears_stale_cache(self, tmp_path):
+        cache_key = str(tmp_path / "log.jsonl")
+        app._log_ticks_cache[cache_key] = (0, 1.0, 10, 10, {"stale": {"tick_id": "stale"}})
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        assert app._read_log_ticks(cfg) == []
+        assert cache_key not in app._log_ticks_cache
+
+    def test_stat_oserror_returns_empty_and_clears_cache(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        cache_key = str(tmp_path / "log.jsonl")
+        app._log_ticks_cache[cache_key] = (0, 1.0, 10, 10, {"stale": {"tick_id": "stale"}})
+        with mock.patch.object(Path, "is_file", return_value=True), \
+                mock.patch.object(Path, "stat", side_effect=OSError("boom")):
+            assert app._read_log_ticks(cfg) == []
+        assert cache_key not in app._log_ticks_cache
+
+    def test_separate_cache_entries_per_path(self, tmp_path):
+        self._write_log(tmp_path, name="a.jsonl", lines=[
+            {"event": "tick_start", "tick_id": "ta", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        self._write_log(tmp_path, name="b.jsonl", lines=[
+            {"event": "tick_start", "tick_id": "tb", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        app._read_log_ticks(_make_config(tmp_path, log_file="a.jsonl"))
+        app._read_log_ticks(_make_config(tmp_path, log_file="b.jsonl"))
+        assert str(tmp_path / "a.jsonl") in app._log_ticks_cache
+        assert str(tmp_path / "b.jsonl") in app._log_ticks_cache
+        assert len(app._log_ticks_cache) == 2
+
+    def test_incremental_read_only_reads_new_portion(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "timestamp": "2024-01-01T00:00:00"},
+            {"event": "tick_end", "tick_id": "t1", "final_status": "no_work"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        path = tmp_path / "log.jsonl"
+        cache_key = str(path)
+
+        app._read_log_ticks(cfg)
+        _inode, _mtime, _size, offset, _ticks = app._log_ticks_cache[cache_key]
+        assert offset == path.stat().st_size
+
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"event": "tick_start", "tick_id": "t2", "target": "repo1", "timestamp": "2024-01-01T00:00:01"}) + "\n")
+
+        with mock.patch.object(app, "_parse_log_entries", wraps=app._parse_log_entries) as spy:
+            result = app._read_log_ticks(cfg)
+        assert len(result) == 2
+        assert spy.call_count == 1
+        assert spy.call_args[0][1] == offset
+        _inode2, _mtime2, _size2, offset2, _ticks2 = app._log_ticks_cache[cache_key]
+        assert offset2 == path.stat().st_size
+        assert offset2 > offset
+
+    def test_incremental_merges_new_entries_with_existing_ticks(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        path = tmp_path / "log.jsonl"
+        first = app._read_log_ticks(cfg)
+        assert len(first) == 1
+        assert first[0]["end_time"] == ""
+
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "event": "tick_end", "tick_id": "t1", "target": "repo1",
+                "total_duration_ms": 10, "stages_checked": 1, "actions_executed": 1,
+                "failures": 0, "final_status": "action_executed", "final_stage_id": "A0",
+                "timestamp": "2024-01-01T00:00:10",
+            }) + "\n")
+
+        second = app._read_log_ticks(cfg)
+        assert len(second) == 1
+        tick = second[0]
+        assert tick["tick_id"] == "t1"
+        assert tick["start_time"] == "2024-01-01T00:00:00"
+        assert tick["end_time"] == "2024-01-01T00:00:10"
+        assert tick["total_duration_ms"] == 10
+        assert tick["stages_checked"] == 1
+        assert tick["actions_executed"] == 1
+        assert tick["failures"] == 0
+        assert tick["final_status"] == "action_executed"
+        assert tick["final_stage_id"] == "A0"
+
+    def test_file_replacement_triggers_full_read(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        path = tmp_path / "log.jsonl"
+        app._read_log_ticks(cfg)
+
+        replacement = tmp_path / "replacement.jsonl"
+        replacement.write_text(
+            json.dumps({"event": "tick_start", "tick_id": "tX", "target": "repo1", "timestamp": "2024-01-01T00:00:00"}) + "\n"
+            + json.dumps({"event": "tick_end", "tick_id": "tX", "final_status": "no_work"}) + "\n"
+        )
+        os.replace(replacement, path)
+
+        with mock.patch.object(app, "_parse_log_entries", wraps=app._parse_log_entries) as spy:
+            result = app._read_log_ticks(cfg)
+        assert len(result) == 1
+        assert result[0]["tick_id"] == "tX"
+        assert spy.call_count == 1
+        assert spy.call_args[0][1] == 0
+
+    def test_file_shrink_triggers_full_read(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "timestamp": "2024-01-01T00:00:00"},
+            {"event": "tick_end", "tick_id": "t1", "final_status": "no_work"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        path = tmp_path / "log.jsonl"
+        app._read_log_ticks(cfg)
+
+        path.write_text(
+            json.dumps({"event": "tick_start", "tick_id": "tY", "target": "repo1", "timestamp": "2024-01-01T00:00:00"}) + "\n"
+        )
+
+        with mock.patch.object(app, "_parse_log_entries", wraps=app._parse_log_entries) as spy:
+            result = app._read_log_ticks(cfg)
+        assert len(result) == 1
+        assert result[0]["tick_id"] == "tY"
+        assert spy.call_count == 1
+        assert spy.call_args[0][1] == 0
+
+    def test_incremental_read_oserror_clears_cache(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        path = tmp_path / "log.jsonl"
+        cache_key = str(path)
+        app._read_log_ticks(cfg)
+
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"event": "tick_start", "tick_id": "t2", "target": "repo1", "timestamp": "2024-01-01T00:00:01"}) + "\n")
+
+        with mock.patch("builtins.open", side_effect=OSError("boom")):
+            assert app._read_log_ticks(cfg) == []
+        assert cache_key not in app._log_ticks_cache
+
+
+class TestParseLogEntries:
+    def test_reads_all_entries_from_start(self, tmp_path):
+        path = tmp_path / "log.jsonl"
+        path.write_text(
+            json.dumps({"event": "tick_start", "tick_id": "t1"}) + "\n"
+            + json.dumps({"event": "tick_end", "tick_id": "t1"}) + "\n"
+        )
+        entries, offset = app._parse_log_entries(path, 0)
+        assert len(entries) == 2
+        assert entries[0]["tick_id"] == "t1"
+        assert offset == path.stat().st_size
+
+    def test_respects_start_offset(self, tmp_path):
+        path = tmp_path / "log.jsonl"
+        first_line = json.dumps({"event": "tick_start", "tick_id": "t1"}) + "\n"
+        path.write_text(
+            first_line
+            + json.dumps({"event": "tick_start", "tick_id": "t2"}) + "\n"
+        )
+        entries, offset = app._parse_log_entries(path, len(first_line))
+        assert len(entries) == 1
+        assert entries[0]["tick_id"] == "t2"
+        assert offset == path.stat().st_size
+
+    def test_skips_invalid_json_and_non_dict_and_blank(self, tmp_path):
+        path = tmp_path / "log.jsonl"
+        path.write_text(
+            "{broken\n"
+            "[1, 2, 3]\n"
+            "\n"
+            "   \n"
+            + json.dumps({"event": "tick_start", "tick_id": "t1"}) + "\n"
+        )
+        entries, _offset = app._parse_log_entries(path, 0)
+        assert len(entries) == 1
+        assert entries[0]["tick_id"] == "t1"
+
+    def test_returns_none_on_oserror(self, tmp_path):
+        path = tmp_path / "log.jsonl"
+        path.write_text(json.dumps({"event": "tick_start", "tick_id": "t1"}) + "\n")
+        with mock.patch("builtins.open", side_effect=OSError("boom")):
+            assert app._parse_log_entries(path, 0) is None
+
+
+class TestMergeEntriesIntoTicks:
+    def test_creates_new_tick_with_defaults(self):
+        ticks: dict = {}
+        app._merge_entries_into_ticks(ticks, [
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "dry_run": False, "timestamp": "ts1"},
+        ])
+        assert "t1" in ticks
+        t = ticks["t1"]
+        assert t["tick_id"] == "t1"
+        assert t["start_time"] == "ts1"
+        assert t["dry_run"] is False
+        assert t["target"] == "repo1"
+        assert t["stages"] == []
+
+    def test_updates_tick_end(self):
+        ticks: dict = {}
+        app._merge_entries_into_ticks(ticks, [
+            {"event": "tick_start", "tick_id": "t1", "timestamp": "ts1"},
+            {"event": "tick_end", "tick_id": "t1", "timestamp": "ts2", "total_duration_ms": 5,
+             "stages_checked": 1, "actions_executed": 2, "failures": 3,
+             "final_status": "ok", "final_stage_id": "A0"},
+        ])
+        t = ticks["t1"]
+        assert t["end_time"] == "ts2"
+        assert t["total_duration_ms"] == 5
+        assert t["stages_checked"] == 1
+        assert t["actions_executed"] == 2
+        assert t["failures"] == 3
+        assert t["final_status"] == "ok"
+        assert t["final_stage_id"] == "A0"
+
+    def test_appends_stage(self):
+        ticks: dict = {}
+        app._merge_entries_into_ticks(ticks, [
+            {"event": "tick_start", "tick_id": "t1"},
+            {"event": "stage", "tick_id": "t1", "stage_id": "A0", "stage_name": "S", "result": "ok",
+             "duration_ms": 5, "stdout": "o", "stderr": "e", "action_command": "cmd",
+             "dry_run": False, "chained": False, "timestamp": "ts"},
+        ])
+        assert len(ticks["t1"]["stages"]) == 1
+        s = ticks["t1"]["stages"][0]
+        assert s["stage_id"] == "A0"
+        assert s["stage_name"] == "S"
+        assert s["result"] == "ok"
+        assert s["duration_ms"] == 5
+        assert s["stdout"] == "o"
+        assert s["stderr"] == "e"
+        assert s["action_command"] == "cmd"
+        assert s["chained"] is False
+
+    def test_skips_missing_tick_id(self):
+        ticks: dict = {}
+        app._merge_entries_into_ticks(ticks, [
+            {"event": "tick_start", "timestamp": "ts1"},
+        ])
+        assert ticks == {}
+
+    def test_unknown_event_creates_tick_without_updating(self):
+        ticks: dict = {}
+        app._merge_entries_into_ticks(ticks, [
+            {"event": "something_else", "tick_id": "t1"},
+        ])
+        t = ticks["t1"]
+        assert t["start_time"] == ""
+        assert t["stages"] == []
+
+
 class TestActiveStages:
     def test_enabled_and_disabled(self, tmp_path):
         s1 = _make_stage("A", enabled=True)
@@ -395,7 +836,7 @@ class TestBuildApp:
         fastapi_module = types.ModuleType("fastapi")
         fastapi_module.FastAPI = MockFastAPI
         fastapi_module.HTTPException = MockHTTPException
-        fastapi_module.Query = lambda default=None: default
+        fastapi_module.Query = lambda default=None, **kw: default
 
         responses_module = types.ModuleType("fastapi.responses")
         responses_module.FileResponse = mock.Mock()
@@ -442,6 +883,7 @@ class TestBuildApp:
         assert paths == [
             "GET /",
             "GET /api/configs",
+            "GET /api/log",
             "GET /api/pipeline",
             "GET /api/status",
             "POST /api/toggle",
@@ -636,6 +1078,45 @@ class TestBuildApp:
         assert stage_state["stateless"] is False
         assert stage_state["complete"] is False
         assert result["summary"]["tracked_stages"] == 1
+
+    def test_pipeline_log_endpoint(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "log.jsonl").write_text(
+            json.dumps({"event": "tick_start", "tick_id": "t1", "target": "repo1", "timestamp": "2024-01-01T00:00:00"}) + "\n"
+            + json.dumps({"event": "tick_end", "tick_id": "t1", "final_status": "no_work"}) + "\n"
+        )
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "log_file": "log.jsonl",
+            "stages": [],
+        })
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/log"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        assert result["count"] == 1
+        assert result["ticks"][0]["tick_id"] == "t1"
+        assert result["ticks"][0]["final_status"] == "no_work"
+
+    def test_pipeline_log_endpoint_no_log_file(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "stages": [],
+        })
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/log"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        assert result == {"ticks": [], "count": 0}
 
     def test_pipeline_info_config_file_outside_dirs(self, tmp_path):
         configs_dir = tmp_path / "configs"

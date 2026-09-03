@@ -37,6 +37,7 @@ let pollTimer = null;
 let justCompleted = new Set(); // "target::stage" keys that flipped to complete
 let hidePending = localStorage.getItem('cronpypeline.hidePending') === '1';
 let lanesAnimated = false;    // entrance animation only on first render per config
+let expandedTicks = new Set(); // tick IDs that are expanded in the activity list
 let apiToken = localStorage.getItem('cronpypeline.apiToken') || '';
 
 els.tokenInput.value = apiToken;
@@ -162,10 +163,13 @@ async function switchConfig(name) {
   lastStatus = null;
   lanesAnimated = false;
   justCompleted.clear();
+  expandedTicks.clear();
   closePanel();
   els.lanes.innerHTML = '';
   els.summary.innerHTML = '';
   els.errorBanner.classList.add('hidden');
+  document.getElementById('activity-section').classList.add('hidden');
+  document.getElementById('activity-list').innerHTML = '';
   if (pollTimer) clearInterval(pollTimer);
 
   try {
@@ -255,6 +259,7 @@ async function poll() {
   detectCompletions(status);
   renderSummary(status.summary);
   renderLanes(status);
+  loadActivity();
   lastStatus = status;
 }
 
@@ -431,6 +436,104 @@ function renderLanes(status) {
 
   lanesAnimated = true;
   markRowEnds();
+}
+
+// ── Recent Activity ────────────────────────────────────────────────────────
+
+async function loadActivity() {
+  if (!currentConfig) return;
+  let data;
+  try {
+    data = await api('/api/log?config=' + encodeURIComponent(currentConfig) + '&limit=50');
+  } catch (e) {
+    return; // silently skip - log may not be available
+  }
+  
+  const section = document.getElementById('activity-section');
+  const list = document.getElementById('activity-list');
+  
+  if (!data.ticks || data.ticks.length === 0) {
+    section.classList.add('hidden');
+    expandedTicks.clear();
+    return;
+  }
+  
+  section.classList.remove('hidden');
+  list.innerHTML = data.ticks.map(renderTick).join('');
+
+  // Re-apply expanded state for ticks the user has expanded
+  list.querySelectorAll('.tick-header').forEach(el => {
+    if (expandedTicks.has(el.dataset.tickId)) {
+      el.classList.add('expanded');
+      const body = el.nextElementSibling;
+      if (body) body.classList.remove('hidden');
+    }
+  });
+  
+  // Attach expand/collapse handlers
+  list.querySelectorAll('.tick-header').forEach(el => {
+    el.addEventListener('click', () => {
+      const body = el.nextElementSibling;
+      const expanded = el.classList.toggle('expanded');
+      if (body) body.classList.toggle('hidden', !expanded);
+      if (expanded) expandedTicks.add(el.dataset.tickId);
+      else expandedTicks.delete(el.dataset.tickId);
+    });
+  });
+}
+
+function renderTick(tick) {
+  const statusColor = {
+    'action_executed': 'text-emerald-400',
+    'action_failed': 'text-rose-400',
+    'no_work': 'text-slate-500',
+    'dry_run': 'text-cyan-400',
+    'gave_up': 'text-rose-400',
+    'lock_failed': 'text-amber-400',
+    'disabled': 'text-amber-400',
+  }[tick.final_status] || 'text-slate-400';
+  
+  const stageRows = (tick.stages || []).map(stage => {
+    const resultClass = {
+      'action_executed': 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10',
+      'action_failed': 'text-rose-400 border-rose-500/40 bg-rose-500/10',
+      'complete': 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10',
+      'skipped': 'text-slate-500 border-slate-600 bg-slate-500/10',
+      'trigger_fired': 'text-cyan-400 border-cyan-500/40 bg-cyan-500/10',
+      'dry_run': 'text-cyan-400 border-cyan-500/40 bg-cyan-500/10',
+      'processing': 'text-cyan-400 border-cyan-500/40 bg-cyan-500/10',
+      'blocked': 'text-slate-500 border-slate-600 bg-slate-500/10',
+      'gave_up': 'text-rose-400 border-rose-500/40 bg-rose-500/10',
+    }[stage.result] || 'text-slate-400 border-slate-600 bg-slate-500/10';
+    
+    return `<div class="activity-stage">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="px-2 py-0.5 rounded text-[10px] font-semibold border ${resultClass}">${esc(stage.result)}</span>
+        <span class="font-[JetBrains_Mono] text-xs text-slate-300">${esc(stage.stage_id)}</span>
+        <span class="text-xs text-slate-500">${esc(stage.stage_name)}</span>
+        <span class="text-xs text-slate-600 font-[JetBrains_Mono]">${stage.duration_ms}ms</span>
+        ${stage.chained ? '<span class="text-[10px] text-violet-400 font-semibold">chained</span>' : ''}
+      </div>
+      ${stage.action_command ? `<div class="mt-1 text-xs font-[JetBrains_Mono] text-slate-500 break-all">cmd: ${esc(stage.action_command)}</div>` : ''}
+      ${stage.stdout ? `<pre class="mt-1 log-pre text-emerald-300">${esc(stage.stdout)}</pre>` : ''}
+      ${stage.stderr ? `<pre class="mt-1 log-pre text-rose-300">${esc(stage.stderr)}</pre>` : ''}
+    </div>`;
+  }).join('');
+  
+  return `<div class="tick-card">
+    <div class="tick-header cursor-pointer select-none" data-tick-id="${esc(tick.tick_id)}">
+      <div class="flex items-center gap-3 flex-wrap">
+        <span class="tick-chevron text-slate-500">▸</span>
+        <span class="font-[JetBrains_Mono] text-xs text-slate-400">${esc(tick.tick_id)}</span>
+        <span class="font-[JetBrains_Mono] text-xs text-slate-500">${esc(tick.target)}</span>
+        <span class="text-xs font-semibold ${statusColor}">${esc(tick.final_status)}</span>
+        <span class="text-xs text-slate-500 font-[JetBrains_Mono]">${tick.total_duration_ms}ms</span>
+        <span class="text-xs text-slate-600">${tick.stages_checked} stages · ${tick.actions_executed} actions · ${tick.failures} failures</span>
+        ${tick.dry_run ? '<span class="text-[10px] text-cyan-400 font-semibold">dry-run</span>' : ''}
+      </div>
+    </div>
+    <div class="tick-body hidden pl-6 space-y-1 mt-2">${stageRows}</div>
+  </div>`;
 }
 
 // ── Detail panel ─────────────────────────────────────────────────────────────
