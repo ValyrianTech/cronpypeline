@@ -766,3 +766,68 @@ class TestStageBlockedAndGivenUp:
         stage_results = [l["result"] for l in lines if l["event"] == "stage"]
         assert "blocked" in stage_results
         assert "trigger_fired" in stage_results
+
+
+class TestExceptionLogClosure:
+    """Verify that exceptions after tick_start always produce a matching tick_end."""
+
+    def test_tick_exception_logs_matching_tick_end(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+        config = make_config(
+            workspace,
+            stages=[make_command_stage("A0", "A", "a.md")],
+            log_file="execution.log",
+        )
+        pipeline = Pipeline(config)
+
+        with mock.patch.object(pipeline_mod, "execute_action", side_effect=RuntimeError("boom")):
+            result = pipeline.tick(target="repo1")
+
+        assert result.status == TickResultStatus.ACTION_FAILED
+
+        lines = read_lines(workspace / "execution.log")
+        events = [line["event"] for line in lines]
+        assert events[0] == "tick_start"
+        assert events[-1] == "tick_end"
+
+        tick_start = lines[0]
+        tick_end = lines[-1]
+        assert tick_start["tick_id"]
+        assert tick_end["tick_id"] == tick_start["tick_id"]
+        assert tick_end["target"] == "repo1"
+        assert tick_end["final_status"] == "action_failed"
+
+    def test_tick_all_exception_logs_matching_tick_end_per_target(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+        (workspace / "repo2").mkdir()
+        config = make_config(
+            workspace,
+            stages=[make_command_stage("A0", "A", "a.md")],
+            targets={"type": "static", "items": ["repo1", "repo2"]},
+            log_file="execution.log",
+        )
+        pipeline = Pipeline(config)
+
+        with mock.patch.object(pipeline_mod, "execute_action", side_effect=RuntimeError("boom")):
+            results = pipeline.tick_all()
+
+        assert len(results) == 2
+        assert all(r.status == TickResultStatus.ACTION_FAILED for r in results)
+
+        lines = read_lines(workspace / "execution.log")
+        tick_starts = [line for line in lines if line["event"] == "tick_start"]
+        tick_ends = [line for line in lines if line["event"] == "tick_end"]
+        assert len(tick_starts) == 2
+        assert len(tick_ends) == 2
+
+        start_ids = {line["tick_id"] for line in tick_starts}
+        for end in tick_ends:
+            assert end["tick_id"] in start_ids
+            assert end["final_status"] == "action_failed"
+
+        targets_seen = sorted(line["target"] for line in tick_starts)
+        assert targets_seen == ["repo1", "repo2"]
