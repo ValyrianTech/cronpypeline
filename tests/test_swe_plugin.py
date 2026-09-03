@@ -5660,6 +5660,97 @@ class TestRunA9DepAudit:
             result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.data["issues_created"] == 1  # only weirdlib
 
+    def test_failed_audit_with_no_issues_returns_failure(self, tmp_path):
+        """When audit fails but no issues can be created, preserve failure."""
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        # Empty stdout means no vulnerabilities parsed, issues_created = 0
+        result_mock = self._mock_result(stdout="No table here\n")
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=result_mock):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "No vulnerability issues could be created" in result.stderr
+        assert result.data["issues_created"] == 0
+
+    def test_all_tooling_vulnerabilities_returns_success(self, tmp_path):
+        """All found vulnerabilities are excluded tooling packages."""
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        pip_only_stdout = (
+            "Name      Version  ID                  Fix Versions\n"
+            "--------  -------  ------------------  ------------\n"
+            "pip       22.0.0   PYSEC-2022-000      22.1.0\n"
+            "Found 1 known vulnerabilities in 1 package\n"
+        )
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result(stdout=pip_only_stdout)):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["issues_created"] == 0
+        assert not list((target / ".SWE" / "issues").glob("dep-audit-*.md"))
+
+    def test_all_vulnerabilities_already_exist_returns_success(self, tmp_path):
+        """All vulnerability issues already exist, so dedup skips them all."""
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "issues" / "dep-audit-requests-pysec-2023-74.md").write_text("---\nstatus: open\n---\n# Existing")
+        (target / ".SWE" / "issues" / "dep-audit-weirdlib-ghsa-1234-5678.md").write_text("---\nstatus: open\n---\n# Existing")
+        ctx = _make_tick_context(target)
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result()):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["issues_created"] == 0
+
+    def test_mixed_tooling_and_existing_issues_returns_success(self, tmp_path):
+        """A mix of tooling and already-existing issues creates no new issues."""
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "issues" / "dep-audit-requests-pysec-2023-74.md").write_text("---\nstatus: open\n---\n# Existing")
+        ctx = _make_tick_context(target)
+        mixed_stdout = (
+            "Name      Version  ID                  Fix Versions\n"
+            "--------  -------  ------------------  ------------\n"
+            "requests  2.31.0   PYSEC-2023-74       2.32.0\n"
+            "pip       22.0.0   PYSEC-2022-000      22.1.0\n"
+            "Found 2 known vulnerabilities in 2 packages\n"
+        )
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result(stdout=mixed_stdout)):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["issues_created"] == 0
+
+    def test_no_issues_created_when_result_data_is_none(self, tmp_path):
+        """A diagnostic result with no data is returned early and unchanged."""
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        result_mock = MagicMock(success=True, stdout="", data=None)
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=result_mock):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result is result_mock
+        assert result.data is None
+        assert result.success is True
+
+    def test_all_tooling_with_multiple_packages_returns_success(self, tmp_path):
+        """Multiple tooling packages are all excluded, yielding success."""
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        tooling_stdout = (
+            "Name      Version  ID                  Fix Versions\n"
+            "--------  -------  ------------------  ------------\n"
+            "pip       22.0.0   PYSEC-2022-000      22.1.0\n"
+            "ruff      0.1.0    PYSEC-2023-111      0.2.0\n"
+            "mypy      1.0.0    PYSEC-2023-222      1.1.0\n"
+            "Found 3 known vulnerabilities in 3 packages\n"
+        )
+        with patch("cronpypeline.plugins.swe_diagnostics.run_diagnostic",
+                   return_value=self._mock_result(stdout=tooling_stdout)):
+            result = run_a9_dep_audit(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["issues_created"] == 0
+        assert not list((target / ".SWE" / "issues").glob("dep-audit-*.md"))
+
 
 # ─── review issue counting/finding with since_dt ────────────────────────────
 
