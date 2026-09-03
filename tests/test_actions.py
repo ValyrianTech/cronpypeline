@@ -1756,7 +1756,7 @@ class TestHttpRequestActionHandlerRedirects:
         assert result.success is True
         assert mock_open.call_count == 2
         second_req = mock_open.call_args_list[1][0][0]
-        assert second_req.get_header("Proxy-Authorization") is None
+        assert second_req.get_header("Proxy-authorization") is None
 
     def test_redirect_to_different_host_strips_x_api_key_header(self, tmp_path):
         action = self._action(
@@ -1778,7 +1778,7 @@ class TestHttpRequestActionHandlerRedirects:
         assert result.success is True
         assert mock_open.call_count == 2
         second_req = mock_open.call_args_list[1][0][0]
-        assert second_req.get_header("X-API-Key") is None
+        assert second_req.get_header("X-api-key") is None
 
     def test_redirect_to_different_host_strips_x_auth_token_header(self, tmp_path):
         action = self._action(
@@ -1800,7 +1800,7 @@ class TestHttpRequestActionHandlerRedirects:
         assert result.success is True
         assert mock_open.call_count == 2
         second_req = mock_open.call_args_list[1][0][0]
-        assert second_req.get_header("X-Auth-Token") is None
+        assert second_req.get_header("X-auth-token") is None
 
     def test_redirect_to_different_host_keeps_non_sensitive_headers(self, tmp_path):
         action = self._action(
