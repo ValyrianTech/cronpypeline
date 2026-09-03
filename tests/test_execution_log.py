@@ -10,7 +10,7 @@ import pytest
 
 import cronpypeline.pipeline as pipeline_mod
 from cronpypeline.actions import TickContext, resolved_command
-from cronpypeline.config import ActionSpec, ActionType, PipelineConfig, Stage, TargetSpec
+from cronpypeline.config import ActionSpec, ActionType, HookConfig, PipelineConfig, Stage, TargetSpec
 from cronpypeline.lock import FileLock
 from cronpypeline.pipeline import Pipeline, TickResultStatus
 
@@ -831,3 +831,156 @@ class TestExceptionLogClosure:
 
         targets_seen = sorted(line["target"] for line in tick_starts)
         assert targets_seen == ["repo1", "repo2"]
+
+
+class TestPreTickSkipLogging:
+    """Verify log output when a pre_tick hook returns False (no_work skip)."""
+
+    def test_pre_tick_false_logs_no_work(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+
+        mod = tmp_path / "pre_tick_skip_mod.py"
+        mod.write_text("def pre_tick(context):\n    return False\n")
+
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            config = make_config(
+                workspace,
+                stages=[make_command_stage("A0", "A", "a.md")],
+                pre_tick=HookConfig(callable="pre_tick_skip_mod.pre_tick"),
+                log_file="execution.log",
+            )
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="repo1")
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "pre_tick_skip_mod" in sys.modules:
+                del sys.modules["pre_tick_skip_mod"]
+
+        assert result.status == TickResultStatus.NO_WORK
+
+        lines = read_lines(workspace / "execution.log")
+        events = [line["event"] for line in lines]
+        assert events[0] == "tick_start"
+        assert events[-1] == "tick_end"
+        assert events == ["tick_start", "tick_end"]
+
+        tick_start = lines[0]
+        tick_end = lines[-1]
+        assert tick_start["target"] == "repo1"
+        assert tick_end["target"] == "repo1"
+        assert tick_end["final_status"] == "no_work"
+        assert tick_end["tick_id"] == tick_start["tick_id"]
+
+
+class TestTargetLockBlockedLogging:
+    """Verify log output when target_lock blocks stages during processing."""
+
+    def test_target_lock_processing_logs_blocked(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        repo = workspace / "repo1"
+        repo.mkdir()
+        (repo / ".processing").write_text(json.dumps({"retry_count": 0}))
+
+        config = make_config(
+            workspace,
+            stages=[
+                Stage.from_dict({
+                    "id": "A0", "name": "Processing stage",
+                    "trigger": {"type": "file_missing", "path": "done.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "TestAgent", "prompt": "do"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "done.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                    },
+                    "timeout_minutes": 30,
+                    "max_retries": 3,
+                }),
+                make_command_stage("A1", "Blocked stage", "final.md"),
+            ],
+            target_lock=True,
+            log_file="execution.log",
+        )
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="repo1")
+        assert result.status == TickResultStatus.NO_WORK
+
+        lines = read_lines(workspace / "execution.log")
+        assert lines[0]["event"] == "tick_start"
+        assert lines[-1]["event"] == "tick_end"
+        assert lines[-1]["final_status"] == "no_work"
+
+        stage_results = {l["stage_id"]: l["result"] for l in lines if l["event"] == "stage"}
+        assert stage_results["A0"] == "processing"
+        assert stage_results["A1"] == "blocked"
+
+
+class TestStaleDryRunLogging:
+    """Verify dry-run log output for stale processing markers."""
+
+    def _stale_stage(self):
+        return Stage.from_dict({
+            "id": "A0", "name": "Agent Step",
+            "trigger": {"type": "file_missing", "path": "done.md"},
+            "action": {"type": "queue_agent", "params": {"agent": "TestAgent", "prompt": "do"}},
+            "markers": {
+                "completion": {"type": "file", "name": "done.md"},
+                "processing": {"type": "json", "name": ".processing", "content": {}},
+            },
+            "timeout_minutes": 0,
+            "max_retries": 3,
+        })
+
+    def _write_stale_processing(self, repo, retry_count):
+        queue_file = repo / "nonexistent_queue.json"
+        (repo / ".processing").write_text(
+            json.dumps({"retry_count": retry_count, "queue_file": str(queue_file)})
+        )
+        old = time.time() - 3600
+        os.utime(repo / ".processing", (old, old))
+
+    def test_stale_dry_run_would_give_up_logged(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        repo = workspace / "repo1"
+        repo.mkdir()
+        self._write_stale_processing(repo, retry_count=3)
+
+        config = make_config(
+            workspace,
+            stages=[self._stale_stage()],
+            log_file="execution.log",
+        )
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="repo1", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+
+        lines = read_lines(workspace / "execution.log")
+        stage_results = [l["result"] for l in lines if l["event"] == "stage"]
+        assert stage_results == ["would_give_up"]
+        assert lines[-1]["final_status"] == "dry_run"
+
+    def test_stale_dry_run_would_requeue_logged(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        repo = workspace / "repo1"
+        repo.mkdir()
+        self._write_stale_processing(repo, retry_count=1)
+
+        config = make_config(
+            workspace,
+            stages=[self._stale_stage()],
+            log_file="execution.log",
+        )
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="repo1", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+
+        lines = read_lines(workspace / "execution.log")
+        stage_results = [l["result"] for l in lines if l["event"] == "stage"]
+        assert stage_results == ["would_requeue"]
+        assert lines[-1]["final_status"] == "dry_run"
