@@ -507,6 +507,32 @@ class TestStageStateProcessingQueueFile:
         assert state.is_processing is True
         assert state.is_stale is False
 
+    def test_processing_with_gone_queue_file_and_reminder_not_stale(self, tmp_path):
+        """Queue file gone but reminder file exists → agent restarted, not stale."""
+        stage = Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        # Queue file is gone, but a reminder file exists
+        (queue_dir / "20260903104701585888_reminder_1.json").touch()
+
+        import json
+        proc_path = tmp_path / ".processing"
+        proc_path.write_text(json.dumps({"queue_file": str(queue_dir / "entry.json")}))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is False
+
 
 class TestTargetStateDisabledStage:
     """Tests for disabled stages in TargetState."""

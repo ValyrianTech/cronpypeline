@@ -73,11 +73,19 @@ class StageState:
                     self.retry_count = data["retry_count"]
 
                 # Queue-file-based staleness: if queue_file is gone, agent finished
-                # but didn't produce completion → immediately stale
+                # but didn't produce completion → immediately stale.
+                # Exception: if reminder files exist in the queue directory, the
+                # agent was cut off (e.g. tool-call limit) and is being restarted
+                # by the reminder system — not stale.
                 if data and "queue_file" in data:
                     from pathlib import Path as _P
                     if not _P(data["queue_file"]).exists():
-                        self.is_stale = True
+                        queue_dir = _P(data["queue_file"]).parent
+                        has_reminder = (
+                            queue_dir.exists()
+                            and any("_reminder_" in f.name for f in queue_dir.iterdir())
+                        )
+                        self.is_stale = not has_reminder
                     else:
                         self.is_stale = False
                 else:

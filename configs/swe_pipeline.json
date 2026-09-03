@@ -5,6 +5,7 @@
   "mode_file": ".SWE/mode.json",
   "target_lock": true,
   "config_file": ".SWE/pipeline_config.json",
+  "log_file": ".SWE/execution_log.jsonl",
   "pre_tick": {
     "callable": "cronpypeline.plugins.swe_plugin.sync_session_mode"
   },
