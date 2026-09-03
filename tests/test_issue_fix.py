@@ -1011,6 +1011,30 @@ class TestCleanupStaleTask:
         out = capsys.readouterr().out
         assert "refusing cleanup" in out
 
+    def test_refuses_corrupt_task_json_prefix_false_positive(self, tmp_path, monkeypatch, capsys):
+        """A repo name that is a prefix of the dir's repo slug must not match."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_my_repo_iss1"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, "my") is False
+        assert task_dir.exists()
+        out = capsys.readouterr().out
+        assert "refusing cleanup" in out
+
+    def test_cleans_corrupt_task_json_exact_repo_match(self, tmp_path, monkeypatch):
+        """A corrupt task whose dir name matches the repo exactly is cleaned up."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_my_repo_iss1"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, "my_repo", verbose=True) is True
+        assert not task_dir.exists()
+
 
 # ─── _cleanup_orphaned_task_dirs ─────────────────────────────────────────────
 
@@ -1145,6 +1169,13 @@ class TestCleanupOrphanedTaskDirs:
         _cleanup_orphaned_task_dirs("ipfs_dict_chain")
         assert keep.exists()
         assert not remove.exists()
+
+    def test_does_not_remove_dir_of_repo_with_longer_slug(self, tmp_path, monkeypatch):
+        td = tmp_path / "2025-01-01" / "20250101_my_repo_iss1"
+        td.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("my")
+        assert td.exists()
 
 
 # ─── _recover_orphaned_triaged ──────────────────────────────────────────────
