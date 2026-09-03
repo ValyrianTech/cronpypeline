@@ -413,6 +413,92 @@ class TestReadLogTicks:
         assert ticks[1]["tick_id"] == "t3"
 
 
+class TestReadLogTicksCache:
+    """Tests for _read_log_ticks server-side caching."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        app._log_ticks_cache.clear()
+        yield
+        app._log_ticks_cache.clear()
+
+    def _write_log(self, tmp_path, name="log.jsonl", lines=None):
+        path = tmp_path / name
+        path.write_text("\n".join(json.dumps(line) for line in (lines or [])) + "\n")
+        return path
+
+    def test_returns_cached_result_without_reopening(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "timestamp": "2024-01-01T00:00:00"},
+            {"event": "tick_end", "tick_id": "t1", "final_status": "no_work", "timestamp": "2024-01-01T00:00:01"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        first = app._read_log_ticks(cfg)
+        assert len(first) == 1
+        with mock.patch("builtins.open", side_effect=OSError("should not re-read")):
+            second = app._read_log_ticks(cfg)
+        assert second == first
+
+    def test_invalidates_cache_when_file_changes(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "target": "repo1", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        first = app._read_log_ticks(cfg)
+        assert len(first) == 1
+        path = tmp_path / "log.jsonl"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"event": "tick_start", "tick_id": "t2", "target": "repo1", "timestamp": "2024-01-01T00:00:01"}) + "\n")
+        second = app._read_log_ticks(cfg)
+        assert len(second) == 2
+
+    def test_cache_bounded_to_500(self, tmp_path):
+        lines = []
+        for i in range(600):
+            ts = f"2024-01-01T00:{i // 60:02d}:{i % 60:02d}"
+            lines.append({"event": "tick_start", "tick_id": f"t{i}", "target": "repo", "timestamp": ts})
+            lines.append({"event": "tick_end", "tick_id": f"t{i}", "final_status": "no_work"})
+        self._write_log(tmp_path, lines=lines)
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        result = app._read_log_ticks(cfg, limit=600)
+        assert len(result) == 500
+        cache_key = str(tmp_path / "log.jsonl")
+        _mtime, _size, cached_ticks = app._log_ticks_cache[cache_key]
+        assert len(cached_ticks) == 500
+
+    def test_missing_file_clears_stale_cache(self, tmp_path):
+        cache_key = str(tmp_path / "log.jsonl")
+        app._log_ticks_cache[cache_key] = (1.0, 10, [{"tick_id": "stale"}])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        assert app._read_log_ticks(cfg) == []
+        assert cache_key not in app._log_ticks_cache
+
+    def test_stat_oserror_returns_empty_and_clears_cache(self, tmp_path):
+        self._write_log(tmp_path, lines=[
+            {"event": "tick_start", "tick_id": "t1", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        cfg = _make_config(tmp_path, log_file="log.jsonl")
+        cache_key = str(tmp_path / "log.jsonl")
+        app._log_ticks_cache[cache_key] = (1.0, 10, [{"tick_id": "stale"}])
+        with mock.patch.object(Path, "is_file", return_value=True), \
+                mock.patch.object(Path, "stat", side_effect=OSError("boom")):
+            assert app._read_log_ticks(cfg) == []
+        assert cache_key not in app._log_ticks_cache
+
+    def test_separate_cache_entries_per_path(self, tmp_path):
+        self._write_log(tmp_path, name="a.jsonl", lines=[
+            {"event": "tick_start", "tick_id": "ta", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        self._write_log(tmp_path, name="b.jsonl", lines=[
+            {"event": "tick_start", "tick_id": "tb", "timestamp": "2024-01-01T00:00:00"},
+        ])
+        app._read_log_ticks(_make_config(tmp_path, log_file="a.jsonl"))
+        app._read_log_ticks(_make_config(tmp_path, log_file="b.jsonl"))
+        assert str(tmp_path / "a.jsonl") in app._log_ticks_cache
+        assert str(tmp_path / "b.jsonl") in app._log_ticks_cache
+        assert len(app._log_ticks_cache) == 2
+
+
 class TestActiveStages:
     def test_enabled_and_disabled(self, tmp_path):
         s1 = _make_stage("A", enabled=True)
