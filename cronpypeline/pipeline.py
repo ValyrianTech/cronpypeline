@@ -235,7 +235,7 @@ class Pipeline:
         """Write a JSONL log entry with rotation."""
         if not self.log_file_path:
             return
-        entry.setdefault("timestamp", datetime.datetime.now().isoformat())
+        entry.setdefault("timestamp", datetime.datetime.now(datetime.timezone.utc).isoformat())
         try:
             with open(self.log_file_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
@@ -283,7 +283,7 @@ class Pipeline:
 
     def _generate_tick_id(self) -> str:
         """Generate a unique tick ID: YYYYMMDD-HHMMSS-XXXXXX."""
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(datetime.timezone.utc)
         suffix = "".join(random.choices(string.hexdigits.lower(), k=6))
         return f"{now.strftime('%Y%m%d-%H%M%S')}-{suffix}"
 
