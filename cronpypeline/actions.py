@@ -452,6 +452,11 @@ def resolved_command(action: ActionSpec, context: TickContext) -> str:
             variables[k] = v
 
     def _subst(template: str) -> str:
+        """Substitute template variables, returning the raw template on failure.
+
+        :param template: Template string to substitute.
+        :returns: Substituted string, or the original template if substitution fails.
+        """
         try:
             return format_template(template, variables)
         except ValueError:
