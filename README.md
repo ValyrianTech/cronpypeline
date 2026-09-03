@@ -238,7 +238,7 @@ The pipeline takes **one action per tick** and exits. State is derived fresh fro
 
 ### Execution log
 
-When the top-level `log_file` config option is set, the pipeline writes a structured JSONL execution log to that path (relative paths are resolved relative to `workspace_dir`), creating parent directories as needed. Each tick generates a unique tick ID formatted as `YYYYMMDD-HHMMSS-XXXXXX` (a timestamp plus 6 random hex characters). Every tick outcome is logged — lock failures, disabled pipelines, no work, pre-tick hook skips, gave-up, stale handling, dry-runs, and action execution/failure — including chained stage results.
+When the top-level `log_file` config option is set, the pipeline writes a structured JSONL execution log to that path (relative paths are resolved relative to `workspace_dir`), creating parent directories as needed. Each tick generates a unique tick ID formatted as `YYYYMMDD-HHMMSS-XXXXXX` (a UTC timestamp plus 6 random hex characters). Log entry timestamps and tick IDs are generated in timezone-aware UTC rather than local time. Every tick outcome is logged — lock failures, disabled pipelines, no work, pre-tick hook skips, gave-up, stale handling, dry-runs, and action execution/failure — including chained stage results.
 
 Three event types are written, one JSON object per line:
 
@@ -784,6 +784,8 @@ The SWE pipeline's test-coverage target is configurable per-target via a `covera
 The issue-fix plugin's `run_gate` (the GATE stage) prints an ERROR message, writes a failed gate result file (containing `task_id`, `gated_at`, `issue_type`, `passed: false`, and an `error` field describing the checkout failure) to the task directory's gate result file, and returns `False` (aborting the gate) when `git checkout` of the task branch fails during verification, instead of continuing to run verification commands on the wrong branch.
 
 The issue-fix plugin's stale-task cleanup (`_cleanup_stale_task`) now validates that the task directory is contained within the tasks directory (`TASKS_DIR`) before removing it with `shutil.rmtree`. A task directory that escapes the tasks directory (via `..` segments, absolute paths, or symlinks) is rejected with an ERROR message and the cleanup is aborted, preventing path traversal attacks that could delete arbitrary directories outside the tasks directory.
+
+The stale-task cleanup also verifies that a task belongs to the expected repo before deleting it: it checks the task's `repo_name` field in `task.json`, falling back to the task directory name format `{date}_{safe_repo}_{task_id}` when `repo_name` is absent or `task.json` is corrupt/unreadable. A task that does not belong to the expected repo is refused cleanup (with an ERROR message) and left untouched, preventing cleanup from deleting task directories belonging to a different repo.
 
 The issue-fix plugin's `_read_task` helper now returns `None` when a task's `task.json` file is missing or corrupted (unreadable or invalid JSON), instead of raising an exception. The state machine handles a missing/corrupt `task.json` gracefully: the GATE stage (`run_gate`) cleans up the task directory when its `task.json` is unreadable, and `run_issue_fix_state_machine` cleans up a corrupted active task and selects a new one instead of crashing. In dry-run mode these paths report what they would do without mutating state.
 
