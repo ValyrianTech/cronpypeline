@@ -37,6 +37,7 @@ let pollTimer = null;
 let justCompleted = new Set(); // "target::stage" keys that flipped to complete
 let hidePending = localStorage.getItem('cronpypeline.hidePending') === '1';
 let lanesAnimated = false;    // entrance animation only on first render per config
+let expandedTicks = new Set(); // tick IDs that are expanded in the activity list
 let apiToken = localStorage.getItem('cronpypeline.apiToken') || '';
 
 els.tokenInput.value = apiToken;
@@ -162,6 +163,7 @@ async function switchConfig(name) {
   lastStatus = null;
   lanesAnimated = false;
   justCompleted.clear();
+  expandedTicks.clear();
   closePanel();
   els.lanes.innerHTML = '';
   els.summary.innerHTML = '';
@@ -452,11 +454,21 @@ async function loadActivity() {
   
   if (!data.ticks || data.ticks.length === 0) {
     section.classList.add('hidden');
+    expandedTicks.clear();
     return;
   }
   
   section.classList.remove('hidden');
   list.innerHTML = data.ticks.map(renderTick).join('');
+
+  // Re-apply expanded state for ticks the user has expanded
+  list.querySelectorAll('.tick-header').forEach(el => {
+    if (expandedTicks.has(el.dataset.tickId)) {
+      el.classList.add('expanded');
+      const body = el.nextElementSibling;
+      if (body) body.classList.remove('hidden');
+    }
+  });
   
   // Attach expand/collapse handlers
   list.querySelectorAll('.tick-header').forEach(el => {
@@ -464,6 +476,8 @@ async function loadActivity() {
       const body = el.nextElementSibling;
       const expanded = el.classList.toggle('expanded');
       if (body) body.classList.toggle('hidden', !expanded);
+      if (expanded) expandedTicks.add(el.dataset.tickId);
+      else expandedTicks.delete(el.dataset.tickId);
     });
   });
 }
@@ -507,7 +521,7 @@ function renderTick(tick) {
   }).join('');
   
   return `<div class="tick-card">
-    <div class="tick-header cursor-pointer select-none">
+    <div class="tick-header cursor-pointer select-none" data-tick-id="${esc(tick.tick_id)}">
       <div class="flex items-center gap-3 flex-wrap">
         <span class="tick-chevron text-slate-500">▸</span>
         <span class="font-[JetBrains_Mono] text-xs text-slate-400">${esc(tick.tick_id)}</span>
