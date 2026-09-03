@@ -2992,6 +2992,144 @@ class TestCrossStageTargetLock:
         assert (workspace / "my-repo" / "b.md").exists()
         assert not (workspace / "my-repo" / ".processing_a").exists()
 
+    def test_target_lock_logs_stage_states_distinctly(self, tmp_path):
+        """With target_lock active and a processing stage, the log should
+        distinguish processing vs complete vs blocked stages."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        # A0 is processing (processing marker exists)
+        (workspace / "my-repo" / ".processing_a").write_text('{"retry_count": 0}')
+        # B0 is complete (completion marker exists)
+        (workspace / "my-repo" / "b.md").touch()
+        # C0 has no markers (not started, actionable but blocked by lock)
+        # D0 has given up (give-up marker exists)
+        (workspace / "my-repo" / "d_gave_up.md").touch()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "target_lock": True,
+            "log_file": "execution.log",
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Processing stage",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test", "prompt": "do"}},
+                    "markers": {
+                        "processing": {"type": "json", "name": ".processing_a", "content": {}},
+                        "completion": {"type": "file", "name": "a.md"},
+                    },
+                    "timeout_minutes": 30,
+                },
+                {
+                    "id": "B0",
+                    "name": "Complete stage",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+                {
+                    "id": "C0",
+                    "name": "Blocked stage",
+                    "trigger": {"type": "file_missing", "path": "c.md"},
+                    "action": {"type": "command", "params": {"command": "echo c"}},
+                    "markers": {"completion": {"type": "file", "name": "c.md"}},
+                },
+                {
+                    "id": "D0",
+                    "name": "Given up stage",
+                    "trigger": {"type": "file_missing", "path": "d.md"},
+                    "action": {"type": "command", "params": {"command": "echo d"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "d.md"},
+                        "give_up": {"type": "file", "name": "d_gave_up.md"},
+                    },
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        # Nothing should execute — the lock blocks C0
+        assert result.status == TickResultStatus.NO_WORK
+
+        log_path = workspace / "execution.log"
+        assert log_path.exists()
+        lines = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        stage_entries = [line for line in lines if line["event"] == "stage"]
+        by_stage = {entry["stage_id"]: entry["result"] for entry in stage_entries}
+        assert by_stage["A0"] == "processing"
+        assert by_stage["B0"] == "complete"
+        assert by_stage["C0"] == "blocked"
+        assert by_stage["D0"] == "given_up"
+
+    def test_target_lock_logs_no_state_for_missing_stage(self, tmp_path):
+        """With target_lock active and a processing stage, a stage whose state
+        is missing from target_state.stage_states should be logged as no_state."""
+        from unittest.mock import patch
+
+        from cronpypeline.state import PipelineState
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        # A0 is processing (processing marker exists)
+        (workspace / "my-repo" / ".processing_a").write_text('{"retry_count": 0}')
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "target_lock": True,
+            "log_file": "execution.log",
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Processing stage",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test", "prompt": "do"}},
+                    "markers": {
+                        "processing": {"type": "json", "name": ".processing_a", "content": {}},
+                        "completion": {"type": "file", "name": "a.md"},
+                    },
+                    "timeout_minutes": 30,
+                },
+                {
+                    "id": "B0",
+                    "name": "Missing state stage",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        # Mock PipelineState.derive to remove B0 from target_state.stage_states,
+        # exercising the `candidate is None` branch in the target_lock else block.
+        original_derive = PipelineState.derive
+
+        def mock_derive(self, targets, target_configs=None):
+            original_derive(self, targets, target_configs)
+            for ts in self.target_states.values():
+                ts.stage_states.pop("B0", None)
+
+        with patch.object(PipelineState, "derive", mock_derive):
+            result = pipeline.tick(target="my-repo")
+
+        # Nothing should execute — A0 is processing and B0 has no state
+        assert result.status == TickResultStatus.NO_WORK
+
+        log_path = workspace / "execution.log"
+        assert log_path.exists()
+        lines = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        stage_entries = [line for line in lines if line["event"] == "stage"]
+        by_stage = {entry["stage_id"]: entry["result"] for entry in stage_entries}
+        assert by_stage["A0"] == "processing"
+        assert by_stage["B0"] == "no_state"
+
 
 class TestModeFile:
     """Tests for pipeline-wide mode switching via mode_file."""

@@ -760,7 +760,18 @@ class Pipeline:
                     self._log_stage(stage, "skipped")
         else:
             for stage in active_stages:
-                self._log_stage(stage, "blocked")
+                candidate: StageState | None = target_state.stage_states.get(stage.id)
+                if candidate is None:
+                    self._log_stage(stage, "no_state")
+                    continue
+                if candidate.is_complete:
+                    self._log_stage(stage, "complete")
+                elif candidate.is_processing:
+                    self._log_stage(stage, "processing")
+                elif candidate.is_given_up:
+                    self._log_stage(stage, "given_up")
+                else:
+                    self._log_stage(stage, "blocked")
         if stage_state is None:
             result = TickResult(
                 target=target,
