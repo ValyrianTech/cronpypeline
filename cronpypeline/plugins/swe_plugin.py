@@ -2560,7 +2560,13 @@ def run_a9_dep_audit(action: ActionSpec, context: TickContext) -> ActionResult:
 
     if result.data:
         result.data["issues_created"] = issues_created
-    result.success = True
+    if issues_created > 0:
+        # Issues were created; the stage's purpose is fulfilled
+        result.success = True
+    else:
+        # Audit failed but no issues were created - this could be a genuine error
+        result.success = False
+        result.stderr = (result.stderr or "") + "\nNo vulnerability issues could be created from failed audit output"
     return result
 
 
