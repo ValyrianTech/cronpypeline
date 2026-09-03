@@ -18,6 +18,7 @@ from cronpypeline.actions import (
     _as_bool,
     _host_matches,
     _is_private_ip,
+    _is_sensitive_header,
     _PinnedHTTPConnection,
     _PinnedHTTPHandler,
     _PinnedHTTPSConnection,
@@ -1714,6 +1715,191 @@ class TestHttpRequestActionHandlerRedirects:
         second_req = mock_open.call_args_list[1][0][0]
         assert second_req.get_header("Authorization") == "token secret-token"
 
+    def test_redirect_to_different_host_strips_cookie_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"Cookie": "session=abc123"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("Cookie") is None
+
+    def test_redirect_to_different_host_strips_proxy_authorization_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"Proxy-Authorization": "Basic abc123"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("Proxy-authorization") is None
+
+    def test_redirect_to_different_host_strips_x_api_key_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"x-api-key": "secret-key"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("X-api-key") is None
+
+    def test_redirect_to_different_host_strips_x_auth_token_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"X-Auth-Token": "secret-token"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("X-auth-token") is None
+
+    def test_redirect_to_different_host_keeps_non_sensitive_headers(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("Content-type") == "application/json"
+        assert second_req.get_header("Accept") == "application/json"
+
+    def test_redirect_to_different_host_keeps_non_credential_x_headers(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={
+                "X-Forwarded-For": "1.2.3.4",
+                "X-Request-ID": "req-123",
+                "X-Content-Type-Options": "nosniff",
+            },
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("X-forwarded-for") == "1.2.3.4"
+        assert second_req.get_header("X-request-id") == "req-123"
+        assert second_req.get_header("X-content-type-options") == "nosniff"
+
+    def test_redirect_to_different_host_strips_custom_credential_header(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"X-Custom-Api-Key": "secret-key", "X-Secret-Token": "secret-token"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://other.example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("X-custom-api-key") is None
+        assert second_req.get_header("X-secret-token") is None
+
+    def test_redirect_to_same_host_keeps_sensitive_headers(self, tmp_path):
+        action = self._action(
+            "http://example.com/start",
+            headers={"Cookie": "session=abc123", "X-API-Key": "secret-key"},
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+        second_req = mock_open.call_args_list[1][0][0]
+        assert second_req.get_header("Cookie") == "session=abc123"
+        assert second_req.get_header("X-api-key") == "secret-key"
+
     def test_redirect_to_private_ip_is_blocked(self, tmp_path):
         action = self._action("http://93.184.216.34/start")
         ctx = self._ctx(tmp_path)
@@ -2402,3 +2588,57 @@ class TestPinnedConnections:
         assert result.success is True
         req = mock_urlopen.call_args[0][0]
         assert req._validated_ips is None
+
+
+class TestIsSensitiveHeader:
+    """Tests for _is_sensitive_header word-boundary matching."""
+
+    def test_exact_sensitive_headers(self):
+        for header in ("authorization", "cookie", "proxy-authorization"):
+            assert _is_sensitive_header(header) is True
+
+    def test_whole_word_keywords(self):
+        for header in (
+            "x-api-key",
+            "x-auth-token",
+            "x-secret-token",
+            "x-custom-api-key",
+            "x-api-secret",
+            "x-password",
+            "x-credential",
+        ):
+            assert _is_sensitive_header(header) is True
+
+    def test_keyword_as_substring_not_sensitive(self):
+        for header in (
+            "x-monkey",
+            "x-keyless",
+            "x-keychain",
+            "x-tokenizer",
+            "x-keyboard",
+            "x-monkey-business",
+            "x-tokenized",
+            "x-keyring",
+            "x-keyhole",
+        ):
+            assert _is_sensitive_header(header) is False
+
+    def test_case_insensitivity(self):
+        assert _is_sensitive_header("X-API-Key") is True
+        assert _is_sensitive_header("X-Auth-Token") is True
+        assert _is_sensitive_header("X-Monkey") is False
+        assert _is_sensitive_header("X-Keyless") is False
+
+    def test_non_sensitive_headers(self):
+        for header in (
+            "content-type",
+            "accept",
+            "x-request-id",
+            "x-forwarded-for",
+        ):
+            assert _is_sensitive_header(header) is False
+
+    def test_keyword_at_start_or_end(self):
+        assert _is_sensitive_header("key") is True
+        assert _is_sensitive_header("api-key") is True
+        assert _is_sensitive_header("key-holder") is True

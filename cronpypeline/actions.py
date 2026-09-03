@@ -10,6 +10,7 @@ import fnmatch
 import http.client
 import ipaddress
 import os
+import re
 import shlex
 import socket
 import ssl
@@ -413,6 +414,33 @@ _HTTP_OPENER = urllib.request.build_opener(
     _PinnedHTTPSHandler(),
 )
 _MAX_REDIRECTS = 5
+_SENSITIVE_HEADERS = {"authorization", "cookie", "proxy-authorization"}
+_SENSITIVE_HEADER_KEYWORDS = ("auth", "token", "key", "secret", "credential", "password")
+
+
+def _is_sensitive_header(name: str) -> bool:
+    """Return True if a header name indicates it may carry credentials.
+
+    A header is considered sensitive when its lowercase name is one of the
+    well-known credential headers in ``_SENSITIVE_HEADERS`` or when it
+    contains a credential-related keyword such as ``auth``, ``token``,
+    ``key``, ``secret``, ``credential``, or ``password`` as a whole word.
+
+    Keyword matching uses word boundaries so that a keyword appearing only as
+    a substring of a larger word (e.g. ``key`` in ``monkey`` or ``keyless``)
+    does not flag a header as sensitive. Hyphens and other non-word characters
+    act as boundaries, so ``x-api-key`` is still flagged.
+
+    :param name: Header name to inspect.
+    :returns: ``True`` if the header may carry credentials, else ``False``.
+    """
+    lowered = name.lower()
+    if lowered in _SENSITIVE_HEADERS:
+        return True
+    return any(
+        re.search(r"\b" + re.escape(keyword) + r"\b", lowered)
+        for keyword in _SENSITIVE_HEADER_KEYWORDS
+    )
 
 
 def format_template(template: str, variables: dict[str, Any]) -> str:
@@ -818,7 +846,10 @@ class HttpRequestActionHandler(ActionHandler):
                     redirect_parsed = urllib.parse.urlparse(current_url)
                     original_parsed = urllib.parse.urlparse(original_url)
                     if redirect_parsed.netloc != original_parsed.netloc:
-                        headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
+                        headers = {
+                            k: v for k, v in headers.items()
+                            if not _is_sensitive_header(k)
+                        }
                     # Match urllib's default redirect behavior for method/body
                     if e.code in (301, 302, 303) and method == "POST":
                         method = "GET"
