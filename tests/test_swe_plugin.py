@@ -1122,11 +1122,21 @@ class TestDetectB1IssueGathering:
 
     def test_does_not_fire_when_completed_session(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
-        session = {"active": False, "completed": True}
+        now = datetime.now(timezone.utc).isoformat()
+        session = {"active": False, "completed": True, "completed_at": now}
         (target / ".SWE" / "github_session.json").write_text(json.dumps(session))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
         assert detect_b1_issue_gathering(ctx) is False
+
+    def test_fires_when_completed_session_recheck_interval_elapsed(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        old = (datetime.now(timezone.utc) - timedelta(seconds=700)).isoformat()
+        session = {"active": False, "completed": True, "completed_at": old}
+        (target / ".SWE" / "github_session.json").write_text(json.dumps(session))
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_b1_issue_gathering(ctx) is True
 
     def test_does_not_fire_when_recheck_interval_not_elapsed(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
@@ -5876,12 +5886,12 @@ class TestRunCReviewIssueGenerations:
 
 
 class TestSyncSessionModeCompleted:
-    def test_completed_session_returns_false(self, tmp_path):
+    def test_completed_session_returns_true(self, tmp_path):
         target = _make_target_dir(tmp_path)
         (target / ".SWE" / "github_session.json").write_text(json.dumps({"active": False, "completed": True}))
         mode_file = tmp_path / "mode.json"
         ctx = {"target_dir": str(target), "target_config": {"mode_file": str(mode_file)}}
-        assert sync_session_mode(ctx) is False
+        assert sync_session_mode(ctx) is True
         assert json.loads(mode_file.read_text()) == {"mode": "default"}
 
     def test_completed_previously_active_session_writes_default(self, tmp_path):
@@ -5890,7 +5900,7 @@ class TestSyncSessionModeCompleted:
         mode_file = tmp_path / "mode.json"
         mode_file.write_text(json.dumps({"mode": "github"}))
         ctx = {"target_dir": str(target), "target_config": {"mode_file": str(mode_file)}}
-        assert sync_session_mode(ctx) is False
+        assert sync_session_mode(ctx) is True
         assert json.loads(mode_file.read_text()) == {"mode": "default"}
 
 
