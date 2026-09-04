@@ -1064,7 +1064,8 @@ def _find_active_task(repo_name: str) -> Path | None:
                 candidates.append(task_dir)
     if not candidates:
         return None
-    return max(candidates)
+    # Sort by task.json mtime (or created_at) instead of lexicographic path order
+    return max(candidates, key=lambda p: ((p / "task.json").stat().st_mtime, str(p)))
 
 
 def _count_open_review_issues(target_dir: Path) -> int:

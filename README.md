@@ -791,6 +791,8 @@ Additionally, the stale-task cleanup always derives the git branch it deletes fr
 
 The issue-fix plugin's `_read_task` helper now returns `None` when a task's `task.json` file is missing or corrupted (unreadable or invalid JSON), instead of raising an exception. The state machine handles a missing/corrupt `task.json` gracefully: the GATE stage (`run_gate`) cleans up the task directory when its `task.json` is unreadable, and `run_issue_fix_state_machine` cleans up a corrupted active task and selects a new one instead of crashing. In dry-run mode these paths report what they would do without mutating state.
 
+The SWE plugin's active-task detection (`_find_active_task`) now selects the most recently modified unfinished task for a repo (by the `task.json` file's modification time) instead of using lexicographic path ordering, so a task like `task-github-10` is correctly preferred over `task-github-9` when the former was modified more recently.
+
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
 
 Issue store with YAML frontmatter in `.SWE/issues/*.md` files. Provides `Issue` dataclass, `load_issues()`, `get_issue()`, `set_issue_status()`, `create_issue()`, `finalize_issue_outcome()`, and a built-in YAML frontmatter parser/serializer (no external YAML dependency). The frontmatter parser handles booleans (true/false/yes/no) and null values (null/none/~) in addition to integers, floats, lists, and strings; quoted values containing colons (e.g. `title: "Fix: Login bug"`) are parsed correctly.
