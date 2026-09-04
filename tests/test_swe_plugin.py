@@ -1347,6 +1347,20 @@ class TestFindActiveTask:
         result = _find_active_task("repo")
         assert "2025-01-02" in str(result)
 
+    def test_returns_most_recent_by_mtime_not_lexicographic(self, tmp_path, monkeypatch):
+        date_dir = tmp_path / "20260904"
+        task_9 = date_dir / "task-github-9"
+        task_10 = date_dir / "task-github-10"
+        task_9.mkdir(parents=True)
+        task_10.mkdir(parents=True)
+        (task_9 / "task.json").write_text(json.dumps({"repo_name": "repo"}))
+        (task_10 / "task.json").write_text(json.dumps({"repo_name": "repo"}))
+        os.utime(task_9 / "task.json", (1_000_000_000, 1_000_000_000))
+        os.utime(task_10 / "task.json", (1_100_000_000, 1_100_000_000))
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path)
+        result = _find_active_task("repo")
+        assert result == task_10
+
 
 # ─── _count_open_review_issues ──────────────────────────────────────────────
 
