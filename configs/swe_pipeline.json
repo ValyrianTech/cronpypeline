@@ -765,7 +765,7 @@
       "markers": {
         "completion": {
           "type": "json",
-          "name": "pr_title.json",
+          "name": "pr_meta.json",
           "directory": ".SWE"
         },
         "processing": {

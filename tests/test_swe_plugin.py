@@ -2064,7 +2064,16 @@ class TestBuildPrTitlePrompt:
         prompt = _build_pr_title_prompt(target, "repo", "main", "abc123def456")
         assert "pull request title" in prompt
         assert INTEGRATION_BRANCH in prompt
-        assert "pr_title.json" in prompt
+        assert "pr_meta.json" in prompt
+
+    def test_mentions_title_and_body(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        prompt = _build_pr_title_prompt(target, "repo", "main", "abc123def456")
+        assert "title and body" in prompt
+        assert "Summary" in prompt
+        assert "Changes" in prompt
+        assert "Testing" in prompt
+        assert '"body"' in prompt
 
     def test_quotes_target_dir_with_spaces(self, tmp_path):
         target = tmp_path / "repo with space"
@@ -2657,7 +2666,7 @@ class TestDetectCPrPublish:
         # Write doc_sync marker with matching SHA
         sha = integration_head_sha(target, "main")
         (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
-        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: test", "body": "## Summary\n\nFixes a bug."}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is True
@@ -2785,7 +2794,7 @@ class TestRunCPrPublish:
         subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
-        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: fix login bug"}))
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: fix login bug", "body": "## Summary\n\nFixes the login bug."}))
         ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
         mock_push = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         captured_args = {}
@@ -2798,6 +2807,7 @@ class TestRunCPrPublish:
         assert result.success is True
         assert result.data["pr_number"] == 42
         assert captured_args["title"] == "SWE Pipeline: fix login bug"
+        assert captured_args["body"] == "## Summary\n\nFixes the login bug."
         pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
         assert pr_data["pr_number"] == 42
 
@@ -2863,7 +2873,7 @@ class TestDetectCPrTitle:
         self._make_ahead(target)
         sha = integration_head_sha(target, "main")
         (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
-        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: test", "body": "## Summary\n\nFixes a bug."}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_title(ctx) is False
@@ -3932,7 +3942,7 @@ class TestDetectCPrPublishAncestorDocSync:
         subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "commit", "-m", "docs: sync"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
-        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: test", "body": "## Summary\n\nFixes a bug."}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is True
@@ -4362,7 +4372,7 @@ class TestDetectCPrPublishCorruptPrMarker:
         sha = integration_head_sha(target, "main")
         (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
         (target / ".SWE" / "pr_published.json").write_text("bad json")
-        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: test", "body": "## Summary\n\nFixes a bug."}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is True
@@ -4389,7 +4399,7 @@ class TestDetectCPrPublishPrMarkerNoNumber:
         sha = integration_head_sha(target, "main")
         (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
         (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_state": "open"}))
-        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: test", "body": "## Summary\n\nFixes a bug."}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is True
@@ -6469,7 +6479,7 @@ class TestDetectCPrPublishBatch:
         create_issue(target, issue_data={"id": "i1", "status": "open"}, body="# Issue")
         sha = integration_head_sha(target, "main")
         (target / ".SWE" / "doc_sync.json").write_text(json.dumps({"sha": sha}))
-        (target / ".SWE" / "pr_title.json").write_text(json.dumps({"title": "SWE Pipeline: test"}))
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: test", "body": "## Summary\n\nFixes a bug."}))
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr", "issues_per_pr": 1}}
         assert detect_c_pr_publish(ctx) is True
