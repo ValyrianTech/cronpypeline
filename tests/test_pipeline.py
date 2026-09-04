@@ -2610,6 +2610,108 @@ class TestRejectionCounter:
         # Give-up marker must NOT have been created
         assert not (target_dir / ".gave_up").exists()
 
+    def test_rejection_override_survives_invalidates_derive(self, tmp_path):
+        """A rejected stage (below max) un-rejected in memory must remain
+        chainable after a stage with invalidates re-derives state."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        import json as _json
+        (target_dir / ".rejection").write_text(_json.dumps({"rejection_count": 1}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                    "invalidates": [{"type": "file", "name": "other.md"}],
+                },
+                {
+                    "id": "B0",
+                    "name": "Step 2",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "b.md"},
+                        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+                    },
+                    "max_rejections": 5,
+                    "chain": False,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (target_dir / "a.md").exists()
+        assert (target_dir / "b.md").exists()
+        assert "B0" in result.chained_stages
+
+    def test_rejection_override_survives_chained_invalidates_derive(self, tmp_path):
+        """A rejected stage (below max) un-rejected in memory must remain
+        chainable after a chained stage with invalidates re-derives state."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        import json as _json
+        (target_dir / ".rejection").write_text(_json.dumps({"rejection_count": 1}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Step 2",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    "chain": True,
+                    "invalidates": [{"type": "file", "name": "other.md"}],
+                },
+                {
+                    "id": "B0",
+                    "name": "Step 3",
+                    "trigger": {"type": "file_missing", "path": "c.md"},
+                    "action": {"type": "command", "params": {"command": "echo c"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "c.md"},
+                        "rejection": {"type": "json", "name": ".rejection", "content": {}},
+                    },
+                    "max_rejections": 5,
+                    "chain": False,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (target_dir / "a.md").exists()
+        assert (target_dir / "b.md").exists()
+        assert (target_dir / "c.md").exists()
+        assert "A1" in result.chained_stages
+        assert "B0" in result.chained_stages
+
 
 class TestRetryPromptSupport:
     """Tests for retry/reminder prompt support on stale re-queue."""
