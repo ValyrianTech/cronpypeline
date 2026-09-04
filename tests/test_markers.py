@@ -598,6 +598,47 @@ class TestSymlinkTOCTOUFix:
         # Verify the exception propagated
         assert len(unlink_calls) >= 2
 
+    def test_temp_name_includes_random_component(self, tmp_path):
+        """create_marker SYMLINK uses a random component in the temp file name."""
+        from unittest.mock import patch
+
+        m = MarkerSpec(name="latest.md", type=MarkerType.SYMLINK, directory="reports", target="report.md")
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+
+        with patch("cronpypeline.markers.secrets.token_hex", return_value="abcd1234"):
+            create_marker(m, tmp_path)
+
+        # The symlink is created correctly.
+        assert (reports_dir / "latest.md").is_symlink()
+        assert os.readlink(reports_dir / "latest.md") == "report.md"
+        # No leftover temp files remain after successful creation.
+        leftovers = [f for f in reports_dir.iterdir() if ".tmp" in f.name]
+        assert leftovers == []
+
+    def test_temp_name_contains_random_component(self, tmp_path):
+        """The temp name passed to os.symlink includes the random component."""
+        from unittest.mock import patch
+
+        m = MarkerSpec(name="latest.md", type=MarkerType.SYMLINK, directory="reports", target="report.md")
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+
+        symlink_names = []
+        real_symlink = os.symlink
+
+        def capture_symlink(target, link_name, **kwargs):
+            symlink_names.append(link_name)
+            return real_symlink(target, link_name, **kwargs)
+
+        with patch("cronpypeline.markers.secrets.token_hex", return_value="abcd1234"), \
+             patch("cronpypeline.markers.os.symlink", side_effect=capture_symlink):
+            create_marker(m, tmp_path)
+
+        assert len(symlink_names) == 1
+        assert "abcd1234" in symlink_names[0]
+        assert ".tmp" in symlink_names[0]
+
 
 class TestMarkerSymlinkHandling:
     """Tests for correct handling of symlinks at FILE/JSON marker paths."""
