@@ -8,6 +8,7 @@ Supports three marker types:
 
 import json
 import os
+import secrets
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -171,7 +172,7 @@ def create_marker(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | No
             # Create the symlink at a temporary name, then atomically rename
             # it into place. This eliminates the TOCTOU window between unlink
             # and symlink_to in the original code.
-            temp_name = f".{path.name}.tmp{os.getpid()}"
+            temp_name = f".{path.name}.tmp{os.getpid()}.{secrets.token_hex(4)}"
             try:
                 os.unlink(temp_name, dir_fd=parent_fd)
             except FileNotFoundError:
