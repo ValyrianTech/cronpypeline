@@ -721,6 +721,7 @@ class Pipeline:
                             else:
                                 delete_marker(rej_spec, target_dir, context=marker_ctx)
                         ss.is_rejected = False  # Allow re-processing
+                        ss._rejection_override = True  # Preserve this override across re-derivation
 
         # Check for stale processing markers and handle them
         # Skip stages that are already complete — a leftover processing marker
