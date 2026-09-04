@@ -908,6 +908,13 @@ class Pipeline:
         for inv_spec in stage.invalidates:
             delete_marker(inv_spec, target_dir, context=marker_ctx)
 
+        # Re-derive state so stages invalidated by this stage become actionable
+        # again during the chaining phase below. Only needed when markers from
+        # other stages were actually invalidated (re-deriving would otherwise
+        # discard in-memory overrides such as the rejection re-process flag).
+        if stage.invalidates:
+            target_state.derive(target_dir, context=marker_ctx)
+
         # Handle chaining
         chained: list[str] = []
         if (
@@ -1087,6 +1094,11 @@ class Pipeline:
             for inv_spec in next_stage.invalidates:
                 delete_marker(inv_spec, target_dir, context=marker_ctx)
 
+            # Re-derive state so stages invalidated by this stage become
+            # actionable again on the next chain iteration.
+            if next_stage.invalidates:
+                target_state.derive(target_dir, context=marker_ctx)
+
             chained.append(next_stage.id)
             executed_ids.add(next_stage.id)
             current_stage = next_stage
@@ -1265,6 +1277,13 @@ class Pipeline:
         # Invalidate markers from other stages
         for inv_spec in stage.invalidates:
             delete_marker(inv_spec, target_dir, context=marker_ctx)
+
+        # Re-derive state so stages invalidated by this stage become actionable
+        # again during the chaining phase below. Only needed when markers from
+        # other stages were actually invalidated (re-deriving would otherwise
+        # discard in-memory overrides such as the rejection re-process flag).
+        if stage.invalidates:
+            target_state.derive(target_dir, context=marker_ctx)
 
         # Handle chaining
         chained: list[str] = []
