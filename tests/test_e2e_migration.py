@@ -277,7 +277,7 @@ class TestVNNMultiTickSimulation:
 
         # Simulate agent completing: write research.md, remove .processing
         (story_dir / "research.md").write_text("# Research")
-        (story_dir / ".processing").unlink()
+        (story_dir / ".processing").unlink(missing_ok=True)
 
         # Tick 2: writing stage fires (research.md exists, article.md missing)
         r2 = pipeline.tick(target="story-1")
@@ -287,7 +287,7 @@ class TestVNNMultiTickSimulation:
 
         # Simulate agent completing
         (story_dir / "article.md").write_text("# Article")
-        (story_dir / ".processing").unlink()
+        (story_dir / ".processing").unlink(missing_ok=True)
 
         # Tick 3: publishing stage fires (article.md exists, published.json missing)
         r3 = pipeline.tick(target="story-1")
@@ -296,7 +296,7 @@ class TestVNNMultiTickSimulation:
 
         # Simulate agent completing
         (story_dir / "published.json").write_text(json.dumps({"url": "https://example.com"}))
-        (story_dir / ".processing").unlink()
+        (story_dir / ".processing").unlink(missing_ok=True)
 
         # Tick 4: no work — all stages complete
         r4 = pipeline.tick(target="story-1")
@@ -329,7 +329,7 @@ class TestVNNMultiTickSimulation:
 
         # Simulate agent completing
         (story_dir / "article.md").write_text("# Article v1")
-        (story_dir / ".processing").unlink()
+        (story_dir / ".processing").unlink(missing_ok=True)
 
         # Tick 2: publishing fires
         r2 = pipeline.tick(target="story-1")
@@ -340,7 +340,7 @@ class TestVNNMultiTickSimulation:
         # and removes article.md (rejection)
         (story_dir / "rejected-article.md").write_text("Rejected: needs improvement")
         (story_dir / "article.md").unlink()
-        (story_dir / ".processing").unlink()
+        (story_dir / ".processing").unlink(missing_ok=True)
 
         # Write rejection marker
         (story_dir / ".rejection").write_text(json.dumps({"rejection_count": 1}))
@@ -354,7 +354,7 @@ class TestVNNMultiTickSimulation:
         # Simulate agent completing: new article.md written,
         # rejected-article.md invalidated by revision stage
         (story_dir / "article.md").write_text("# Article v2")
-        (story_dir / ".processing").unlink()
+        (story_dir / ".processing").unlink(missing_ok=True)
         # revision stage invalidates rejected-article.md
         assert not (story_dir / "rejected-article.md").exists()
 
@@ -365,7 +365,7 @@ class TestVNNMultiTickSimulation:
 
         # Simulate agent completing: published
         (story_dir / "published.json").write_text(json.dumps({"url": "https://example.com"}))
-        (story_dir / ".processing").unlink()
+        (story_dir / ".processing").unlink(missing_ok=True)
         # The publishing agent completed successfully, so it clears the rejection
         # marker (rejection tracking resets once the work is actually completed).
         (story_dir / ".rejection").unlink()

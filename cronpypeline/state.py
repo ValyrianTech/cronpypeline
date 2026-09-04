@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.config import Stage
-from cronpypeline.markers import marker_age_seconds, marker_exists, read_marker
+from cronpypeline.markers import delete_marker, marker_age_seconds, marker_exists, read_marker
 from cronpypeline.triggers import evaluate_trigger
 
 
@@ -126,6 +126,7 @@ class TargetState:
     target_lock: bool = False
     target_dir: Path | None = None
     context: dict[str, Any] | None = None
+    _orphan_cleanup_done: bool = dc_field(default=False, repr=False)
 
     def derive(self, base_dir: Path, context: dict[str, Any] | None = None) -> None:
         """Derive state for all stages.
@@ -147,6 +148,24 @@ class TargetState:
                 ss = StageState(stage=stage)
                 self.stage_states[stage.id] = ss
             ss.derive(base_dir, context=context)
+
+        # Clean up orphaned processing markers for completed stages.
+        # When a queue_agent action completes externally (the agent creates
+        # the completion marker), the pipeline-created processing marker is
+        # left behind.  This orphans the target when target_lock is enabled
+        # (has_processing stays True forever).  Delete the stale processing
+        # marker so downstream stages can proceed.
+        #
+        # Only run once per TargetState instance — re-derivations (e.g. after
+        # invalidation) must not trigger cleanup, because a processing marker
+        # created by the current tick's action could belong to a different
+        # stage that shares the same marker name.
+        if not self._orphan_cleanup_done:
+            for ss in self.stage_states.values():
+                if ss.is_complete and ss.is_processing and "processing" in ss.stage.markers:
+                    delete_marker(ss.stage.markers["processing"], base_dir, context=context)
+                    ss.is_processing = False
+            self._orphan_cleanup_done = True
 
     @property
     def has_processing(self) -> bool:

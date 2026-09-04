@@ -614,6 +614,86 @@ class TestTargetStateTargetLock:
         assert ts.first_actionable_stage is None
 
 
+class TestTargetStateOrphanedProcessingCleanup:
+    """Tests for orphaned processing marker cleanup during derivation."""
+
+    def test_orphaned_processing_marker_cleaned_up(self, tmp_path):
+        """When a stage is complete but its processing marker is still on disk,
+        derive() should delete it and clear is_processing so target_lock
+        doesn't block downstream stages."""
+        stage1 = Stage(
+            id="A0",
+            name="Async step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "test", "prompt": "do"}),
+            markers={
+                "completion": MarkerSpec(name="a.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing_a", type=MarkerType.JSON, content={}),
+            },
+            timeout_minutes=30,
+        )
+        stage2 = Stage(
+            id="B0",
+            name="Next step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="b.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo b"}),
+            markers={"completion": MarkerSpec(name="b.md", type=MarkerType.FILE)},
+        )
+        # Simulate: agent completed (a.md exists) but processing marker left behind
+        (tmp_path / "a.md").touch()
+        create_marker(stage1.markers["processing"], tmp_path)
+
+        ts = TargetState(target="repo", stages=[stage1, stage2], target_lock=True)
+        ts.derive(tmp_path)
+        # Processing marker should be cleaned up
+        assert ts.stage_states["A0"].is_complete is True
+        assert ts.stage_states["A0"].is_processing is False
+        assert not (tmp_path / ".processing_a").exists()
+        # target_lock should not block downstream stages
+        assert ts.has_processing is False
+        assert ts.first_actionable_stage is not None
+        assert ts.first_actionable_stage.stage.id == "B0"
+
+    def test_orphaned_processing_cleanup_in_multi_target_selection(self, tmp_path):
+        """When target_lock is enabled and a target has an orphaned processing
+        marker, get_target_with_work should still find it (the marker is
+        cleaned up during derivation, before selection)."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        for t in ["repo1", "repo2"]:
+            (workspace / t).mkdir()
+
+        stage1 = Stage(
+            id="A0",
+            name="Async step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "test", "prompt": "do"}),
+            markers={
+                "completion": MarkerSpec(name="a.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing_a", type=MarkerType.JSON, content={}),
+            },
+            timeout_minutes=30,
+        )
+        stage2 = Stage(
+            id="B0",
+            name="Next step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="b.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo b"}),
+            markers={"completion": MarkerSpec(name="b.md", type=MarkerType.FILE)},
+        )
+        # repo1: A0 complete, orphaned processing marker
+        (workspace / "repo1" / "a.md").touch()
+        create_marker(stage1.markers["processing"], workspace / "repo1")
+        # repo2: A0 not complete (no markers at all)
+        state = PipelineState(
+            workspace_dir=workspace, stages=[stage1, stage2], target_lock=True
+        )
+        state.derive(["repo1", "repo2"])
+        # repo1 should have work (B0 actionable after orphan cleanup)
+        target = state.get_target_with_work(["repo1", "repo2"])
+        assert target == "repo1"
+
+
 class TestPipelineStateFlattenConfig:
     """Tests for PipelineState flattening target_config into context."""
 
