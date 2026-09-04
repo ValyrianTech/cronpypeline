@@ -3047,8 +3047,8 @@ def detect_c_pr_title(context: dict[str, Any]) -> bool:
         return False
 
     # Already have a title?
-    title_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
-    if title_marker.exists():
+    meta_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
+    if meta_marker.exists():
         return False
 
     # Already processing?
