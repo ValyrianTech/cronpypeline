@@ -543,6 +543,60 @@ class TestTickChaining:
         assert "C0" in result.chained_stages
         assert result.stage_id == "C0"
 
+    def test_chain_re_derives_state_after_chained_stage_invalidates(self, tmp_path):
+        """Chaining re-derives state after a chained stage's invalidates so a
+        downstream stage invalidated by that chained stage becomes actionable
+        again within the same tick."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Pre-create c.md so C0 starts as complete.
+        (target_dir / "c.md").write_text("done", encoding="utf-8")
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "B0",
+                    "name": "Step 2",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    "chain": True,
+                    "invalidates": [{"type": "file", "name": "c.md"}],
+                },
+                {
+                    "id": "C0",
+                    "name": "Step 3",
+                    "trigger": {"type": "file_missing", "path": "c.md"},
+                    "action": {"type": "command", "params": {"command": "echo c"}},
+                    "markers": {"completion": {"type": "file", "name": "c.md"}},
+                    "chain": False,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (target_dir / "a.md").exists()
+        assert (target_dir / "b.md").exists()
+        assert (target_dir / "c.md").exists()
+        assert "B0" in result.chained_stages
+        assert "C0" in result.chained_stages
+        assert result.stage_id == "C0"
+
     def test_chain_stops_at_non_chain_stage(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -1464,6 +1518,62 @@ class TestTickStaleHandling:
         result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.ACTION_EXECUTED
         assert not (target_dir / "rejected-article.md").exists()
+
+    def test_stale_sync_action_invalidates_makes_stage_actionable_and_chains(self, tmp_path):
+        """After a stale sync action's invalidates, state is re-derived so a
+        stage invalidated by the re-executed stage becomes actionable and is
+        picked up by the chaining phase within the same tick."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Create a stale processing marker
+        processing_data = {"retry_count": 1, "timestamp": time.time() - 3600}
+        (target_dir / ".processing").write_text(json.dumps(processing_data))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        # Pre-create b.md so B0 starts as complete.
+        (target_dir / "b.md").write_text("done", encoding="utf-8")
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Sync Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo done"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "a.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                    },
+                    "timeout_minutes": 30,
+                    "max_retries": 3,
+                    "chain": True,
+                    "invalidates": [{"type": "file", "name": "b.md"}],
+                },
+                {
+                    "id": "B0",
+                    "name": "Step 2",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    "chain": False,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (target_dir / "a.md").exists()
+        assert (target_dir / "b.md").exists()
+        assert not (target_dir / ".processing").exists()
+        assert "B0" in result.chained_stages
+        assert result.stage_id == "B0"
 
     def test_stale_sync_action_clears_rejection_marker(self, tmp_path):
         workspace = tmp_path / "workspace"
