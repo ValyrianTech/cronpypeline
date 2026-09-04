@@ -37,6 +37,7 @@ class StageState:
     processing_data: dict[str, Any] | None = None
     rejection_count: int = 0
     is_rejected: bool = False
+    _rejection_override: bool = dc_field(default=False, repr=False)
 
     def derive(self, base_dir: Path, context: dict[str, Any] | None = None) -> None:
         """Derive state from the filesystem.
@@ -57,8 +58,10 @@ class StageState:
 
         # Rejection check
         if "rejection" in markers:
-            self.is_rejected = marker_exists(markers["rejection"], base_dir, context=ctx)
-            if self.is_rejected:
+            rej_exists = marker_exists(markers["rejection"], base_dir, context=ctx)
+            if not self._rejection_override:
+                self.is_rejected = rej_exists
+            if rej_exists:
                 rej_data = read_marker(markers["rejection"], base_dir, context=ctx)
                 if rej_data and "rejection_count" in rej_data:
                     self.rejection_count = rej_data["rejection_count"]
@@ -124,16 +127,21 @@ class TargetState:
     def derive(self, base_dir: Path, context: dict[str, Any] | None = None) -> None:
         """Derive state for all stages.
 
+        Updates existing StageState objects in-place when they already exist so
+        that in-memory overrides (e.g. the rejection re-process flag) are
+        preserved across re-derivation calls within the same tick.
+
         :param base_dir: Target directory to check markers in.
         :param context: Optional context dict for marker template substitution.
         """
-        self.stage_states = {}
         for stage in self.stages:
             if not stage.enabled:
                 continue
-            ss = StageState(stage=stage)
+            ss = self.stage_states.get(stage.id)
+            if ss is None:
+                ss = StageState(stage=stage)
+                self.stage_states[stage.id] = ss
             ss.derive(base_dir, context=context)
-            self.stage_states[stage.id] = ss
 
     @property
     def has_processing(self) -> bool:
