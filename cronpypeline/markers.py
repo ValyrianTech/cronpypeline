@@ -158,10 +158,14 @@ def create_marker(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | No
         if target is None:
             raise ValueError(f"Symlink marker has no target: {spec.name}")
 
-        # Open the parent directory with O_DIRECTORY|O_NOFOLLOW to prevent
-        # symlink-following attacks: if a directory component was swapped for
-        # a symlink after resolve_path's security check, os.open will fail
-        # rather than following the symlink to an unintended location.
+        # Open the parent directory with O_DIRECTORY|O_NOFOLLOW. O_NOFOLLOW only
+        # guards the final path component: it prevents a symlink swap at the
+        # parent directory itself between resolve_path's security check and this
+        # os.open call. It does not protect against intermediate directory
+        # component swaps (that would require openat with O_NOFOLLOW per
+        # component), but since path.parent derives from a fully-resolved path,
+        # intermediate components are already resolved and the residual risk is
+        # limited to the TOCTOU race on the final component.
         parent_fd = os.open(path.parent, os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             # Create the symlink at a temporary name, then atomically rename
