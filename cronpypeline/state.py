@@ -11,6 +11,7 @@ from typing import Any
 
 from cronpypeline.config import Stage
 from cronpypeline.markers import marker_age_seconds, marker_exists, read_marker
+from cronpypeline.triggers import evaluate_trigger
 
 
 @dataclass
@@ -123,6 +124,8 @@ class TargetState:
     stages: list[Stage]
     stage_states: dict[str, StageState] = dc_field(default_factory=dict)
     target_lock: bool = False
+    target_dir: Path | None = None
+    context: dict[str, Any] | None = None
 
     def derive(self, base_dir: Path, context: dict[str, Any] | None = None) -> None:
         """Derive state for all stages.
@@ -134,6 +137,8 @@ class TargetState:
         :param base_dir: Target directory to check markers in.
         :param context: Optional context dict for marker template substitution.
         """
+        self.target_dir = base_dir
+        self.context = context
         for stage in self.stages:
             if not stage.enabled:
                 continue
@@ -162,6 +167,28 @@ class TargetState:
             ss = self.stage_states.get(stage.id)
             if ss and ss.is_actionable:
                 return ss
+        return None
+
+    @property
+    def first_stage_with_work(self) -> StageState | None:
+        """Return the first stage whose trigger actually fires, or None.
+
+        Like first_actionable_stage but also evaluates trigger conditions,
+        so markerless stages whose triggers return False are correctly
+        excluded.  Requires derive() to have been called (which stores
+        target_dir and context).
+        """
+        if self.target_lock and self.has_processing:
+            return None
+        if self.target_dir is None:
+            return None
+        for stage in self.stages:
+            if not stage.enabled:
+                continue
+            ss = self.stage_states.get(stage.id)
+            if ss and ss.is_actionable:
+                if evaluate_trigger(stage.trigger, self.target_dir, context=self.context):
+                    return ss
         return None
 
 
@@ -208,17 +235,25 @@ class PipelineState:
     def get_target_with_work(self, targets: list[str]) -> str | None:
         """Return the first target that has actionable work, or None.
 
+        Evaluates trigger conditions (not just marker state) so that
+        markerless stages whose triggers return False are correctly
+        excluded.
+
         :param targets: List of target names to check.
         :returns: First target name with work, or None.
         """
         for target in targets:
             ts = self.target_states.get(target)
-            if ts and ts.first_actionable_stage is not None:
+            if ts and ts.first_stage_with_work is not None:
                 return target
         return None
 
     def get_all_targets_with_work(self, targets: list[str]) -> list[str]:
         """Return all targets that have actionable work.
+
+        Evaluates trigger conditions (not just marker state) so that
+        markerless stages whose triggers return False are correctly
+        excluded.
 
         :param targets: List of target names to check.
         :returns: List of target names with work.
@@ -226,6 +261,6 @@ class PipelineState:
         result = []
         for target in targets:
             ts = self.target_states.get(target)
-            if ts and ts.first_actionable_stage is not None:
+            if ts and ts.first_stage_with_work is not None:
                 result.append(target)
         return result
