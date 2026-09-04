@@ -173,6 +173,16 @@ class TargetState:
         return any(ss.is_processing for ss in self.stage_states.values())
 
     @property
+    def has_active_processing(self) -> bool:
+        """Whether any stage is processing and not stale.
+
+        Stale processing markers indicate the agent is gone — they should
+        not block target selection under target_lock, since the stale
+        handler will re-queue or give up on the next tick.
+        """
+        return any(ss.is_processing and not ss.is_stale for ss in self.stage_states.values())
+
+    @property
     def first_actionable_stage(self) -> StageState | None:
         """Return the first stage that can be acted upon, or None.
 
@@ -197,7 +207,7 @@ class TargetState:
         excluded.  Requires derive() to have been called (which stores
         target_dir and context).
         """
-        if self.target_lock and self.has_processing:
+        if self.target_lock and self.has_active_processing:
             return None
         if self.target_dir is None:
             return None

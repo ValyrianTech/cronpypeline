@@ -697,6 +697,48 @@ class TestTargetStateOrphanedProcessingCleanup:
 class TestPipelineStateFlattenConfig:
     """Tests for PipelineState flattening target_config into context."""
 
+    def test_stale_processing_does_not_block_target_selection(self, tmp_path):
+        """When target_lock is enabled and the only processing stage is stale,
+        first_stage_with_work should still find work — stale markers indicate
+        the agent is gone and should not block target selection."""
+        stage1 = Stage(
+            id="A0",
+            name="Async step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "test", "prompt": "do"}),
+            markers={
+                "completion": MarkerSpec(name="a.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing_a", type=MarkerType.JSON, content={}),
+            },
+            timeout_minutes=30,
+        )
+        stage2 = Stage(
+            id="B0",
+            name="Next step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="b.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo b"}),
+            markers={"completion": MarkerSpec(name="b.md", type=MarkerType.FILE)},
+        )
+        # A0 is not complete, processing marker exists but is old → stale
+        create_marker(stage1.markers["processing"], tmp_path)
+        # Make it stale by setting the file mtime in the past
+        import os as _os
+        import time as _time
+        old_ts = _time.time() - 3600  # 1 hour ago, well past timeout
+        _os.utime(tmp_path / ".processing_a", (old_ts, old_ts))
+
+        ts = TargetState(target="repo", stages=[stage1, stage2], target_lock=True)
+        ts.derive(tmp_path)
+        # A0 should be stale
+        assert ts.stage_states["A0"].is_stale is True
+        assert ts.stage_states["A0"].is_processing is True
+        # has_active_processing should be False (only stale processing)
+        assert ts.has_active_processing is False
+        # first_stage_with_work should find B0 (stale doesn't block)
+        fsw = ts.first_stage_with_work
+        assert fsw is not None
+        assert fsw.stage.id == "B0"
+
     def test_flatten_target_config_keys_into_context(self, tmp_path):
         """Target config keys should be flattened into the derivation context."""
         workspace = tmp_path / "workspace"

@@ -749,8 +749,9 @@ class Pipeline:
             "target_config": target_config,
         }
         stage_state: StageState | None = None
-        # If target_lock is enabled, no stage is actionable while any stage is processing
-        if not (self.config.target_lock and target_state.has_processing):
+        # If target_lock is enabled, no stage is actionable while any stage is actively processing.
+        # Stale-only processing markers don't block (stale handler already ran above).
+        if not (self.config.target_lock and target_state.has_active_processing):
             for stage in active_stages:
                 candidate: StageState | None = target_state.stage_states.get(stage.id)
                 if candidate is None:
