@@ -688,3 +688,92 @@ class TestMarkerSymlinkHandling:
         assert target_file.read_text() == '{"original": true}'
         data = json.loads(marker_path.read_text())
         assert data["issue_id"] == "42"
+
+    def test_resolve_path_returns_symlink_path_for_broken_symlink(self, tmp_path):
+        """resolve_path returns the symlink path (not the resolved target) for a
+        broken symlink pointing outside the base directory."""
+        outside_target = tmp_path.parent / "nonexistent_target.txt"
+        marker_path = tmp_path / "done.marker"
+        marker_path.symlink_to(outside_target)
+        assert marker_path.is_symlink()
+        assert not marker_path.exists()
+
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        resolved = m.resolve_path(tmp_path)
+
+        assert resolved == marker_path
+        assert resolved.is_symlink()
+        assert str(outside_target) not in str(resolved)
+
+    def test_marker_exists_file_marker_broken_symlink_returns_true(self, tmp_path):
+        """marker_exists returns True for a FILE marker at a broken symlink path
+        (symlink pointing outside the base directory)."""
+        outside_target = tmp_path.parent / "nonexistent_target.txt"
+        marker_path = tmp_path / "done.marker"
+        marker_path.symlink_to(outside_target)
+
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        assert marker_exists(m, tmp_path) is True
+
+    def test_delete_file_marker_broken_symlink_removes_symlink(self, tmp_path):
+        """delete_marker removes a broken symlink at a FILE marker path (symlink
+        pointing outside the base directory)."""
+        outside_target = tmp_path.parent / "nonexistent_target.txt"
+        marker_path = tmp_path / "done.marker"
+        marker_path.symlink_to(outside_target)
+        assert marker_path.is_symlink()
+
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        delete_marker(m, tmp_path)
+
+        assert not marker_path.is_symlink()
+        assert not marker_path.exists()
+
+    def test_read_file_marker_broken_symlink_reports_exists(self, tmp_path):
+        """read_marker returns {'exists': True} for a FILE marker at a broken
+        symlink path (symlink pointing outside the base directory)."""
+        outside_target = tmp_path.parent / "nonexistent_target.txt"
+        marker_path = tmp_path / "done.marker"
+        marker_path.symlink_to(outside_target)
+
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        result = read_marker(m, tmp_path)
+
+        assert result is not None
+        assert result["exists"] is True
+
+    def test_marker_exists_json_marker_broken_symlink_returns_true(self, tmp_path):
+        """marker_exists returns True for a JSON marker at a broken symlink path
+        (symlink pointing outside the base directory)."""
+        outside_target = tmp_path.parent / "nonexistent_target.json"
+        marker_path = tmp_path / "task.json"
+        marker_path.symlink_to(outside_target)
+
+        m = MarkerSpec(name="task.json", type=MarkerType.JSON, directory=".")
+        assert marker_exists(m, tmp_path) is True
+
+    def test_delete_json_marker_broken_symlink_removes_symlink(self, tmp_path):
+        """delete_marker removes a broken symlink at a JSON marker path (symlink
+        pointing outside the base directory)."""
+        outside_target = tmp_path.parent / "nonexistent_target.json"
+        marker_path = tmp_path / "task.json"
+        marker_path.symlink_to(outside_target)
+        assert marker_path.is_symlink()
+
+        m = MarkerSpec(name="task.json", type=MarkerType.JSON, directory=".")
+        delete_marker(m, tmp_path)
+
+        assert not marker_path.is_symlink()
+        assert not marker_path.exists()
+
+    def test_read_json_marker_broken_symlink_does_not_raise(self, tmp_path):
+        """read_marker for a JSON marker at a broken symlink path (symlink
+        pointing outside the base directory) should not raise an error."""
+        outside_target = tmp_path.parent / "nonexistent_target.json"
+        marker_path = tmp_path / "task.json"
+        marker_path.symlink_to(outside_target)
+
+        m = MarkerSpec(name="task.json", type=MarkerType.JSON, directory=".")
+        result = read_marker(m, tmp_path)
+
+        assert result is None

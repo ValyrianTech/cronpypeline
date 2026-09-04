@@ -94,7 +94,20 @@ class MarkerSpec:
         base_resolved = base_dir.resolve()
         if not resolved.is_relative_to(base_resolved):
             raise ValueError(f"Marker path escapes base directory: {directory}/{name}")
-        full_resolved = (resolved / name).resolve()
+        marker_path = resolved / name
+        # If the marker path is a symlink whose target does not exist (broken
+        # symlink), return the symlink path itself. The symlink entry exists at
+        # the marker path and callers should be able to detect and operate on it
+        # (e.g. marker_exists, delete_marker). There is no security risk from a
+        # broken symlink because its target doesn't exist, so there's nothing to
+        # redirect file operations to.
+        if os.path.islink(marker_path):
+            try:
+                marker_path.resolve(strict=True)
+            except FileNotFoundError:
+                # Broken symlink - return the symlink path itself.
+                return marker_path
+        full_resolved = marker_path.resolve()
         if not full_resolved.is_relative_to(base_resolved):
             raise ValueError(f"Marker path escapes base directory: {directory}/{name}")
         # Return the path to the marker itself, without resolving the final
@@ -102,7 +115,7 @@ class MarkerSpec:
         # symlink at the marker path, which would prevent callers from
         # operating on the symlink entry itself (e.g. delete_marker would
         # delete the symlink's target rather than the symlink).
-        return resolved / name
+        return marker_path
 
     def resolve_target(self, context: dict[str, Any] | None = None) -> str | None:
         """Resolve symlink target with optional context substitution.
