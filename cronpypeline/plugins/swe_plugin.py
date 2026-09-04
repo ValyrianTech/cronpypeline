@@ -2972,16 +2972,16 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
     return result
 
 
-# ─── C-pr-title: Queue PRReviewAgent to generate PR title ───────────────────
+# ─── C-pr-title: Queue PRReviewAgent to generate PR title and body ──────────
 
-PR_TITLE_MARKER = "pr_title.json"
+PR_TITLE_MARKER = "pr_meta.json"
 PR_TITLE_PROCESSING = ".processing_c_pr_title"
 
 
 def _build_pr_title_prompt(
     target_dir: Path, repo_name: str, default_branch: str, sha: str,
 ) -> str:
-    """Build the prompt for PRReviewAgent to generate a PR title.
+    """Build the prompt for PRReviewAgent to generate a PR title and body.
 
     :param target_dir: Target repo directory.
     :param repo_name: Repo name.
@@ -2989,9 +2989,9 @@ def _build_pr_title_prompt(
     :param sha: Integration HEAD sha.
     :returns: Prompt string.
     """
-    title_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
+    meta_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
     return (
-        f"You are generating a pull request title for the repo at:\n"
+        f"You are generating a pull request title and body for the repo at:\n"
         f"  {target_dir}\n\n"
         f"Branch:    {INTEGRATION_BRANCH}\n"
         f"Target:    {default_branch}\n"
@@ -3002,29 +3002,38 @@ def _build_pr_title_prompt(
         f"does. The title MUST start with the prefix ``SWE Pipeline: `` "
         f"followed by a short summary of the work (e.g. "
         f"``SWE Pipeline: fix login bug and add rate limiting``).\n\n"
+        f"You must also write a well-structured PR body in Markdown format "
+        f"that accurately describes what the PR does, including the sections "
+        f"``Summary``, ``Changes`` and ``Testing``.\n\n"
         f"## Step 1 — understand the changes\n\n"
         f"Use RunCommand to examine the diff:\n"
         f"  cd {shlex.quote(str(target_dir))} && git log {default_branch}..{INTEGRATION_BRANCH} --oneline\n"
         f"  cd {shlex.quote(str(target_dir))} && git diff --stat {default_branch}...{INTEGRATION_BRANCH}\n"
         f"  cd {shlex.quote(str(target_dir))} && git diff {default_branch}...{INTEGRATION_BRANCH} --no-color\n\n"
         f"Use ReadFile to examine specific changed files if needed for context.\n\n"
-        f"## Step 2 — write the title\n\n"
-        f"Based on the changes, write a fitting title. Rules:\n"
+        f"## Step 2 — write the title and body\n\n"
+        f"Based on the changes, write a fitting title and body. Title rules:\n"
         f"- Start with ``SWE Pipeline: ``\n"
         f"- Keep it under 72 characters total\n"
         f"- Describe the actual changes, not generic boilerplate\n"
         f"- Use imperative mood (e.g. ``fix`` not ``fixes``)\n\n"
-        f"Write the title to a JSON file using WriteFile:\n"
-        f"  Path: {title_marker}\n"
-        f'  Content: {{"title": "<your title here>"}}\n'
+        f"Body rules:\n"
+        f"- Use Markdown formatting\n"
+        f"- Include a ``Summary`` section describing what the PR does\n"
+        f"- Include a ``Changes`` section listing the actual changes made\n"
+        f"- Include a ``Testing`` section describing how the changes were tested\n"
+        f"- Describe the actual changes, not generic boilerplate\n\n"
+        f"Write the title and body to a JSON file using WriteFile:\n"
+        f"  Path: {meta_marker}\n"
+        f'  Content: {{"title": "<your title here>", "body": "<your markdown body here>"}}\n'
     )
 
 
 def detect_c_pr_title(context: dict[str, Any]) -> bool:
-    """Trigger: fire when pipeline is ready to publish but no PR title yet.
+    """Trigger: fire when pipeline is ready to publish but no PR title/body yet.
 
     Same preconditions as ``detect_c_pr_publish``, but also requires that
-    ``pr_title.json`` does not already exist and that the title agent is
+    ``pr_meta.json`` does not already exist and that the title agent is
     not already processing.
 
     :param context: Trigger context dict.
@@ -3038,8 +3047,8 @@ def detect_c_pr_title(context: dict[str, Any]) -> bool:
         return False
 
     # Already have a title?
-    title_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
-    if title_marker.exists():
+    meta_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
+    if meta_marker.exists():
         return False
 
     # Already processing?
@@ -3048,7 +3057,7 @@ def detect_c_pr_title(context: dict[str, Any]) -> bool:
 
 
 def run_c_pr_title(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Queue PRReviewAgent to generate a PR title from the diff.
+    """Queue PRReviewAgent to generate a PR title and body from the diff.
 
     :param action: Action spec with optional queue params.
     :param context: Tick context.
@@ -3090,7 +3099,7 @@ def run_c_pr_title(action: ActionSpec, context: TickContext) -> ActionResult:
 
 
 def _publish_preconditions_met(context: dict[str, Any]) -> bool:
-    """Check all publish preconditions except pr_title.json existence.
+    """Check all publish preconditions except pr_meta.json existence.
 
     Shared by detect_c_pr_title (which runs before the title exists) and
     detect_c_pr_publish (which requires the title to exist).
@@ -3182,10 +3191,10 @@ def detect_c_pr_publish(context: dict[str, Any]) -> bool:
     if not _publish_preconditions_met(context):
         return False
 
-    # PR title must have been generated by the title agent
+    # PR title/body meta must have been generated by the title agent
     target_dir = Path(context.get("target_dir", "."))
-    title_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
-    return title_marker.exists()
+    meta_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
+    return meta_marker.exists()
 
 
 def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -3222,17 +3231,20 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     if push_result.returncode != 0:
         return ActionResult(success=False, stderr=f"Git push failed: {push_result.stderr}")
 
-    # Read agent-generated title
-    title_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
+    # Read agent-generated title and body
+    meta_marker = target_dir / SWE_SUBDIR / PR_TITLE_MARKER
     try:
-        title_data = json.loads(title_marker.read_text(encoding="utf-8"))
-        title = title_data.get("title", "").strip()
+        meta_data = json.loads(meta_marker.read_text(encoding="utf-8"))
+        title = meta_data.get("title", "").strip()
+        body = meta_data.get("body", "").strip()
     except (OSError, json.JSONDecodeError):
         title = ""
+        body = ""
     if not title:
         title = f"SWE Pipeline: Automated code improvements for {repo_name}"
+    if not body:
+        body = _build_pr_body(target_dir, repo_name, default_branch)
 
-    body = _build_pr_body(target_dir, repo_name, default_branch)
     pr_data = _gh_api_post(
         owner, gh_repo_name, "pulls",
         {"title": title, "head": INTEGRATION_BRANCH, "base": default_branch, "body": body},

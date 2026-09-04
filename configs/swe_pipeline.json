@@ -751,7 +751,7 @@
     },
     {
       "id": "C-pr-title",
-      "name": "Queue PRReviewAgent to generate PR title",
+      "name": "Queue PRReviewAgent to generate PR title and body",
       "trigger": {
         "type": "custom",
         "callable": "cronpypeline.plugins.swe_plugin.detect_c_pr_title"
@@ -765,7 +765,7 @@
       "markers": {
         "completion": {
           "type": "json",
-          "name": "pr_title.json",
+          "name": "pr_meta.json",
           "directory": ".SWE"
         },
         "processing": {
