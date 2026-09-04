@@ -597,3 +597,94 @@ class TestSymlinkTOCTOUFix:
 
         # Verify the exception propagated
         assert len(unlink_calls) >= 2
+
+
+class TestMarkerSymlinkHandling:
+    """Tests for correct handling of symlinks at FILE/JSON marker paths."""
+
+    def test_delete_file_marker_symlink_removes_only_symlink(self, tmp_path):
+        """delete_marker on a FILE marker whose path is a symlink removes the
+        symlink entry, leaving the target file intact."""
+        target_file = tmp_path / "target_file.txt"
+        target_file.write_text("original content")
+        marker_path = tmp_path / "done.marker"
+        marker_path.symlink_to(target_file)
+
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        delete_marker(m, tmp_path)
+
+        assert not marker_path.exists()
+        assert not marker_path.is_symlink()
+        assert target_file.exists()
+        assert target_file.read_text() == "original content"
+
+    def test_delete_json_marker_symlink_removes_only_symlink(self, tmp_path):
+        """delete_marker on a JSON marker whose path is a symlink removes the
+        symlink entry, leaving the target file intact."""
+        target_file = tmp_path / "target_data.json"
+        target_file.write_text('{"key": "value"}')
+        marker_path = tmp_path / "task.json"
+        marker_path.symlink_to(target_file)
+
+        m = MarkerSpec(name="task.json", type=MarkerType.JSON, directory=".")
+        delete_marker(m, tmp_path)
+
+        assert not marker_path.exists()
+        assert not marker_path.is_symlink()
+        assert target_file.exists()
+        assert target_file.read_text() == '{"key": "value"}'
+
+    def test_read_file_marker_symlink_reports_exists(self, tmp_path):
+        """read_marker on a FILE marker whose path is a symlink reports exists."""
+        target_file = tmp_path / "target_file.txt"
+        target_file.write_text("content")
+        marker_path = tmp_path / "done.marker"
+        marker_path.symlink_to(target_file)
+
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        result = read_marker(m, tmp_path)
+
+        assert result is not None
+        assert result["exists"] is True
+
+    def test_marker_exists_file_marker_symlink_returns_true(self, tmp_path):
+        """marker_exists on a FILE marker whose path is a symlink returns True."""
+        target_file = tmp_path / "target_file.txt"
+        target_file.write_text("content")
+        marker_path = tmp_path / "done.marker"
+        marker_path.symlink_to(target_file)
+
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        assert marker_exists(m, tmp_path) is True
+
+    def test_create_file_marker_replaces_symlink(self, tmp_path):
+        """create_marker FILE type replaces a symlink at the marker path with a
+        regular file instead of following the symlink."""
+        target_file = tmp_path / "target_file.txt"
+        target_file.write_text("should not be modified")
+        marker_path = tmp_path / "done.marker"
+        marker_path.symlink_to(target_file)
+
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory=".")
+        create_marker(m, tmp_path)
+
+        assert marker_path.exists()
+        assert not marker_path.is_symlink()
+        assert target_file.read_text() == "should not be modified"
+
+    def test_create_json_marker_replaces_symlink(self, tmp_path):
+        """create_marker JSON type replaces a symlink at the marker path with a
+        regular file instead of following the symlink."""
+        target_file = tmp_path / "target_data.json"
+        target_file.write_text('{"original": true}')
+        marker_path = tmp_path / "task.json"
+        marker_path.symlink_to(target_file)
+
+        m = MarkerSpec(name="task.json", type=MarkerType.JSON, directory=".", content={"issue_id": "42"})
+        create_marker(m, tmp_path)
+
+        assert marker_path.exists()
+        assert not marker_path.is_symlink()
+        assert target_file.read_text() == '{"original": true}'
+        data = json.loads(marker_path.read_text())
+        assert data["issue_id"] == "42"

@@ -97,14 +97,12 @@ class MarkerSpec:
         full_resolved = (resolved / name).resolve()
         if not full_resolved.is_relative_to(base_resolved):
             raise ValueError(f"Marker path escapes base directory: {directory}/{name}")
-        # For SYMLINK markers, return the path to the symlink itself (not its
-        # target). The fully-resolved path would follow an existing symlink,
-        # which would prevent us from operating on the symlink entry itself.
-        # For other marker types, return the fully-resolved path so callers
-        # operate on the verified path (no unresolved symlink components).
-        if self.type == MarkerType.SYMLINK:
-            return resolved / name
-        return full_resolved
+        # Return the path to the marker itself, without resolving the final
+        # name component. The fully-resolved path would follow an existing
+        # symlink at the marker path, which would prevent callers from
+        # operating on the symlink entry itself (e.g. delete_marker would
+        # delete the symlink's target rather than the symlink).
+        return resolved / name
 
     def resolve_target(self, context: dict[str, Any] | None = None) -> str | None:
         """Resolve symlink target with optional context substitution.
@@ -129,9 +127,15 @@ def create_marker(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | No
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if spec.type == MarkerType.FILE:
+        # Remove any pre-existing symlink at the marker path first so that
+        # touch()/write_text() do not follow it to an unintended location.
+        if path.is_symlink():
+            path.unlink()
         path.touch()
 
     elif spec.type == MarkerType.JSON:
+        if path.is_symlink():
+            path.unlink()
         content = dict(spec.content)
         content["timestamp"] = time.time()
         path.write_text(json.dumps(content, indent=2))
