@@ -292,7 +292,7 @@ A pipeline can declare `pre_tick` and `post_tick` hooks — custom Python callab
 
 ### Marker invalidation
 
-Stages can declare an `invalidates` list — markers from other stages to delete when this stage's action succeeds. This enables cross-stage state cleanup without custom code (e.g. a fix stage deleting upstream report markers to force re-evaluation).
+Stages can declare an `invalidates` list — markers from other stages to delete when this stage's action succeeds. This enables cross-stage state cleanup without custom code (e.g. a fix stage deleting upstream report markers to force re-evaluation). When a stage invalidates markers from other stages, the pipeline re-derives the target state (in both the normal execution path and the chaining loop), so the invalidated stages become actionable again during the same tick's chaining phase.
 
 ### Rejection tracking
 
