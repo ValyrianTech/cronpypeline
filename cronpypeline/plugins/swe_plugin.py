@@ -2972,7 +2972,7 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
     return result
 
 
-# ─── C-pr-title: Queue PRReviewAgent to generate PR title ───────────────────
+# ─── C-pr-title: Queue PRReviewAgent to generate PR title and body ──────────
 
 PR_TITLE_MARKER = "pr_meta.json"
 PR_TITLE_PROCESSING = ".processing_c_pr_title"
@@ -3030,7 +3030,7 @@ def _build_pr_title_prompt(
 
 
 def detect_c_pr_title(context: dict[str, Any]) -> bool:
-    """Trigger: fire when pipeline is ready to publish but no PR title yet.
+    """Trigger: fire when pipeline is ready to publish but no PR title/body yet.
 
     Same preconditions as ``detect_c_pr_publish``, but also requires that
     ``pr_meta.json`` does not already exist and that the title agent is
@@ -3057,7 +3057,7 @@ def detect_c_pr_title(context: dict[str, Any]) -> bool:
 
 
 def run_c_pr_title(action: ActionSpec, context: TickContext) -> ActionResult:
-    """Queue PRReviewAgent to generate a PR title from the diff.
+    """Queue PRReviewAgent to generate a PR title and body from the diff.
 
     :param action: Action spec with optional queue params.
     :param context: Tick context.
