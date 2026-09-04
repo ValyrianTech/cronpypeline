@@ -787,6 +787,8 @@ The issue-fix plugin's stale-task cleanup (`_cleanup_stale_task`) now validates 
 
 The stale-task cleanup also verifies that a task belongs to the expected repo before deleting it: it checks the task's `repo_name` field in `task.json`, falling back to the task directory name format `{date}_{safe_repo}_{task_id}` when `repo_name` is absent or `task.json` is corrupt/unreadable. A task that does not belong to the expected repo is refused cleanup (with an ERROR message) and left untouched, preventing cleanup from deleting task directories belonging to a different repo.
 
+Additionally, the stale-task cleanup always derives the git branch it deletes from the task ID (`_task_branch_name(task_id)`, e.g. `swe-pipeline/task_{task_id}`) rather than trusting a `branch` field in `task.json`. This prevents a tampered or corrupt `branch` field (e.g. one pointing at `main` or another repo's branch) from causing the cleanup to delete a git branch belonging to a different repo.
+
 The issue-fix plugin's `_read_task` helper now returns `None` when a task's `task.json` file is missing or corrupted (unreadable or invalid JSON), instead of raising an exception. The state machine handles a missing/corrupt `task.json` gracefully: the GATE stage (`run_gate`) cleans up the task directory when its `task.json` is unreadable, and `run_issue_fix_state_machine` cleans up a corrupted active task and selects a new one instead of crashing. In dry-run mode these paths report what they would do without mutating state.
 
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
