@@ -799,6 +799,28 @@ class TestCleanupStaleTask:
         branches = subprocess.run(["git", "-C", str(target), "branch", "--list"], capture_output=True, text=True, check=False).stdout
         assert "swe-pipeline/task_task1" not in branches
 
+    def test_ignores_malicious_branch_field(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        subprocess.run(["git", "-C", str(target), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "2025-01-01" / "task1"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text(json.dumps({
+            "task_id": "task1",
+            "branch": "main",
+            "default_branch": "main",
+            "source_issue_id": "",
+            "repo_name": "repo",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        subprocess.run(["git", "-C", str(target), "checkout", "-b", "swe-pipeline/task_task1"], capture_output=True, check=True)
+        assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
+        assert not task_dir.exists()
+        branches = subprocess.run(["git", "-C", str(target), "branch", "--list"], capture_output=True, text=True, check=False).stdout
+        assert "main" in branches
+        assert "swe-pipeline/task_task1" not in branches
+
     def test_preserves_untracked_files(self, tmp_path, monkeypatch):
         target, task_dir = self._setup(tmp_path, monkeypatch)
         venv_pkg = target / ".venv" / "lib" / "site-packages" / "pkg"

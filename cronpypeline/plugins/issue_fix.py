@@ -507,7 +507,7 @@ def _cleanup_stale_task(repo_dir: Path, task_dir: Path, repo_name: str,
             return False
 
     task_id = task.get("task_id", task_dir.name)
-    branch = task.get("branch", _task_branch_name(task_id))
+    branch = _task_branch_name(task_id)
     default_branch = task.get("default_branch", "main")
     source_issue_id = task.get("source_issue_id", "")
 
