@@ -97,7 +97,14 @@ class MarkerSpec:
         full_resolved = (resolved / name).resolve()
         if not full_resolved.is_relative_to(base_resolved):
             raise ValueError(f"Marker path escapes base directory: {directory}/{name}")
-        return resolved / name
+        # For SYMLINK markers, return the path to the symlink itself (not its
+        # target). The fully-resolved path would follow an existing symlink,
+        # which would prevent us from operating on the symlink entry itself.
+        # For other marker types, return the fully-resolved path so callers
+        # operate on the verified path (no unresolved symlink components).
+        if self.type == MarkerType.SYMLINK:
+            return resolved / name
+        return full_resolved
 
     def resolve_target(self, context: dict[str, Any] | None = None) -> str | None:
         """Resolve symlink target with optional context substitution.
@@ -130,12 +137,36 @@ def create_marker(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | No
         path.write_text(json.dumps(content, indent=2))
 
     elif spec.type == MarkerType.SYMLINK:
-        if path.is_symlink() or path.exists():
-            path.unlink()
         target = spec.resolve_target(context)
         if target is None:
             raise ValueError(f"Symlink marker has no target: {spec.name}")
-        path.symlink_to(target)
+
+        # Open the parent directory with O_DIRECTORY|O_NOFOLLOW to prevent
+        # symlink-following attacks: if a directory component was swapped for
+        # a symlink after resolve_path's security check, os.open will fail
+        # rather than following the symlink to an unintended location.
+        parent_fd = os.open(path.parent, os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            # Create the symlink at a temporary name, then atomically rename
+            # it into place. This eliminates the TOCTOU window between unlink
+            # and symlink_to in the original code.
+            temp_name = f".{path.name}.tmp{os.getpid()}"
+            try:
+                os.unlink(temp_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+            os.symlink(target, temp_name, dir_fd=parent_fd)
+            try:
+                os.replace(temp_name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            except Exception:
+                # Clean up the temp symlink if the rename failed.
+                try:
+                    os.unlink(temp_name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+                raise
+        finally:
+            os.close(parent_fd)
 
     else:
         raise ValueError(f"Unknown marker type: {spec.type}")

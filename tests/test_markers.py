@@ -506,3 +506,96 @@ class TestPathTraversalProtection:
         m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="reports")
         resolved = m.resolve_path(link_dir)
         assert resolved == (tmp_path / "reports" / "done.marker").resolve()
+
+
+class TestSymlinkTOCTOUFix:
+    """Tests for TOCTOU fix in symlink marker creation."""
+
+    def test_resolve_path_returns_full_resolved_for_file_type(self, tmp_path):
+        """resolve_path returns fully resolved path for non-symlink types."""
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        link_dir = tmp_path / "base_link"
+        link_dir.symlink_to(real_dir, target_is_directory=True)
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="reports")
+        resolved = m.resolve_path(link_dir)
+        # Should point to the real directory, not through the symlink
+        assert resolved == (real_dir / "reports" / "done.marker").resolve()
+        assert str(link_dir) not in str(resolved)
+
+    def test_resolve_path_returns_symlink_path_for_symlink_type(self, tmp_path):
+        """resolve_path returns the symlink path (not target) for SYMLINK type."""
+        target_file = tmp_path / "report.md"
+        target_file.write_text("# Report")
+        m = MarkerSpec(name="latest.md", type=MarkerType.SYMLINK, directory="reports", target="report.md")
+        create_marker(m, tmp_path)
+        # Now resolve_path should return the symlink path itself, not the target
+        resolved = m.resolve_path(tmp_path)
+        # For SYMLINK type, resolve_path returns the path to the symlink itself
+        # (not following the final symlink to its target).
+        assert resolved == (tmp_path / "reports" / "latest.md")
+        assert resolved.is_symlink()
+
+    def test_create_symlink_replaces_regular_file(self, tmp_path):
+        """create_marker SYMLINK should atomically replace an existing regular file."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        # Create a regular file at the marker path
+        regular_file = reports_dir / "latest.md"
+        regular_file.write_text("old content")
+        assert not regular_file.is_symlink()
+
+        m = MarkerSpec(name="latest.md", type=MarkerType.SYMLINK, directory="reports", target="report.md")
+        create_marker(m, tmp_path)
+        assert regular_file.is_symlink()
+        assert os.readlink(regular_file) == "report.md"
+
+    def test_create_symlink_replace_failure_cleans_up_temp(self, tmp_path):
+        """create_marker SYMLINK should clean up temp file when os.replace fails."""
+        from unittest.mock import patch
+
+        m = MarkerSpec(name="latest.md", type=MarkerType.SYMLINK, directory="reports", target="report.md")
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+
+        def failing_replace(src, dst, **kwargs):
+            raise OSError("simulated replace failure")
+
+        with patch("cronpypeline.markers.os.replace", side_effect=failing_replace):
+            with pytest.raises(OSError, match="simulated replace failure"):
+                create_marker(m, tmp_path)
+
+        # Verify no temp files are left behind
+        leftovers = [f for f in reports_dir.iterdir() if ".tmp" in f.name]
+        assert leftovers == []
+        # Verify the marker was not created
+        assert not (reports_dir / "latest.md").exists()
+
+    def test_create_symlink_replace_failure_temp_cleanup_not_found(self, tmp_path):
+        """create_marker SYMLINK should handle FileNotFoundError during temp cleanup."""
+        from unittest.mock import patch
+
+        m = MarkerSpec(name="latest.md", type=MarkerType.SYMLINK, directory="reports", target="report.md")
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+
+        real_unlink = os.unlink
+        unlink_calls = []
+
+        def mock_unlink(name, **kwargs):
+            unlink_calls.append(name)
+            # First call (cleanup of pre-existing temp) succeeds.
+            # The cleanup call after os.replace failure should raise FileNotFoundError.
+            if len(unlink_calls) > 1:
+                raise FileNotFoundError("temp already gone")
+            return real_unlink(name, **kwargs)
+
+        def failing_replace(src, dst, **kwargs):
+            raise OSError("simulated replace failure")
+
+        with patch("cronpypeline.markers.os.unlink", side_effect=mock_unlink),              patch("cronpypeline.markers.os.replace", side_effect=failing_replace):
+            with pytest.raises(OSError, match="simulated replace failure"):
+                create_marker(m, tmp_path)
+
+        # Verify the exception propagated
+        assert len(unlink_calls) >= 2
