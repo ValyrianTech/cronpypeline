@@ -490,6 +490,59 @@ class TestTickChaining:
         # The last executed stage should be A1
         assert result.stage_id == "A1"
 
+    def test_chain_re_derives_state_after_invalidates(self, tmp_path):
+        """Chaining re-derives state so a stage invalidated by a prior stage
+        becomes actionable again within the same tick."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Pre-create b.md so B0 starts as complete.
+        (target_dir / "b.md").write_text("done", encoding="utf-8")
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                    "invalidates": [{"type": "file", "name": "b.md"}],
+                },
+                {
+                    "id": "B0",
+                    "name": "Step 2",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "C0",
+                    "name": "Step 3",
+                    "trigger": {"type": "file_missing", "path": "c.md"},
+                    "action": {"type": "command", "params": {"command": "echo c"}},
+                    "markers": {"completion": {"type": "file", "name": "c.md"}},
+                    "chain": False,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (target_dir / "a.md").exists()
+        assert (target_dir / "b.md").exists()
+        assert (target_dir / "c.md").exists()
+        assert "B0" in result.chained_stages
+        assert "C0" in result.chained_stages
+        assert result.stage_id == "C0"
+
     def test_chain_stops_at_non_chain_stage(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
