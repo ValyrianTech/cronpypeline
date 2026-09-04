@@ -561,9 +561,8 @@ class TestSymlinkTOCTOUFix:
         def failing_replace(src, dst, **kwargs):
             raise OSError("simulated replace failure")
 
-        with patch("cronpypeline.markers.os.replace", side_effect=failing_replace):
-            with pytest.raises(OSError, match="simulated replace failure"):
-                create_marker(m, tmp_path)
+        with patch("cronpypeline.markers.os.replace", side_effect=failing_replace), pytest.raises(OSError, match="simulated replace failure"):
+            create_marker(m, tmp_path)
 
         # Verify no temp files are left behind
         leftovers = [f for f in reports_dir.iterdir() if ".tmp" in f.name]
@@ -593,9 +592,8 @@ class TestSymlinkTOCTOUFix:
         def failing_replace(src, dst, **kwargs):
             raise OSError("simulated replace failure")
 
-        with patch("cronpypeline.markers.os.unlink", side_effect=mock_unlink),              patch("cronpypeline.markers.os.replace", side_effect=failing_replace):
-            with pytest.raises(OSError, match="simulated replace failure"):
-                create_marker(m, tmp_path)
+        with patch("cronpypeline.markers.os.unlink", side_effect=mock_unlink),              patch("cronpypeline.markers.os.replace", side_effect=failing_replace), pytest.raises(OSError, match="simulated replace failure"):
+            create_marker(m, tmp_path)
 
         # Verify the exception propagated
         assert len(unlink_calls) >= 2
