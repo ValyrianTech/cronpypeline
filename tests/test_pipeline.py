@@ -1393,7 +1393,7 @@ class TestTickStaleHandling:
         })
         return target_dir, Pipeline(config)
 
-    def test_stale_requeue_failing_action_returns_action_failed(self, tmp_path):
+    def test_stale_requeue_failing_action_gives_up(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1405,7 +1405,7 @@ class TestTickStaleHandling:
         assert not (target_dir / ".processing").exists()
         assert (target_dir / ".gave_up").exists()
 
-    def test_stale_requeue_failing_action_runs_on_fail(self, tmp_path):
+    def test_stale_requeue_failing_action_does_not_run_on_fail(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1461,7 +1461,7 @@ class TestTickStaleHandling:
         })
         return target_dir, Pipeline(config)
 
-    def test_stale_sync_action_creates_completion_marker(self, tmp_path):
+    def test_stale_sync_action_gives_up_instead_of_creating_completion(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1489,7 +1489,7 @@ class TestTickStaleHandling:
         assert stage_status["processing"] is False
         assert stage_status["given_up"] is True
 
-    def test_stale_sync_action_creates_produces_markers(self, tmp_path):
+    def test_stale_sync_action_does_not_create_produces_markers(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1508,7 +1508,7 @@ class TestTickStaleHandling:
         assert result.status == TickResultStatus.GAVE_UP
         assert not (target_dir / "produced.txt").exists()
 
-    def test_stale_sync_action_deletes_invalidates_markers(self, tmp_path):
+    def test_stale_sync_action_does_not_delete_invalidates_markers(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1523,7 +1523,7 @@ class TestTickStaleHandling:
         assert result.status == TickResultStatus.GAVE_UP
         assert (target_dir / "rejected-article.md").exists()
 
-    def test_stale_sync_action_invalidates_makes_stage_actionable_and_chains(self, tmp_path):
+    def test_stale_sync_action_invalidates_does_not_chain(self, tmp_path):
         """A sync action with a stale processing marker should give up rather than
         re-execute and chain, so the invalidated stage is NOT picked up and b.md
         (pre-created) remains untouched."""
@@ -1579,7 +1579,7 @@ class TestTickStaleHandling:
         assert result.chained_stages == []
         assert result.stage_id == "A0"
 
-    def test_stale_sync_action_clears_rejection_marker(self, tmp_path):
+    def test_stale_sync_action_does_not_clear_rejection_marker(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1725,7 +1725,7 @@ class TestTickStaleHandling:
         })
         return target_dir, Pipeline(config)
 
-    def test_stale_sync_chain_continues_to_next_stage(self, tmp_path):
+    def test_stale_sync_chain_does_not_continue_to_next_stage(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1747,7 +1747,7 @@ class TestTickStaleHandling:
         assert result.stage_id == "A0"
         assert result.chained_stages == []
 
-    def test_stale_sync_chain_failure_returns_action_failed(self, tmp_path):
+    def test_stale_sync_chain_failure_gives_up(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
