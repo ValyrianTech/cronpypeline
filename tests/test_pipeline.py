@@ -1378,6 +1378,7 @@ class TestTickStaleHandling:
             "markers": {
                 "completion": {"type": "file", "name": "a.md"},
                 "processing": {"type": "json", "name": ".processing", "content": {}},
+                "give_up": {"type": "file", "name": ".gave_up"},
             },
             "timeout_minutes": 30,
             "max_retries": 3,
@@ -1392,18 +1393,19 @@ class TestTickStaleHandling:
         })
         return target_dir, Pipeline(config)
 
-    def test_stale_requeue_failing_action_returns_action_failed(self, tmp_path):
+    def test_stale_requeue_failing_action_gives_up(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
-        _target_dir, pipeline = self._make_stale_stage(workspace)
+        target_dir, pipeline = self._make_stale_stage(workspace)
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_FAILED
-        assert result.stderr
-        assert "fail" in result.stderr
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / "a.md").exists()
+        assert not (target_dir / ".processing").exists()
+        assert (target_dir / ".gave_up").exists()
 
-    def test_stale_requeue_failing_action_runs_on_fail(self, tmp_path):
+    def test_stale_requeue_failing_action_does_not_run_on_fail(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1413,8 +1415,8 @@ class TestTickStaleHandling:
         )
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_FAILED
-        assert (target_dir / "on_fail_marker.txt").exists()
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / "on_fail_marker.txt").exists()
 
     def test_stale_requeue_failing_action_no_on_fail(self, tmp_path):
         workspace = tmp_path / "workspace"
@@ -1423,7 +1425,7 @@ class TestTickStaleHandling:
         target_dir, pipeline = self._make_stale_stage(workspace)
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.status == TickResultStatus.GAVE_UP
         assert not (target_dir / "on_fail_marker.txt").exists()
 
     def _make_stale_sync_stage(self, workspace, stage_overrides=None):
@@ -1444,6 +1446,7 @@ class TestTickStaleHandling:
             "markers": {
                 "completion": {"type": "file", "name": "a.md"},
                 "processing": {"type": "json", "name": ".processing", "content": {}},
+                "give_up": {"type": "file", "name": ".gave_up"},
             },
             "timeout_minutes": 30,
             "max_retries": 3,
@@ -1458,15 +1461,15 @@ class TestTickStaleHandling:
         })
         return target_dir, Pipeline(config)
 
-    def test_stale_sync_action_creates_completion_marker(self, tmp_path):
+    def test_stale_sync_action_gives_up_instead_of_creating_completion(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
         target_dir, pipeline = self._make_stale_sync_stage(workspace)
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert (target_dir / "a.md").exists()
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / "a.md").exists()
 
     def test_stale_sync_action_deletes_processing_marker(self, tmp_path):
         workspace = tmp_path / "workspace"
@@ -1476,16 +1479,17 @@ class TestTickStaleHandling:
         assert (target_dir / ".processing").exists()
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert (target_dir / "a.md").exists()
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / "a.md").exists()
         assert not (target_dir / ".processing").exists()
 
         status = pipeline.status(targets=["my-repo"])
         stage_status = status["my-repo"]["A0"]
-        assert stage_status["complete"] is True
+        assert stage_status["complete"] is False
         assert stage_status["processing"] is False
+        assert stage_status["given_up"] is True
 
-    def test_stale_sync_action_creates_produces_markers(self, tmp_path):
+    def test_stale_sync_action_does_not_create_produces_markers(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1501,10 +1505,10 @@ class TestTickStaleHandling:
         )
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert (target_dir / "produced.txt").exists()
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / "produced.txt").exists()
 
-    def test_stale_sync_action_deletes_invalidates_markers(self, tmp_path):
+    def test_stale_sync_action_does_not_delete_invalidates_markers(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1516,13 +1520,13 @@ class TestTickStaleHandling:
         ]
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert not (target_dir / "rejected-article.md").exists()
+        assert result.status == TickResultStatus.GAVE_UP
+        assert (target_dir / "rejected-article.md").exists()
 
-    def test_stale_sync_action_invalidates_makes_stage_actionable_and_chains(self, tmp_path):
-        """After a stale sync action's invalidates, state is re-derived so a
-        stage invalidated by the re-executed stage becomes actionable and is
-        picked up by the chaining phase within the same tick."""
+    def test_stale_sync_action_invalidates_does_not_chain(self, tmp_path):
+        """A sync action with a stale processing marker should give up rather than
+        re-execute and chain, so the invalidated stage is NOT picked up and b.md
+        (pre-created) remains untouched."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         target_dir = workspace / "my-repo"
@@ -1568,14 +1572,14 @@ class TestTickStaleHandling:
         pipeline = Pipeline(config)
         result = pipeline.tick(target="my-repo")
 
-        assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert (target_dir / "a.md").exists()
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / "a.md").exists()
         assert (target_dir / "b.md").exists()
         assert not (target_dir / ".processing").exists()
-        assert "B0" in result.chained_stages
-        assert result.stage_id == "B0"
+        assert result.chained_stages == []
+        assert result.stage_id == "A0"
 
-    def test_stale_sync_action_clears_rejection_marker(self, tmp_path):
+    def test_stale_sync_action_does_not_clear_rejection_marker(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1592,8 +1596,8 @@ class TestTickStaleHandling:
         (target_dir / ".rejection").write_text(json.dumps({"rejection_count": 2}))
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert not (target_dir / ".rejection").exists()
+        assert result.status == TickResultStatus.GAVE_UP
+        assert (target_dir / ".rejection").exists()
 
     def test_stale_queue_agent_action_does_not_create_completion(self, tmp_path):
         workspace = tmp_path / "workspace"
@@ -1705,6 +1709,7 @@ class TestTickStaleHandling:
             "markers": {
                 "completion": {"type": "file", "name": "a.md"},
                 "processing": {"type": "json", "name": ".processing", "content": {}},
+                "give_up": {"type": "file", "name": ".gave_up"},
             },
             "timeout_minutes": 30,
             "max_retries": 3,
@@ -1720,7 +1725,7 @@ class TestTickStaleHandling:
         })
         return target_dir, Pipeline(config)
 
-    def test_stale_sync_chain_continues_to_next_stage(self, tmp_path):
+    def test_stale_sync_chain_does_not_continue_to_next_stage(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1736,13 +1741,13 @@ class TestTickStaleHandling:
         target_dir, pipeline = self._make_stale_sync_stage_with_chain(workspace, second_stage)
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert (target_dir / "a.md").exists()
-        assert (target_dir / "b.md").exists()
-        assert result.stage_id == "A1"
-        assert result.chained_stages == ["A1"]
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / "a.md").exists()
+        assert not (target_dir / "b.md").exists()
+        assert result.stage_id == "A0"
+        assert result.chained_stages == []
 
-    def test_stale_sync_chain_failure_returns_action_failed(self, tmp_path):
+    def test_stale_sync_chain_failure_gives_up(self, tmp_path):
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1758,10 +1763,10 @@ class TestTickStaleHandling:
         target_dir, pipeline = self._make_stale_sync_stage_with_chain(workspace, second_stage)
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_FAILED
-        assert result.stage_id == "A1"
-        assert result.failed_chained_stages == ["A1"]
-        assert (target_dir / "a.md").exists()
+        assert result.status == TickResultStatus.GAVE_UP
+        assert result.stage_id == "A0"
+        assert result.chained_stages == []
+        assert not (target_dir / "a.md").exists()
         assert not (target_dir / "b.md").exists()
 
     def test_stale_sync_no_chain_does_not_chain(self, tmp_path):
@@ -1783,8 +1788,8 @@ class TestTickStaleHandling:
         )
 
         result = pipeline.tick(target="my-repo")
-        assert result.status == TickResultStatus.ACTION_EXECUTED
-        assert (target_dir / "a.md").exists()
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / "a.md").exists()
         assert not (target_dir / "b.md").exists()
         assert result.stage_id == "A0"
         assert result.chained_stages == []
@@ -1862,6 +1867,254 @@ class TestTickStaleHandling:
             sys.path.remove(str(tmp_path))
             if "async_mod" in sys.modules:
                 del sys.modules["async_mod"]
+
+    def test_stale_sync_action_creates_give_up_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_sync_stage(workspace)
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.GAVE_UP
+        assert (target_dir / ".gave_up").exists()
+        assert not (target_dir / "a.md").exists()
+        assert not (target_dir / ".processing").exists()
+
+    def test_stale_sync_action_without_give_up_marker_still_gives_up(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_sync_stage(
+            workspace,
+            stage_overrides={
+                "markers": {
+                    "completion": {"type": "file", "name": "a.md"},
+                    "processing": {"type": "json", "name": ".processing", "content": {}},
+                },
+            },
+        )
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / ".gave_up").exists()
+        assert not (target_dir / "a.md").exists()
+        assert not (target_dir / ".processing").exists()
+
+    def test_stale_subprocess_action_gives_up(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_sync_stage(
+            workspace,
+            stage_overrides={
+                "action": {"type": "subprocess", "params": {"script": "echo.py"}},
+            },
+        )
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / "a.md").exists()
+        assert not (target_dir / ".processing").exists()
+
+    def test_stale_http_request_action_gives_up(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_sync_stage(
+            workspace,
+            stage_overrides={
+                "action": {"type": "http_request", "params": {"url": "https://example.com/"}},
+            },
+        )
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.GAVE_UP
+        assert not (target_dir / "a.md").exists()
+        assert not (target_dir / ".processing").exists()
+
+    def test_stale_sync_action_dry_run_does_not_delete_processing_marker(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        target_dir, pipeline = self._make_stale_sync_stage(workspace)
+        assert (target_dir / ".processing").exists()
+
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+        assert "Would give up" in result.message
+        assert (target_dir / ".processing").exists()
+        assert not (target_dir / ".gave_up").exists()
+
+    def test_stale_queue_agent_failure_runs_on_fail(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        processing_data = {"retry_count": 1, "timestamp": time.time() - 3600}
+        (target_dir / ".processing").write_text(json.dumps(processing_data))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "TestAgent"}},
+                    "on_fail": {"type": "command", "params": {"command": "touch on_fail_marker.txt"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "a.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                    },
+                    "timeout_minutes": 30,
+                    "max_retries": 3,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
+
+        class MockFailHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(success=False, stderr="queue failed")
+
+        register_handler(ActionType.QUEUE_AGENT, MockFailHandler())
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert (target_dir / "on_fail_marker.txt").exists()
+
+    def test_stale_custom_sync_action_success_creates_markers_and_chains(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        processing_data = {"retry_count": 1, "timestamp": time.time() - 3600}
+        (target_dir / ".processing").write_text(json.dumps(processing_data))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        (tmp_path / "sync_mod.py").write_text(
+            "def my_action(action, context):\n"
+            "    return {\"success\": True}\n"
+        )
+        sys.path.insert(0, str(tmp_path))
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Sync Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {
+                            "type": "custom",
+                            "params": {"callable": "sync_mod.my_action"},
+                            "produces": [{"type": "file", "name": "produced.txt"}],
+                        },
+                        "markers": {
+                            "completion": {"type": "file", "name": "a.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                            "rejection": {"type": "json", "name": ".rejection", "content": {}},
+                        },
+                        "timeout_minutes": 30,
+                        "max_retries": 3,
+                        "chain": True,
+                        "invalidates": [{"type": "file", "name": "stale.txt"}],
+                    },
+                    {
+                        "id": "B0",
+                        "name": "Step 2",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "command", "params": {"command": "echo b"}},
+                        "markers": {"completion": {"type": "file", "name": "b.md"}},
+                        "chain": False,
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+
+            (target_dir / "stale.txt").write_text("stale")
+            (target_dir / ".rejection").write_text(json.dumps({"rejection_count": 2}))
+
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert (target_dir / "a.md").exists()
+            assert (target_dir / "produced.txt").exists()
+            assert not (target_dir / "stale.txt").exists()
+            assert not (target_dir / ".rejection").exists()
+            assert not (target_dir / ".processing").exists()
+            assert (target_dir / "b.md").exists()
+            assert result.stage_id == "B0"
+            assert result.chained_stages == ["B0"]
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "sync_mod" in sys.modules:
+                del sys.modules["sync_mod"]
+
+    def test_stale_custom_sync_chain_failure_returns_action_failed(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        processing_data = {"retry_count": 1, "timestamp": time.time() - 3600}
+        (target_dir / ".processing").write_text(json.dumps(processing_data))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        (tmp_path / "sync_mod.py").write_text(
+            "def my_action(action, context):\n"
+            "    return {\"success\": True}\n"
+        )
+        sys.path.insert(0, str(tmp_path))
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Sync Custom Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "sync_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "a.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                        },
+                        "timeout_minutes": 30,
+                        "max_retries": 3,
+                        "chain": True,
+                    },
+                    {
+                        "id": "B0",
+                        "name": "Failing Step 2",
+                        "trigger": {"type": "file_missing", "path": "b.md"},
+                        "action": {"type": "command", "params": {"command": "false"}},
+                        "markers": {"completion": {"type": "file", "name": "b.md"}},
+                        "chain": False,
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+
+            result = pipeline.tick(target="my-repo")
+            assert result.status == TickResultStatus.ACTION_FAILED
+            assert result.stage_id == "B0"
+            assert result.failed_chained_stages == ["B0"]
+            assert (target_dir / "a.md").exists()
+            assert not (target_dir / "b.md").exists()
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "sync_mod" in sys.modules:
+                del sys.modules["sync_mod"]
 
 
 class TestActionHandlerWiring:

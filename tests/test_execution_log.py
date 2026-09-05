@@ -451,7 +451,7 @@ class TestStaleLogging:
                 Stage.from_dict({
                     "id": "A0", "name": "Agent Step",
                     "trigger": {"type": "file_missing", "path": "done.md"},
-                    "action": {"type": "command", "params": {"command": "echo retry"}},
+                    "action": {"type": "queue_agent", "params": {"agent": "TestAgent"}},
                     "markers": {
                         "completion": {"type": "file", "name": "done.md"},
                         "processing": {"type": "json", "name": ".processing", "content": {}},
@@ -464,9 +464,15 @@ class TestStaleLogging:
         )
         pipeline = Pipeline(config)
 
-        # First tick: execute, creating a processing marker (sync command,
-        # so processing is created? No — processing only for queue_agent).
-        # Instead simulate an agent-style stale marker manually.
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
+
+        class MockQueueHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(success=True, stdout="queued")
+
+        register_handler(ActionType.QUEUE_AGENT, MockQueueHandler())
+
+        # Simulate an agent-style stale marker manually.
         (repo / ".processing").write_text(json.dumps({"retry_count": 0}))
         old = time.time() - 3600
         os.utime(repo / ".processing", (old, old))
@@ -491,7 +497,7 @@ class TestStaleLogging:
                 Stage.from_dict({
                     "id": "A0", "name": "Agent Step",
                     "trigger": {"type": "file_missing", "path": "done.md"},
-                    "action": {"type": "command", "params": {"command": "echo retry"}},
+                    "action": {"type": "queue_agent", "params": {"agent": "TestAgent", "prompt": "do"}},
                     "markers": {
                         "completion": {"type": "file", "name": "done.md"},
                         "processing": {"type": "json", "name": ".processing", "content": {}},
