@@ -107,7 +107,7 @@ def update_latest_symlink(
         raise ValueError(f"Invalid symlink name: {symlink_name}")
 
     tname = Path(target_name)
-    if tname.is_absolute():
+    if tname.is_absolute() or ".." in tname.parts:
         raise ValueError(f"Symlink target must be relative: {target_name}")
 
     symlink_path = directory / sname
