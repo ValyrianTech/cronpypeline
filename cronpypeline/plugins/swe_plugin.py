@@ -909,12 +909,17 @@ def detect_b1_issue_gathering(context: dict[str, Any]) -> bool:
     - Idle or completed session (or recheck interval elapsed)
     - Token available
     - Slug configured (contains '/')
+    - Target has not been finalized (C-finalize marker absent)
 
     :param context: Trigger context dict with ``target_dir`` and ``target_config``.
     :returns: True if B1 should run.
     """
     target_dir = Path(context.get("target_dir", "."))
     target_config = context.get("target_config", {})
+
+    # Short-circuit: if the target has been finalized after PR merge, stop polling
+    if (target_dir / SWE_SUBDIR / "markers" / "c_finalize.marker").exists():
+        return False
 
     session = _read_github_session(target_dir)
     if session is not None:
@@ -2148,6 +2153,62 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
 
     # Nothing actionable
     return ActionResult(success=True, data={"pr_state": "open"})
+
+
+# ─── C-finalize: Post-merge cleanup ─────────────────────────────────────────
+
+
+def detect_c_finalize(context: dict[str, Any]) -> bool:
+    """Trigger: fire once after the PR has been merged.
+
+    Checks that:
+    - ``pr_published.json`` exists with ``pr_state`` set to ``"merged"``
+    - The finalize marker (``c_finalize.marker``) does not yet exist
+
+    The issue comment with the PR link is already posted synchronously
+    inside ``run_c_pr_status`` when the merge is detected, so by the time
+    ``pr_state`` becomes ``"merged"`` the comment is guaranteed to be posted.
+
+    :param context: Trigger context dict with ``target_dir``.
+    :returns: True if the finalize stage should run.
+    """
+    target_dir = Path(context.get("target_dir", "."))
+    pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
+    if not pr_marker.exists():
+        return False
+    try:
+        pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if pr_data.get("pr_state") != "merged":
+        return False
+    finalize_marker = target_dir / SWE_SUBDIR / "markers" / "c_finalize.marker"
+    return not finalize_marker.exists()
+
+
+def run_c_finalize(action: ActionSpec, context: TickContext) -> ActionResult:
+    """Finalize the pipeline for a target after PR merge.
+
+    Writes a completion marker so that:
+    - This stage never fires again
+    - ``detect_b1_issue_gathering`` short-circuits and stops polling
+
+    :param action: Action spec.
+    :param context: Tick context.
+    :returns: ActionResult indicating success.
+    """
+    if context.dry_run:
+        return ActionResult(success=True, dry_run=True)
+
+    target_dir = context.target_dir
+    markers_dir = target_dir / SWE_SUBDIR / "markers"
+    markers_dir.mkdir(parents=True, exist_ok=True)
+    finalize_marker = markers_dir / "c_finalize.marker"
+    finalize_marker.write_text(
+        json.dumps({"finalized_at": datetime.now(timezone.utc).isoformat()}, indent=2),
+        encoding="utf-8",
+    )
+    return ActionResult(success=True)
 
 
 # ─── C-coverage: Create coverage issue ──────────────────────────────────────

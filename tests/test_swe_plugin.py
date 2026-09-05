@@ -68,6 +68,7 @@ from cronpypeline.plugins.swe_plugin import (
     detect_b1_issue_gathering,
     detect_c_coverage_issue,
     detect_c_doc_sync,
+    detect_c_finalize,
     detect_c_issue_fix,
     detect_c_pr_publish,
     detect_c_pr_review,
@@ -97,6 +98,7 @@ from cronpypeline.plugins.swe_plugin import (
     run_b1_issue_gathering,
     run_c_coverage_issue,
     run_c_doc_sync,
+    run_c_finalize,
     run_c_issue_fix,
     run_c_pr_publish,
     run_c_pr_review,
@@ -1185,6 +1187,75 @@ class TestDetectB1IssueGathering:
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
         assert detect_b1_issue_gathering(ctx) is True
+
+    def test_does_not_fire_when_finalized(self, tmp_path, monkeypatch):
+        """B1 should not fire when c_finalize.marker exists (PR merged, target done)."""
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "markers" / "c_finalize.marker").write_text("{}")
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_b1_issue_gathering(ctx) is False
+
+
+# ─── detect_c_finalize ──────────────────────────────────────────────────────
+
+
+class TestDetectCFinalize:
+    def test_fires_when_pr_merged_and_no_finalize_marker(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        pr_data = {"pr_number": 42, "pr_state": "merged", "merged_at": "2026-09-04T12:00:00Z"}
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps(pr_data))
+        ctx = {"target_dir": str(target), "target_config": {}}
+        assert detect_c_finalize(ctx) is True
+
+    def test_does_not_fire_when_finalize_marker_exists(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        pr_data = {"pr_number": 42, "pr_state": "merged"}
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps(pr_data))
+        (target / ".SWE" / "markers" / "c_finalize.marker").write_text("{}")
+        ctx = {"target_dir": str(target), "target_config": {}}
+        assert detect_c_finalize(ctx) is False
+
+    def test_does_not_fire_when_pr_not_merged(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        pr_data = {"pr_number": 42, "pr_state": "open"}
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps(pr_data))
+        ctx = {"target_dir": str(target), "target_config": {}}
+        assert detect_c_finalize(ctx) is False
+
+    def test_does_not_fire_when_no_pr_marker(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = {"target_dir": str(target), "target_config": {}}
+        assert detect_c_finalize(ctx) is False
+
+    def test_does_not_fire_on_corrupt_pr_marker(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "pr_published.json").write_text("not json")
+        ctx = {"target_dir": str(target), "target_config": {}}
+        assert detect_c_finalize(ctx) is False
+
+
+# ─── run_c_finalize ─────────────────────────────────────────────────────────
+
+
+class TestRunCFinalize:
+    def test_dry_run_returns_success(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, dry_run=True)
+        result = run_c_finalize(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.dry_run is True
+        assert not (target / ".SWE" / "markers" / "c_finalize.marker").exists()
+
+    def test_writes_finalize_marker(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, dry_run=False)
+        result = run_c_finalize(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        marker = target / ".SWE" / "markers" / "c_finalize.marker"
+        assert marker.exists()
+        data = json.loads(marker.read_text())
+        assert "finalized_at" in data
 
 
 # ─── run_b1_issue_gathering ─────────────────────────────────────────────────

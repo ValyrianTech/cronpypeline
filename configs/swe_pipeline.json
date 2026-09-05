@@ -663,6 +663,27 @@
       }
     },
     {
+      "id": "C-finalize",
+      "name": "Finalize target after PR merge",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_finalize"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_finalize"
+        }
+      },
+      "markers": {
+        "completion": {
+          "type": "file",
+          "name": "c_finalize.marker",
+          "directory": ".SWE/markers"
+        }
+      }
+    },
+    {
       "id": "C-session-terminal",
       "name": "Close discarded GitHub session",
       "trigger": {
