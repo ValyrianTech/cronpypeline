@@ -231,6 +231,19 @@ class TestTargetState:
         target_state.derive(tmp_path)
         assert target_state.first_actionable_stage is None
 
+    def test_first_stage_with_work_returns_none_without_derive(self, tmp_path):
+        stages = [
+            Stage(
+                id="A0",
+                name="Step 1",
+                trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+                action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo a"}),
+                markers={"completion": MarkerSpec(name="a.md", type=MarkerType.FILE)},
+            ),
+        ]
+        target_state = TargetState(target="my-repo", stages=stages)
+        assert target_state.first_stage_with_work is None
+
     def test_skips_given_up_stages(self, tmp_path):
         stages = [
             Stage(
@@ -582,6 +595,29 @@ class TestTargetStateDisabledStage:
         assert first is not None
         assert first.stage.id == "A1"
 
+    def test_disabled_stage_skipped_in_first_stage_with_work(self, tmp_path):
+        """Disabled stages should be skipped in first_stage_with_work."""
+        stage1 = Stage(
+            id="A0",
+            name="Disabled",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo a"}),
+            markers={"completion": MarkerSpec(name="a.md", type=MarkerType.FILE)},
+            enabled=False,
+        )
+        stage2 = Stage(
+            id="A1",
+            name="Active",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="b.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo b"}),
+            markers={"completion": MarkerSpec(name="b.md", type=MarkerType.FILE)},
+        )
+        ts = TargetState(target="repo", stages=[stage1, stage2])
+        ts.derive(tmp_path)
+        first = ts.first_stage_with_work
+        assert first is not None
+        assert first.stage.id == "A1"
+
 
 class TestTargetStateTargetLock:
     """Tests for target_lock behavior."""
@@ -612,6 +648,37 @@ class TestTargetStateTargetLock:
         ts.derive(tmp_path)
         assert ts.has_processing is True
         assert ts.first_actionable_stage is None
+
+    def test_active_processing_blocks_first_stage_with_work(self, tmp_path):
+        """With target_lock, an actively processing (non-stale) stage should
+        cause first_stage_with_work to return None."""
+        stage1 = Stage(
+            id="A0",
+            name="Async step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "test", "prompt": "do"}),
+            markers={
+                "completion": MarkerSpec(name="a.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing_a", type=MarkerType.JSON, content={}),
+            },
+            timeout_minutes=30,
+        )
+        stage2 = Stage(
+            id="B0",
+            name="Next step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="b.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo b"}),
+            markers={"completion": MarkerSpec(name="b.md", type=MarkerType.FILE)},
+        )
+        # A0 is not complete, processing marker exists and is fresh → active
+        create_marker(stage1.markers["processing"], tmp_path)
+
+        ts = TargetState(target="repo", stages=[stage1, stage2], target_lock=True)
+        ts.derive(tmp_path)
+        assert ts.stage_states["A0"].is_processing is True
+        assert ts.stage_states["A0"].is_stale is False
+        assert ts.has_active_processing is True
+        assert ts.first_stage_with_work is None
 
 
 class TestTargetStateOrphanedProcessingCleanup:
