@@ -497,7 +497,7 @@ class TestStaleLogging:
                 Stage.from_dict({
                     "id": "A0", "name": "Agent Step",
                     "trigger": {"type": "file_missing", "path": "done.md"},
-                    "action": {"type": "command", "params": {"command": "echo retry"}},
+                    "action": {"type": "queue_agent", "params": {"agent": "TestAgent", "prompt": "do"}},
                     "markers": {
                         "completion": {"type": "file", "name": "done.md"},
                         "processing": {"type": "json", "name": ".processing", "content": {}},
