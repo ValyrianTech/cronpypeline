@@ -6261,6 +6261,33 @@ class TestRunCPrStatusAlreadyHandled:
         assert result.success is True
         assert result.data["pr_state"] == "open"
 
+    def test_empty_filed_issues_does_not_push(self, tmp_path, monkeypatch):
+        """When filed_issues is empty, do NOT push - just idle."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7, "pr_state": "changes_requested",
+            "last_review_id": 400, "filed_issues": [],
+            "pr_review_cycles": 1,
+        }))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+
+        mock_run = MagicMock()
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]), \
+             patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="abc12345"), \
+             patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=mock_run):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+        # Verify no git push was attempted
+        push_calls = [c for c in mock_run.call_args_list if c.args and isinstance(c.args[0], list) and "push" in c.args[0]]
+        assert len(push_calls) == 0
+
 
 class TestParsePipAuditVulnerabilitiesEmptyLine:
     def test_breaks_on_empty_line_after_header(self):
