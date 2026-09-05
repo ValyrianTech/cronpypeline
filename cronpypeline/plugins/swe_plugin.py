@@ -2139,7 +2139,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                     all_done = False
                     break
 
-            if all_done:
+            if all_done and pr_data.get("filed_issues"):
                 default_branch = target_config.get("default_branch") or "main"
                 sha = integration_head_sha(target_dir, default_branch)
                 if sha:
