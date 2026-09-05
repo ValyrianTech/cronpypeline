@@ -78,7 +78,11 @@ def write_report(
     if "{timestamp}" in filename:
         filename = filename.replace("{timestamp}", generate_timestamp())
 
-    report_path = directory / filename
+    fname = Path(filename)
+    if fname.is_absolute() or ".." in fname.parts:
+        raise ValueError(f"Invalid report filename: {filename}")
+
+    report_path = directory / fname
     report_path.write_text(content)
     return report_path
 
@@ -98,10 +102,18 @@ def update_latest_symlink(
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
 
-    symlink_path = directory / symlink_name
+    sname = Path(symlink_name)
+    if sname.is_absolute() or ".." in sname.parts:
+        raise ValueError(f"Invalid symlink name: {symlink_name}")
+
+    tname = Path(target_name)
+    if tname.is_absolute():
+        raise ValueError(f"Symlink target must be relative: {target_name}")
+
+    symlink_path = directory / sname
 
     if symlink_path.is_symlink() or symlink_path.exists():
         symlink_path.unlink()
 
-    symlink_path.symlink_to(target_name)
+    symlink_path.symlink_to(tname)
     return symlink_path
