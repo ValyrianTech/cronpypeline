@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.config import Stage
-from cronpypeline.markers import delete_marker, marker_age_seconds, marker_exists, read_marker
+from cronpypeline.markers import (
+    delete_marker,
+    marker_age_seconds,
+    marker_exists,
+    read_marker,
+)
 from cronpypeline.triggers import evaluate_trigger
 
 
@@ -215,9 +220,8 @@ class TargetState:
             if not stage.enabled:
                 continue
             ss = self.stage_states.get(stage.id)
-            if ss and ss.is_actionable:
-                if evaluate_trigger(stage.trigger, self.target_dir, context=self.context):
-                    return ss
+            if ss and ss.is_actionable and evaluate_trigger(stage.trigger, self.target_dir, context=self.context):
+                return ss
         return None
 
 

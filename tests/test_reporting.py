@@ -3,6 +3,8 @@
 import os
 from datetime import datetime, timezone
 
+import pytest
+
 from cronpypeline.reporting import (
     ReportConfig,
     format_report,
@@ -65,6 +67,14 @@ class TestWriteReport:
         write_report(directory=tmp_path, filename="report.md", content="v2")
         assert (tmp_path / "report.md").read_text() == "v2"
 
+    def test_write_report_rejects_absolute_path(self, tmp_path):
+        with pytest.raises(ValueError):
+            write_report(directory=tmp_path, filename="/abs/report.md", content="Content")
+
+    def test_write_report_rejects_parent_traversal(self, tmp_path):
+        with pytest.raises(ValueError):
+            write_report(directory=tmp_path, filename="../report.md", content="Content")
+
 
 class TestUpdateLatestSymlink:
     """Tests for latest symlink management."""
@@ -104,6 +114,38 @@ class TestUpdateLatestSymlink:
             target_name="v1.md",
         )
         assert (tmp_path / "reports" / "latest.md").is_symlink()
+
+    def test_update_latest_symlink_rejects_absolute_symlink_name(self, tmp_path):
+        with pytest.raises(ValueError):
+            update_latest_symlink(
+                directory=tmp_path,
+                symlink_name="/abs/latest.md",
+                target_name="v1.md",
+            )
+
+    def test_update_latest_symlink_rejects_parent_traversal_in_symlink_name(self, tmp_path):
+        with pytest.raises(ValueError):
+            update_latest_symlink(
+                directory=tmp_path,
+                symlink_name="../latest.md",
+                target_name="v1.md",
+            )
+
+    def test_update_latest_symlink_rejects_absolute_target(self, tmp_path):
+        with pytest.raises(ValueError):
+            update_latest_symlink(
+                directory=tmp_path,
+                symlink_name="latest.md",
+                target_name="/abs/v1.md",
+            )
+
+    def test_update_latest_symlink_rejects_parent_traversal_in_target(self, tmp_path):
+        with pytest.raises(ValueError):
+            update_latest_symlink(
+                directory=tmp_path,
+                symlink_name="latest.md",
+                target_name="../outside.txt",
+            )
 
 
 class TestFormatReport:
