@@ -472,11 +472,11 @@ Unhandled exceptions during a tick are caught and reported as an `ACTION_FAILED`
 Each stage has a `timeout_minutes` config. If a task's processing marker is older than this threshold, the pipeline:
 1. Cleans up the stale marker
 2. For sync actions (command, subprocess, http_request): gives up immediately — writes a give-up marker (if configured) and returns `GAVE_UP`. Sync actions are never re-executed when stale.
-3. For async actions (queue_agent and custom actions returning data with `async: true`): increments the retry counter and either re-queues the action (if retries remain) or writes a give-up marker.
+3. For async actions (queue_agent) and custom actions: increments the retry counter and either re-queues the action (if retries remain) or writes a give-up marker.
 
 Sync actions (command, subprocess, http_request) are never re-executed when stale. If a sync action's stage has a stale processing marker (e.g. from a previous bug, manual intervention, or a custom action that created one), the pipeline does NOT re-execute it — the action may have already been executed, and re-running it could cause duplicate side effects. Instead it cleans up the processing marker, writes a give-up marker (if configured), and returns `GAVE_UP` with message "Stage {id} gave up: sync action with stale processing marker".
 
-Only async actions (queue_agent and custom actions returning data with `async: true`) are re-queued when stale, subject to `max_retries`.
+Custom actions and `queue_agent` actions are re-queued when stale, subject to `max_retries`. Custom actions are always treated as potentially async for stale handling: the pipeline cannot know whether a custom action is sync or async without executing it (a custom action only signals async by returning `data: {"async": true}`), so a stale custom action is always re-queued rather than given up on. This is a deliberate trade-off — a sync custom action is just as likely to have been executed as a command action, but the pipeline cannot distinguish the two, so a sync custom action may be re-executed when stale.
 
 In dry-run mode, the pipeline reports what it would do — a stale sync action reports "Would give up on stale stage {id} (sync action with processing marker)", while a stale async action reports "Would re-queue stale stage X" or "Would give up on stale stage X (retry N >= max M)" — without actually deleting the processing marker or re-queueing. When a re-queued (async) action fails, the pipeline returns `ACTION_FAILED` (instead of `ACTION_EXECUTED`), runs the stage's `on_fail` action if configured, and reports the failure message.
 
