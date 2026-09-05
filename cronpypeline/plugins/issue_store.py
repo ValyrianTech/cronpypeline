@@ -477,7 +477,11 @@ def main(argv: list[str] | None = None) -> int:
             print("error: title produces empty slug", file=sys.stderr)
             return 1
 
-        target_dir = Path.cwd()
+        # Resolve target directory from repo_name via the SWE workspace.
+        # Falls back to CWD if the workspace dir doesn't exist (backward compat).
+        from cronpypeline.plugins.swe_plugin import SWE_WORKSPACE_DIR
+        workspace_repo = SWE_WORKSPACE_DIR / "repos" / args.repo_name
+        target_dir = workspace_repo if workspace_repo.is_dir() else Path.cwd()
         existing = get_issue(target_dir, issue_id)
         if existing is not None:
             print(f"issue already exists: {issue_id} (status: {existing.status})")
