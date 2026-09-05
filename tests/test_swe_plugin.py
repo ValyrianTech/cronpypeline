@@ -20,6 +20,7 @@ from cronpypeline.actions import ActionResult, ActionSpec, ActionType, TickConte
 from cronpypeline.plugins.issue_store import create_issue
 from cronpypeline.plugins.swe_plugin import (
     INTEGRATION_BRANCH,
+    PR_POLL_COOLDOWN_SECONDS,
     _a1_is_pass,
     _a7_coverage_pct,
     _batch_fixed_count,
@@ -2612,6 +2613,35 @@ class TestDetectCPrStatus:
         (target / ".SWE" / "pr_published.json").write_text("bad json")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
         assert detect_c_pr_status(ctx) is False
+
+    def test_does_not_fire_during_cooldown(self, tmp_path, monkeypatch):
+        """Trigger should return False when last_polled_at is within cooldown."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        now = datetime.now(timezone.utc).isoformat()
+        pr_data = {"pr_number": 1, "pr_state": "open", "last_polled_at": now}
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps(pr_data))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is False
+
+    def test_fires_when_cooldown_elapsed(self, tmp_path, monkeypatch):
+        """Trigger should fire when last_polled_at is older than cooldown."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        old = (datetime.now(timezone.utc) - timedelta(seconds=PR_POLL_COOLDOWN_SECONDS + 60)).isoformat()
+        pr_data = {"pr_number": 1, "pr_state": "open", "last_polled_at": old}
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps(pr_data))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is True
+
+    def test_fires_when_last_polled_at_invalid(self, tmp_path, monkeypatch):
+        """Trigger should fire when last_polled_at is not a valid timestamp."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        pr_data = {"pr_number": 1, "pr_state": "open", "last_polled_at": "bad-date"}
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps(pr_data))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is True
 
 
 # ─── run_c_pr_status ────────────────────────────────────────────────────────

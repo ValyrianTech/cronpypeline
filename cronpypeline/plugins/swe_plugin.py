@@ -39,6 +39,7 @@ PHASE_A_GIT_AUTHOR_NAME = "Valyrian SWE Pipeline"
 PHASE_A_GIT_AUTHOR_EMAIL = "swe-pipeline@valyrian.tech"
 
 GITHUB_RECHECK_SECONDS = 10 * 60
+PR_POLL_COOLDOWN_SECONDS = 2 * 60
 SWE_SUBDIR = ".SWE"
 GITHUB_SESSION_FILE = f"{SWE_SUBDIR}/github_session.json"
 
@@ -1896,6 +1897,11 @@ def _build_pr_review_prompt(
 def detect_c_pr_status(context: dict[str, Any]) -> bool:
     """Trigger: fire when a PR has been published and needs status polling.
 
+    Includes a cooldown (``PR_POLL_COOLDOWN_SECONDS``) so that between polls
+    the trigger returns False.  This prevents the markerless stage from
+    monopolising the pipeline in default mode — other targets get a chance
+    to run while waiting for the next poll interval.
+
     :param context: Trigger context dict.
     :returns: True if PR status should be polled.
     """
@@ -1914,6 +1920,15 @@ def detect_c_pr_status(context: dict[str, Any]) -> bool:
     pr_state = pr_data.get("pr_state", "open")
     if pr_state in ("merged", "rejected"):
         return False
+
+    # Cooldown: don't poll more often than the configured interval
+    last_polled = pr_data.get("last_polled_at", "")
+    if last_polled:
+        last = _parse_utc_datetime(last_polled)
+        if last is not None:
+            ago = (datetime.now(timezone.utc) - last).total_seconds()
+            if ago < PR_POLL_COOLDOWN_SECONDS:
+                return False
 
     token = _load_github_token(target_config)
     if not token:
@@ -1963,6 +1978,10 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
 
     gh_state = pr_info.get("state", "open")
     merged = pr_info.get("merged", False)
+
+    # Record poll time immediately after a successful API call
+    pr_data["last_polled_at"] = datetime.now(timezone.utc).isoformat()
+    pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
 
     def _update_marker(new_state: str, **kwargs: Any) -> None:
         """Update the PR marker file with a new state.
