@@ -1146,7 +1146,10 @@ class Pipeline:
         retry_count = stage_state.retry_count
 
         if dry_run:
-            if retry_count >= stage.max_retries:
+            if stage.action.type not in (ActionType.QUEUE_AGENT, ActionType.CUSTOM):
+                message = f"Would give up on stale stage {stage.id} (sync action with processing marker)"
+                self._log_stage(stage, "would_give_up")
+            elif retry_count >= stage.max_retries:
                 message = f"Would give up on stale stage {stage.id} (retry {retry_count} >= max {stage.max_retries})"
                 self._log_stage(stage, "would_give_up")
             else:
@@ -1163,6 +1166,22 @@ class Pipeline:
         marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
         if "processing" in stage.markers:
             delete_marker(stage.markers["processing"], target_dir, context=marker_ctx)
+
+        # Sync actions (COMMAND, SUBPROCESS, HTTP_REQUEST) should never have
+        # processing markers in the normal path. If one exists (e.g., from a
+        # previous bug, manual intervention, or a custom action that created one),
+        # the action may have already been executed. Do NOT re-execute it - that
+        # could cause duplicate side effects. Instead, clean up and give up.
+        if stage.action.type not in (ActionType.QUEUE_AGENT, ActionType.CUSTOM):
+            if "give_up" in stage.markers:
+                create_marker(stage.markers["give_up"], target_dir, context=marker_ctx)
+            self._log_stage(stage, "gave_up")
+            return TickResult(
+                target=target,
+                stage_id=stage.id,
+                status=TickResultStatus.GAVE_UP,
+                message=f"Stage {stage.id} gave up: sync action with stale processing marker",
+            )
 
         if retry_count >= stage.max_retries:
             # Give up
