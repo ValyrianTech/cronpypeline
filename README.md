@@ -471,12 +471,14 @@ Unhandled exceptions during a tick are caught and reported as an `ACTION_FAILED`
 
 Each stage has a `timeout_minutes` config. If a task's processing marker is older than this threshold, the pipeline:
 1. Cleans up the stale marker
-2. Increments the retry counter
-3. Either re-queues the action (if retries remain) or writes a give-up marker
+2. For sync actions (command, subprocess, http_request): gives up immediately — writes a give-up marker (if configured) and returns `GAVE_UP`. Sync actions are never re-executed when stale.
+3. For async actions (queue_agent and custom actions returning data with `async: true`): increments the retry counter and either re-queues the action (if retries remain) or writes a give-up marker.
 
-In dry-run mode, the pipeline reports what it would do — "Would re-queue stale stage X" or "Would give up on stale stage X (retry N >= max M)" — without actually deleting the processing marker or re-queueing. When the re-executed (re-queued) action fails, the pipeline returns `ACTION_FAILED` (instead of `ACTION_EXECUTED`), runs the stage's `on_fail` action if configured, and reports the failure message.
+Sync actions (command, subprocess, http_request) are never re-executed when stale. If a sync action's stage has a stale processing marker (e.g. from a previous bug, manual intervention, or a custom action that created one), the pipeline does NOT re-execute it — the action may have already been executed, and re-running it could cause duplicate side effects. Instead it cleans up the processing marker, writes a give-up marker (if configured), and returns `GAVE_UP` with message "Stage {id} gave up: sync action with stale processing marker".
 
-On successful re-execution of a sync action (command, subprocess, or custom), the pipeline now creates the stage's produced markers and completion marker, clears the rejection marker, and invalidates other stages' markers — consistent with the normal execution path — so the stage is not re-triggered on subsequent ticks.
+Only async actions (queue_agent and custom actions returning data with `async: true`) are re-queued when stale, subject to `max_retries`.
+
+In dry-run mode, the pipeline reports what it would do — a stale sync action reports "Would give up on stale stage {id} (sync action with processing marker)", while a stale async action reports "Would re-queue stale stage X" or "Would give up on stale stage X (retry N >= max M)" — without actually deleting the processing marker or re-queueing. When a re-queued (async) action fails, the pipeline returns `ACTION_FAILED` (instead of `ACTION_EXECUTED`), runs the stage's `on_fail` action if configured, and reports the failure message.
 
 **Queue-file-based staleness**: If the processing marker contains a `queue_file` field, staleness is detected immediately when the queue file is gone (agent finished without producing completion) — no waiting for the timeout.
 
