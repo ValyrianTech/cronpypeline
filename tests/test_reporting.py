@@ -139,6 +139,14 @@ class TestUpdateLatestSymlink:
                 target_name="/abs/v1.md",
             )
 
+    def test_update_latest_symlink_rejects_parent_traversal_in_target(self, tmp_path):
+        with pytest.raises(ValueError):
+            update_latest_symlink(
+                directory=tmp_path,
+                symlink_name="latest.md",
+                target_name="../outside.txt",
+            )
+
 
 class TestFormatReport:
     """Tests for report formatting."""
