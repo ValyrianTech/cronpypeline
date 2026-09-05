@@ -278,6 +278,8 @@ When no mode is set (no `mode_file` configured, the mode file is missing, or the
 
 When `target_lock: true` is set on the pipeline, no stage for a target is actionable while any stage for that target has a processing marker. This ensures one target flows through the entire pipeline before the next target starts — useful when stages have side effects that conflict across targets.
 
+Target selection (the first stage with work) also respects this: under `target_lock`, an actively-processing (non-stale) stage causes target selection to report no actionable stage, and disabled stages are skipped during selection.
+
 ### Pre-tick / post-tick hooks
 
 A pipeline can declare `pre_tick` and `post_tick` hooks — custom Python callables that run before state derivation and after tick completion respectively.
@@ -758,6 +760,8 @@ path = write_report(directory=target_dir / "reports", filename="report_{timestam
 # Update latest.md symlink to point to the new report
 update_latest_symlink(directory=target_dir / "reports", symlink_name="latest.md", target_name=path.name)
 ```
+
+Both functions validate their path arguments to prevent path traversal. `write_report` rejects absolute report filenames and filenames containing `..` segments (raising `ValueError`). `update_latest_symlink` rejects absolute symlink names, symlink names containing `..` segments, and absolute symlink targets (raising `ValueError`), so reports and symlinks cannot be written outside the intended directory.
 
 #### SWE pipeline plugins
 
