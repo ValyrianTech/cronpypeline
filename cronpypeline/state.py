@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.config import Stage
-from cronpypeline.markers import delete_marker, marker_age_seconds, marker_exists, read_marker
+from cronpypeline.markers import (
+    delete_marker,
+    marker_age_seconds,
+    marker_exists,
+    read_marker,
+)
 from cronpypeline.triggers import evaluate_trigger
 
 
