@@ -799,7 +799,7 @@ The stale-task cleanup also safely derives the task ID when `task.json` is corru
 
 The issue-fix plugin's `_read_task` helper now returns `None` when a task's `task.json` file is missing or corrupted (unreadable or invalid JSON), instead of raising an exception. The state machine handles a missing/corrupt `task.json` gracefully: the GATE stage (`run_gate`) cleans up the task directory when its `task.json` is unreadable, and `run_issue_fix_state_machine` cleans up a corrupted active task and selects a new one instead of crashing. In dry-run mode these paths report what they would do without mutating state.
 
-The SWE plugin's active-task detection (`_find_active_task`) now selects the most recently modified unfinished task for a repo (by the `task.json` file's modification time) instead of using lexicographic path ordering, so a task like `task-github-10` is correctly preferred over `task-github-9` when the former was modified more recently.
+The SWE plugin's active-task detection (`_find_active_task`) now selects the most recently modified unfinished task for a repo (by the `task.json` file's modification time) instead of using lexicographic path ordering, so a task like `task-github-10` is correctly preferred over `task-github-9` when the former was modified more recently. The selection is also TOCTOU-safe: if a candidate's `task.json` is deleted or becomes unreadable between the existence check and the modification-time stat (a race condition), the candidate is treated as the oldest instead of raising a `FileNotFoundError`, so the function still returns one of the remaining valid tasks.
 
 **SWE issue store** (`cronpypeline.plugins.issue_store`):
 

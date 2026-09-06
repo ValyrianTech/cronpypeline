@@ -1070,8 +1070,19 @@ def _find_active_task(repo_name: str) -> Path | None:
                 candidates.append(task_dir)
     if not candidates:
         return None
-    # Sort by task.json mtime (or created_at) instead of lexicographic path order
-    return max(candidates, key=lambda p: ((p / "task.json").stat().st_mtime, str(p)))
+
+    def _task_mtime(p: Path) -> tuple[float, str]:
+        """Return a sort key for a task dir based on its task.json mtime.
+
+        :param p: Task directory path.
+        :returns: Tuple of (mtime, dir name) used as a ``max`` key.
+        """
+        try:
+            return (p / "task.json").stat().st_mtime, str(p)
+        except OSError:
+            return (0.0, str(p))  # Treat missing file as oldest
+
+    return max(candidates, key=_task_mtime)
 
 
 def _count_open_review_issues(target_dir: Path) -> int:
