@@ -506,7 +506,19 @@ def _cleanup_stale_task(repo_dir: Path, task_dir: Path, repo_name: str,
                   f"repo '{repo_name}' — refusing cleanup")
             return False
 
-    task_id = task.get("task_id", task_dir.name)
+    task_id = task.get("task_id", "")
+    if not task_id:
+        match = re.match(
+            rf"^\d{{8}}_{re.escape(_safe_slug(repo_name))}_(.+)$",
+            task_dir.name,
+        )
+        if match:
+            task_id = match.group(1)
+        else:
+            print(f"  [task] ERROR: cannot derive a safe task id from task "
+                  f"dir '{task_dir.name}' for repo '{repo_name}' — refusing cleanup")
+            return False
+    task_id = _safe_slug(task_id)
     branch = _task_branch_name(task_id)
     default_branch = task.get("default_branch", "main")
     source_issue_id = task.get("source_issue_id", "")
