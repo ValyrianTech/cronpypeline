@@ -1057,6 +1057,76 @@ class TestCleanupStaleTask:
         assert _cleanup_stale_task(target, task_dir, "my_repo", verbose=True) is True
         assert not task_dir.exists()
 
+    def test_corrupt_task_json_invalid_branch_chars(self, tmp_path, monkeypatch):
+        """A corrupt task with invalid branch chars is slugified before branch use."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        subprocess.run(["git", "-C", str(target), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "20250101_repo_task with spaces"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        with patch("cronpypeline.plugins.issue_fix._task_branch_name", wraps=_task_branch_name) as mock_branch:
+            assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
+            assert not task_dir.exists()
+        mock_branch.assert_called_once_with("task_with_spaces")
+
+    def test_corrupt_task_json_no_extractable_task_id(self, tmp_path, monkeypatch, capsys):
+        """A corrupt task whose dir name has no extractable task id is refused."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "orphaned"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, task_dir, "repo") is False
+        assert task_dir.exists()
+        out = capsys.readouterr().out
+        assert "refusing cleanup" in out
+
+    def test_refuses_when_task_id_cannot_be_derived(self, tmp_path, monkeypatch, capsys):
+        """A task with matching repo but empty/un-derivable task id is refused."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "orphaned"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text(json.dumps({
+            "task_id": "", "branch": "b", "default_branch": "main",
+            "source_issue_id": "", "repo_name": "repo",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        assert _cleanup_stale_task(target, task_dir, "repo") is False
+        assert task_dir.exists()
+        out = capsys.readouterr().out
+        assert "refusing cleanup" in out
+
+    def test_valid_task_json_special_chars_task_id(self, tmp_path, monkeypatch):
+        """A task_id with special chars is slugified before branch use."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        subprocess.run(["git", "-C", str(target), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        task_dir = tmp_path / "tasks" / "d" / "t"
+        task_dir.mkdir(parents=True)
+        (task_dir / TASK_FILE).write_text(json.dumps({
+            "task_id": "task with spaces", "branch": "b", "default_branch": "main",
+            "source_issue_id": "", "repo_name": "repo",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        with patch("cronpypeline.plugins.issue_fix._task_branch_name", wraps=_task_branch_name) as mock_branch:
+            assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
+            assert not task_dir.exists()
+        mock_branch.assert_called_once_with("task_with_spaces")
+
+    def test_valid_task_json_uses_task_id(self, tmp_path, monkeypatch):
+        """A valid task's task_id from task.json is used for the branch name."""
+        target, task_dir = self._setup(tmp_path, monkeypatch)
+        with patch("cronpypeline.plugins.issue_fix._task_branch_name", wraps=_task_branch_name) as mock_branch:
+            assert _cleanup_stale_task(target, task_dir, "repo", verbose=True) is True
+            assert not task_dir.exists()
+        mock_branch.assert_called_once_with("task1")
+
 
 # ─── _cleanup_orphaned_task_dirs ─────────────────────────────────────────────
 
