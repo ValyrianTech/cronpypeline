@@ -2035,6 +2035,7 @@ class TestTickStaleHandling:
         result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.ACTION_FAILED
         assert (target_dir / "on_fail_marker.txt").exists()
+        assert not (target_dir / ".processing").exists()
 
     def test_stale_custom_sync_action_success_creates_markers_and_chains(self, tmp_path):
         workspace = tmp_path / "workspace"
