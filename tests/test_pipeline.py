@@ -400,6 +400,53 @@ class TestTickBasic:
         assert not (target_dir / "a.md").exists()  # completion not yet
         assert handler.check_complete(None, None) is False
 
+    def test_tick_queue_agent_failure_cleans_up_processing_marker(self, tmp_path):
+        """A failed queue_agent action should delete its processing marker."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "TestAgent", "prompt": "Do stuff"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "a.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                    },
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+
+        from cronpypeline.actions import ActionHandler, ActionResult, register_handler
+
+        class MockFailHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(success=False, stderr="queue failed")
+
+        register_handler(ActionType.QUEUE_AGENT, MockFailHandler())
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert not (target_dir / ".processing").exists()
+
+        class MockSuccessHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(success=True, stdout="queued")
+
+        register_handler(ActionType.QUEUE_AGENT, MockSuccessHandler())
+
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert (target_dir / ".processing").exists()
+
 
 class TestTickLocking:
     """Tests for lock integration in tick()."""
