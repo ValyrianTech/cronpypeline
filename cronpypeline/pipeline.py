@@ -857,6 +857,9 @@ class Pipeline:
             create_marker(processing_spec, target_dir, context=marker_ctx)
 
         if not action_result.success:
+            # Clean up processing marker on failure
+            if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers:
+                delete_marker(stage.markers["processing"], target_dir, context=marker_ctx)
             # Run on_fail if configured
             if stage.on_fail:
                 fail_ctx = TickContext(
