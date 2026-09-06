@@ -2046,8 +2046,11 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         req2 = Request(reviews_url, headers=headers, method="GET")
         with _GH_OPENER.open(req2, timeout=30) as resp2:  # nosec B310 - HTTPS GitHub API
             reviews = json.loads(resp2.read().decode("utf-8"))
-    except (HTTPError, URLError, OSError):
-        reviews = []
+    except (HTTPError, URLError, OSError) as e:
+        return ActionResult(
+            success=False,
+            stderr=f"Failed to fetch PR reviews: {e}",
+        )
 
     latest_approve = None
     latest_changes = None

@@ -3855,8 +3855,8 @@ class TestDetectCPrStatusReviewsException:
         from urllib.error import URLError
         with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[mock_resp, URLError("fail")]):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
-        assert result.success is True
-        assert result.data["pr_state"] == "open"
+        assert result.success is False
+        assert "Failed to fetch PR reviews" in result.stderr
 
 
 class TestDetectCPrStatusChangesRequested:
