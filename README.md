@@ -262,6 +262,8 @@ Stages with `"chain": true` allow same-tick continuation when the action is sync
 
 Async actions include `queue_agent` actions and custom actions that return `data: {"async": true}`. For chaining purposes, async custom actions are treated like `queue_agent` actions: they stop the chain and create a processing marker instead of a completion marker. The chaining logic skips chaining when either the action type is `queue_agent` or the action returns `data: {"async": true}`. The processing marker is written with `retry_count=0` and the action's result data merged in, preventing duplicate agent queueing on subsequent ticks.
 
+When a `queue_agent` (async) action fails, the pipeline deletes the stage's processing marker before running the stage's `on_fail` action, so the stage is retried on a subsequent tick instead of being left in a stuck processing state (which would otherwise skip the stage and lose the work).
+
 When a chained stage's action fails, the chain stops and the tick returns a `TickResult` with `ACTION_FAILED` status for the failed stage (instead of silently stopping the chain). The failed stage's ID is reported in `result.stage_id` and listed in `result.failed_chained_stages`. If the failed stage declares an `on_fail` action, it is executed before the failure is reported. When the failed action produces no output, the failure message is `"Chained stage X failed"` (no trailing colon).
 
 ### Mode switching
@@ -849,6 +851,8 @@ Custom action callables that build prompts programmatically and queue agents:
 `queue_fix_agent`, `queue_coder_agent`, and `queue_review_agent` mark their results as async (`data: {"async": true}`), so they do not create a completion marker immediately — the pipeline creates a processing marker instead and defers completion to the external agent.
 
 `queue_fix_agent` writes its deduplication marker (`queued_for_{report_stem}.marker`) only after the agent is successfully queued, so a queue failure does not leave a stale dedup marker and the work is retried on a subsequent tick.
+
+When a `queue_agent` action fails, the pipeline also deletes the stage's processing marker before running `on_fail`, so the stage is retried on a subsequent tick instead of being left in a stuck processing state.
 
 These queue builder actions require a `queue_dir` to be configured, either in the stage action params or in the pipeline's top-level `action_handler` config. If `queue_dir` is missing or empty, a `ValueError` is raised.
 
