@@ -1072,6 +1072,11 @@ def _find_active_task(repo_name: str) -> Path | None:
         return None
 
     def _task_mtime(p: Path) -> tuple[float, str]:
+        """Return a sort key for a task dir based on its task.json mtime.
+
+        :param p: Task directory path.
+        :returns: Tuple of (mtime, dir name) used as a ``max`` key.
+        """
         try:
             return (p / "task.json").stat().st_mtime, str(p)
         except OSError:
