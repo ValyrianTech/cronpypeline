@@ -1433,6 +1433,61 @@ class TestFindActiveTask:
         result = _find_active_task("repo")
         assert result == task_10
 
+    def test_handles_missing_task_json_during_stat(self, tmp_path, monkeypatch):
+        """TOCTOU: task.json deleted between exists() check and stat() call."""
+        date_dir = tmp_path / "20260904"
+        task_a = date_dir / "task-a"
+        task_b = date_dir / "task-b"
+        task_a.mkdir(parents=True)
+        task_b.mkdir(parents=True)
+        (task_a / "task.json").write_text(json.dumps({"repo_name": "repo"}))
+        (task_b / "task.json").write_text(json.dumps({"repo_name": "repo"}))
+        os.utime(task_a / "task.json", (1_000_000_000, 1_000_000_000))
+        os.utime(task_b / "task.json", (1_100_000_000, 1_100_000_000))
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path)
+
+        # Keep exists() working against the real filesystem so the deletion
+        # only manifests at the stat() call inside the max() key function.
+        monkeypatch.setattr(Path, "exists", lambda self: os.path.exists(self))
+
+        real_stat = Path.stat
+
+        def mock_stat(self):
+            if self.name == "task.json" and str(self.parent).endswith("task-b"):
+                raise FileNotFoundError(f"{self} does not exist")
+            return real_stat(self)
+
+        monkeypatch.setattr(Path, "stat", mock_stat)
+        result = _find_active_task("repo")
+        # task_a should be selected since task_b's file is treated as oldest
+        assert result == task_a
+
+    def test_handles_all_task_jsons_missing_during_stat(self, tmp_path, monkeypatch):
+        """TOCTOU: all task.json files deleted between exists() and stat()."""
+        date_dir = tmp_path / "20260904"
+        task_a = date_dir / "task-a"
+        task_b = date_dir / "task-b"
+        task_a.mkdir(parents=True)
+        task_b.mkdir(parents=True)
+        (task_a / "task.json").write_text(json.dumps({"repo_name": "repo"}))
+        (task_b / "task.json").write_text(json.dumps({"repo_name": "repo"}))
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tmp_path)
+
+        monkeypatch.setattr(Path, "exists", lambda self: os.path.exists(self))
+
+        real_stat = Path.stat
+
+        def mock_stat(self):
+            if self.name == "task.json":
+                raise FileNotFoundError(f"{self} does not exist")
+            return real_stat(self)
+
+        monkeypatch.setattr(Path, "stat", mock_stat)
+        result = _find_active_task("repo")
+        # Should still return one of the candidates
+        assert result is not None
+        assert result in (task_a, task_b)
+
 
 # ─── _count_open_review_issues ──────────────────────────────────────────────
 
