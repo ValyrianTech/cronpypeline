@@ -159,6 +159,14 @@ def create_marker(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | No
         if target is None:
             raise ValueError(f"Symlink marker has no target: {spec.name}")
 
+        # Validate the target stays within the base directory
+        target_path = Path(target)
+        if target_path.is_absolute() or ".." in target_path.parts:
+            raise ValueError(f"Symlink target must be relative and not contain '..': {target}")
+        resolved_target = (path.parent / target).resolve()
+        if not resolved_target.is_relative_to(base_dir.resolve()):
+            raise ValueError(f"Symlink target escapes base directory: {target}")
+
         # Open the parent directory with O_DIRECTORY|O_NOFOLLOW. O_NOFOLLOW only
         # guards the final path component: it prevents a symlink swap at the
         # parent directory itself between resolve_path's security check and this
