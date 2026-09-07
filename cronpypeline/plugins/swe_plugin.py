@@ -235,12 +235,12 @@ def detect_vulture_fail(context: dict[str, Any]) -> bool:
 
 
 def detect_session_complete(context: dict[str, Any]) -> bool:
-    """Trigger: fire when a GitHub session's issue is discarded without a PR.
+    """Trigger: fire when a GitHub session's issue is done or discarded without a PR.
 
     Mirrors the old pipeline's ``detect_c_github_session_terminal`` logic:
     - GitHub session is active
     - No PR was ever published (pr_published.json doesn't exist)
-    - The session's issue has status 'discarded'
+    - The session's issue has status 'discarded' or 'done'
 
     :param context: Trigger context dict with ``target_dir``.
     :returns: True if the session should be finalized.
@@ -268,7 +268,7 @@ def detect_session_complete(context: dict[str, Any]) -> bool:
         fm, _ = parse_frontmatter(issue_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return fm.get("status") == "discarded"
+    return fm.get("status") in ("discarded", "done")
 
 
 def select_issue(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
