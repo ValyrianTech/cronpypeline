@@ -1763,6 +1763,12 @@ class TestHasUncommittedWork:
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=OSError("x")):
             assert _has_uncommitted_work(tmp_path) is False
 
+    def test_timeout(self, tmp_path):
+        _init_git(tmp_path)
+        with patch("cronpypeline.plugins.issue_fix._git",
+                   side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)):
+            assert _has_uncommitted_work(tmp_path) is False
+
     def test_blank_status_line_skipped(self, tmp_path):
         _init_git(tmp_path)
         with patch("cronpypeline.plugins.issue_fix._git") as mock_git:
