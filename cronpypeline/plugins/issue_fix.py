@@ -688,7 +688,7 @@ def _has_uncommitted_work(repo_dir: Path) -> bool:
     """
     try:
         status = _git(repo_dir, "status", "--porcelain").stdout
-    except (subprocess.CalledProcessError, OSError):
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
         return False
 
     artifacts = tuple(e.lstrip("/") for e in PIPELINE_EXCLUDES)
