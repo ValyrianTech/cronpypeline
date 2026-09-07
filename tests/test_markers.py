@@ -508,6 +508,59 @@ class TestPathTraversalProtection:
         assert resolved == (tmp_path / "reports" / "done.marker").resolve()
 
 
+class TestSymlinkTargetValidation:
+    """Tests for symlink target path validation in create_marker."""
+
+    def test_absolute_target_raises_value_error(self, tmp_path):
+        m = MarkerSpec(
+            name="latest.md",
+            type=MarkerType.SYMLINK,
+            directory="reports",
+            target="/etc/shadow",
+        )
+        with pytest.raises(ValueError, match="must be relative and not contain"):
+            create_marker(m, tmp_path)
+
+    def test_dotdot_target_raises_value_error(self, tmp_path):
+        m = MarkerSpec(
+            name="latest.md",
+            type=MarkerType.SYMLINK,
+            directory="reports",
+            target="../../etc/passwd",
+        )
+        with pytest.raises(ValueError, match="must be relative and not contain"):
+            create_marker(m, tmp_path)
+
+    def test_valid_relative_target_still_works(self, tmp_path):
+        target_file = tmp_path / "reports" / "20240101_120000.md"
+        target_file.parent.mkdir(parents=True)
+        target_file.write_text("# Report")
+        m = MarkerSpec(
+            name="latest.md",
+            type=MarkerType.SYMLINK,
+            directory="reports",
+            target="20240101_120000.md",
+        )
+        create_marker(m, tmp_path)
+        link_path = tmp_path / "reports" / "latest.md"
+        assert link_path.is_symlink()
+        assert os.readlink(link_path) == "20240101_120000.md"
+
+    def test_target_resolving_outside_base_raises_value_error(self, tmp_path):
+        outside_dir = tmp_path.parent / "outside_dir"
+        outside_dir.mkdir(exist_ok=True)
+        (tmp_path / "reports").mkdir()
+        (tmp_path / "reports" / "link").symlink_to(outside_dir, target_is_directory=True)
+        m = MarkerSpec(
+            name="latest.md",
+            type=MarkerType.SYMLINK,
+            directory="reports",
+            target="link/secret.txt",
+        )
+        with pytest.raises(ValueError, match="escapes base directory"):
+            create_marker(m, tmp_path)
+
+
 class TestSymlinkTOCTOUFix:
     """Tests for TOCTOU fix in symlink marker creation."""
 
