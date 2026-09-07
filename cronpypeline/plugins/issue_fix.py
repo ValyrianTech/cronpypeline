@@ -691,14 +691,7 @@ def _has_uncommitted_work(repo_dir: Path) -> bool:
     except (subprocess.CalledProcessError, OSError):
         return False
 
-    artifacts = (
-        f"{SWE_SUBDIR}/",
-        ".coverage",
-        "htmlcov/",
-        ".pytest_cache/",
-        ".mypy_cache/",
-        ".ruff_cache/",
-    )
+    artifacts = tuple(e.lstrip("/") for e in PIPELINE_EXCLUDES)
 
     for line in status.splitlines():
         if not line.strip():
