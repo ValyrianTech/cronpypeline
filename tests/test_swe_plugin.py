@@ -375,6 +375,12 @@ class TestDetectSessionComplete:
         self._setup_issue(target, "github-1", "discarded")
         assert detect_session_complete({"target_dir": str(target)}) is True
 
+    def test_fires_when_done_and_no_pr(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_session(target)
+        self._setup_issue(target, "github-1", "done")
+        assert detect_session_complete({"target_dir": str(target)}) is True
+
     def test_does_not_fire_when_no_session(self, tmp_path):
         target = _make_target_dir(tmp_path)
         assert detect_session_complete({"target_dir": str(target)}) is False
@@ -388,6 +394,13 @@ class TestDetectSessionComplete:
         target = _make_target_dir(tmp_path)
         self._setup_session(target)
         self._setup_issue(target, "github-1", "discarded")
+        (target / ".SWE" / "pr_published.json").write_text("{}")
+        assert detect_session_complete({"target_dir": str(target)}) is False
+
+    def test_does_not_fire_when_done_and_pr_published(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup_session(target)
+        self._setup_issue(target, "github-1", "done")
         (target / ".SWE" / "pr_published.json").write_text("{}")
         assert detect_session_complete({"target_dir": str(target)}) is False
 

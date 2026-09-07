@@ -675,6 +675,36 @@ def _capture_diff(repo_dir: Path, default_branch: str) -> tuple[str, list[str]]:
     return diff, files
 
 
+def _has_uncommitted_work(repo_dir: Path) -> bool:
+    """Return True if the working tree has uncommitted work beyond pipeline artifacts.
+
+    Modified/deleted tracked files and new untracked files that are not
+    pipeline artifacts (``.SWE/``, ``.coverage``, ``htmlcov``, caches) all
+    count as uncommitted work. Pipeline artifacts are skipped so the gate can
+    distinguish "no changes needed" from "work left uncommitted".
+
+    :param repo_dir: Target repo directory.
+    :returns: True if genuine uncommitted work exists, False otherwise.
+    """
+    try:
+        status = _git(repo_dir, "status", "--porcelain").stdout
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+        return False
+
+    artifacts = tuple(e.lstrip("/") for e in PIPELINE_EXCLUDES)
+
+    for line in status.splitlines():
+        if not line.strip():
+            continue
+        path = line[3:].strip()
+        if line[:2] == "??" and any(
+            path == a or path.startswith(a) for a in artifacts
+        ):
+            continue
+        return True
+    return False
+
+
 def _invalidate_reports(repo_dir: Path,
                         subdirs: tuple[str, ...] = ("test-infra", "coverage")) -> None:
     """Delete the given stages' latest.md so the pipeline re-measures them.
@@ -1226,7 +1256,8 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
     (task_dir / FILES_CHANGED_FILE).write_text(json.dumps(files, indent=2), encoding="utf-8")
 
     has_diff = bool(diff.strip())
-    resolved_out_of_tree = type_ok and tests_green and not has_diff
+    has_uncommitted = _has_uncommitted_work(repo_dir)
+    resolved_out_of_tree = type_ok and tests_green and not has_diff and not has_uncommitted
     passed = type_ok and tests_green and has_diff
 
     merged = False
@@ -1266,7 +1297,10 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
         for i in load_issues(repo_dir):
             if str(i.id) == source_issue_id:
                 if resolved_out_of_tree:
-                    set_issue_status(repo_dir, source_issue_id, "discarded")
+                    # The issue is genuinely resolved (already fixed in the
+                    # integration branch, or no changes were needed). Mark it
+                    # as done rather than discarded.
+                    _finalize_issue_outcome(i, repo_dir, passed=True, verbose=verbose)
                 else:
                     _finalize_issue_outcome(i, repo_dir, passed, verbose=verbose)
                 break

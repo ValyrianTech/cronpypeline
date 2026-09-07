@@ -34,6 +34,7 @@ from cronpypeline.plugins.issue_fix import (
     _ensure_tooling_artifacts_untracked,
     _finalize_issue_outcome,
     _gate_review,
+    _has_uncommitted_work,
     _invalidate_all_reports,
     _invalidate_reports,
     _is_queue_empty,
@@ -55,7 +56,7 @@ from cronpypeline.plugins.issue_fix import (
     select_open_issue,
 )
 from cronpypeline.plugins.issue_store import Issue, _write_issue_file
-from cronpypeline.plugins.swe_plugin import INTEGRATION_BRANCH
+from cronpypeline.plugins.swe_plugin import INTEGRATION_BRANCH, SWE_SUBDIR
 
 
 def _init_git(path: Path) -> None:
@@ -1569,7 +1570,20 @@ class TestRunGate:
             assert run_gate(t, td, "repo", verbose=True) is True
         gate = json.loads((td / GATE_RESULT_FILE).read_text())
         assert gate["resolved_out_of_tree"] is True and gate["passed"] is False
-        assert "discarded" in (t / ".SWE" / "issues" / "iss-1.md").read_text()
+        assert "done" in (t / ".SWE" / "issues" / "iss-1.md").read_text()
+
+    def test_uncommitted_changes_not_resolved_out_of_tree(self, tmp_path):
+        t = self._setup_git_with_branch(tmp_path)
+        (t / "README").write_text("modified without commit")
+        td = tmp_path / "t"; self._make_task(tmp_path, td)
+        with patch("cronpypeline.plugins.issue_fix._run", return_value=(0, "", "")), \
+             patch("cronpypeline.plugins.issue_fix._finalize_issue_outcome",
+                   wraps=_finalize_issue_outcome) as mock_finalize:
+            assert run_gate(t, td, "repo", verbose=True) is False
+        gate = json.loads((td / GATE_RESULT_FILE).read_text())
+        assert gate["resolved_out_of_tree"] is False and gate["passed"] is False
+        mock_finalize.assert_called_once()
+        assert mock_finalize.call_args[0][2] is False
 
     def test_coverage_passes(self, tmp_path):
         t = self._setup_git_with_branch(tmp_path)
@@ -1696,6 +1710,70 @@ class TestRunGate:
         assert _batch_fixed_count(t) == 1
         marker = json.loads((t / ".SWE" / "markers" / "issues_fixed_batch.json").read_text())
         assert marker["fixed_count"] == 1
+
+
+# ─── _has_uncommitted_work ────────────────────────────────────────────────────
+
+
+class TestHasUncommittedWork:
+    def test_clean_tree(self, tmp_path):
+        _init_git(tmp_path)
+        assert _has_uncommitted_work(tmp_path) is False
+
+    def test_modified_tracked(self, tmp_path):
+        _init_git(tmp_path)
+        (tmp_path / "README").write_text("changed")
+        assert _has_uncommitted_work(tmp_path) is True
+
+    def test_deleted_tracked(self, tmp_path):
+        _init_git(tmp_path)
+        (tmp_path / "README").unlink()
+        assert _has_uncommitted_work(tmp_path) is True
+
+    def test_new_untracked_source(self, tmp_path):
+        _init_git(tmp_path)
+        (tmp_path / "newfile.py").write_text("x")
+        assert _has_uncommitted_work(tmp_path) is True
+
+    def test_only_swe_untracked(self, tmp_path):
+        _init_git(tmp_path)
+        (tmp_path / SWE_SUBDIR / "issues").mkdir(parents=True)
+        (tmp_path / SWE_SUBDIR / "issues" / "1.md").write_text("x")
+        assert _has_uncommitted_work(tmp_path) is False
+
+    def test_only_coverage_untracked(self, tmp_path):
+        _init_git(tmp_path)
+        (tmp_path / ".coverage").write_text("x")
+        assert _has_uncommitted_work(tmp_path) is False
+
+    def test_only_cache_untracked(self, tmp_path):
+        _init_git(tmp_path)
+        (tmp_path / ".pytest_cache").mkdir()
+        (tmp_path / ".pytest_cache" / "v").write_text("x")
+        assert _has_uncommitted_work(tmp_path) is False
+
+    def test_git_error(self, tmp_path):
+        _init_git(tmp_path)
+        with patch("cronpypeline.plugins.issue_fix._git",
+                   side_effect=subprocess.CalledProcessError(1, "git")):
+            assert _has_uncommitted_work(tmp_path) is False
+
+    def test_oserror(self, tmp_path):
+        _init_git(tmp_path)
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=OSError("x")):
+            assert _has_uncommitted_work(tmp_path) is False
+
+    def test_timeout(self, tmp_path):
+        _init_git(tmp_path)
+        with patch("cronpypeline.plugins.issue_fix._git",
+                   side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)):
+            assert _has_uncommitted_work(tmp_path) is False
+
+    def test_blank_status_line_skipped(self, tmp_path):
+        _init_git(tmp_path)
+        with patch("cronpypeline.plugins.issue_fix._git") as mock_git:
+            mock_git.return_value.stdout = "\n"
+            assert _has_uncommitted_work(tmp_path) is False
 
 
 # ─── run_issue_fix_state_machine ─────────────────────────────────────────────
