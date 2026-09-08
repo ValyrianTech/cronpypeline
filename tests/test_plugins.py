@@ -11,6 +11,8 @@ from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
 from cronpypeline.plugins.issue_store import get_issue
 from cronpypeline.plugins.swe_plugin import (
+    GIT_BIN,
+    INTEGRATION_BRANCH,
     cleanup_git_branch,
     detect_agent_forgot_marker,
     detect_open_issue,
@@ -643,8 +645,8 @@ class TestCleanupGitBranch:
         assert mock_run.call_count == 2
         # Check the git commands
         calls = mock_run.call_args_list
-        assert calls[0].args[0] == ["git", "checkout", "integration"]
-        assert calls[1].args[0] == ["git", "branch", "-D", "task-issue-42"]
+        assert calls[0].args[0] == [GIT_BIN, "checkout", INTEGRATION_BRANCH]
+        assert calls[1].args[0] == [GIT_BIN, "branch", "-D", "task-issue-42"]
 
 
 class TestResetIssueStatus:

@@ -427,8 +427,8 @@ def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, 
     task_branch = action.params.get("task_branch", "task-branch")
 
     commands = [
-        ["git", "checkout", "integration"],
-        ["git", "branch", "-D", task_branch],
+        [GIT_BIN, "checkout", INTEGRATION_BRANCH],
+        [GIT_BIN, "branch", "-D", task_branch],
     ]
 
     for cmd in commands:
