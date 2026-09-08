@@ -3493,7 +3493,7 @@ class TestDetectOpenIssue:
 class TestCleanupGitBranch:
     def test_cleans_up_branch(self, tmp_path):
         target = _make_target_dir(tmp_path)
-        subprocess.run(["git", "init", "-b", "integration", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "init", "-b", INTEGRATION_BRANCH, str(target)], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
         (target / "f.txt").write_text("x")
@@ -3508,7 +3508,7 @@ class TestCleanupGitBranch:
 
     def test_succeeds_even_without_branch(self, tmp_path):
         target = _make_target_dir(tmp_path)
-        subprocess.run(["git", "init", "-b", "integration", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "init", "-b", INTEGRATION_BRANCH, str(target)], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
         (target / "f.txt").write_text("x")
@@ -4875,7 +4875,7 @@ class TestFindIssueByIdCorrupt:
 class TestCleanupGitBranchTimeout:
     def test_timeout_does_not_crash(self, tmp_path):
         target = _make_target_dir(tmp_path)
-        subprocess.run(["git", "init", "-b", "integration", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "init", "-b", INTEGRATION_BRANCH, str(target)], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
         (target / "f.txt").write_text("x")
