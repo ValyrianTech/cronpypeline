@@ -5416,6 +5416,78 @@ class TestLoadGithubTokenDotenvFallback:
         assert os.environ["PLAIN_VAR"] == "plain-token"
         assert "SOME_MALFORMED_LINE" not in os.environ
 
+    def test_does_not_read_env_from_great_grandparent(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        # Old vulnerable path: SWE_WORKSPACE_DIR.parent.parent.parent / ".env"
+        vulnerable_env = swe_dir.parent.parent.parent / ".env"
+        vulnerable_env.write_text("SWE_GITHUB_TOKEN=vulnerable-token\n")
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) is None
+
+    def test_does_not_read_env_from_grandparent(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        # Old vulnerable path: SWE_WORKSPACE_DIR.parent.parent / ".env"
+        vulnerable_env = swe_dir.parent.parent / ".env"
+        vulnerable_env.write_text("SWE_GITHUB_TOKEN=vulnerable-token\n")
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) is None
+
+    def test_does_not_read_env_from_cwd(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        cwd = tmp_path / "cwd"
+        cwd.mkdir(parents=True)
+        (cwd / ".env").write_text("SWE_GITHUB_TOKEN=vulnerable-token\n")
+        monkeypatch.setattr(Path, "cwd", lambda: cwd)
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) is None
+
+    def test_home_dotenv_used_when_workspace_dotenv_absent(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        home = tmp_path / "home"
+        home.mkdir(parents=True)
+        (home / ".env").write_text("SWE_GITHUB_TOKEN=home-token\n")
+        monkeypatch.setattr(Path, "home", lambda: home)
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) == "home-token"
+
+    def test_workspace_dotenv_takes_precedence_over_home_dotenv(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        (swe_dir / ".env").write_text("SWE_GITHUB_TOKEN=workspace-token\n")
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        home = tmp_path / "home"
+        home.mkdir(parents=True)
+        (home / ".env").write_text("SWE_GITHUB_TOKEN=home-token\n")
+        monkeypatch.setattr(Path, "home", lambda: home)
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) == "workspace-token"
+
 
 # ─── run_c_pr_status review branches ────────────────────────────────────────
 
