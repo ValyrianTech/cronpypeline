@@ -696,6 +696,10 @@ def _load_github_token(target_config: dict[str, Any]) -> str | None:
     Resolution order: per-repo ``github_token`` → ``SWE_GITHUB_TOKEN`` →
     ``GITHUB_TOKEN`` → ``.env`` file (via python-dotenv, if installed).
 
+    The ``.env`` file is searched in ``SWE_WORKSPACE_DIR/.env`` and
+    ``~/.env`` only, to avoid loading credentials from an untrusted
+    current working directory.
+
     :param target_config: Per-target config dict.
     :returns: Token string, or None.
     """
@@ -706,11 +710,10 @@ def _load_github_token(target_config: dict[str, Any]) -> str | None:
         val = os.environ.get(key, "")
         if val:
             return val
-    # Fallback: load .env file (check workspace parent dirs and CWD)
+    # Fallback: load .env file (workspace dir and home dir only)
     for env_file in (
-        SWE_WORKSPACE_DIR.parent.parent.parent / ".env",
-        SWE_WORKSPACE_DIR.parent.parent / ".env",
-        Path.cwd() / ".env",
+        SWE_WORKSPACE_DIR / ".env",
+        Path.home() / ".env",
     ):
         if not env_file.exists():
             continue

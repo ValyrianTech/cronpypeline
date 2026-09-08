@@ -5368,7 +5368,7 @@ class TestLoadGithubTokenDotenvFallback:
         from cronpypeline.plugins import swe_plugin
         swe_dir = tmp_path / "workspace" / "tasks" / "x"
         swe_dir.mkdir(parents=True)
-        env_file = swe_dir.parent.parent / ".env"
+        env_file = swe_dir / ".env"
         env_file.write_text("SWE_GITHUB_TOKEN=dotenv-token\n")
         monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
 
@@ -5388,7 +5388,7 @@ class TestLoadGithubTokenDotenvFallback:
         from cronpypeline.plugins import swe_plugin
         swe_dir = tmp_path / "workspace" / "tasks" / "x"
         swe_dir.mkdir(parents=True)
-        env_file = swe_dir.parent.parent / ".env"
+        env_file = swe_dir / ".env"
         env_file.write_text("SWE_GITHUB_TOKEN=dotenv-token\n")
         monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
         # dotenv is not installed → inline fallback parser still reads .env
