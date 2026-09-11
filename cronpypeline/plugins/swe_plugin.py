@@ -690,6 +690,64 @@ def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
 # ─── GitHub API helpers ─────────────────────────────────────────────────────
 
 
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    """Parse a .env file into a dict without mutating os.environ.
+
+    Simple line-based parser: skips blank lines, comment lines (starting with
+    ``#``), and lines without an ``=``.  Strips keys and values, strips
+    matching surrounding single or double quotes from values, and only keeps
+    entries whose key is a valid environment-variable name
+    (``^[A-Za-z_][A-Za-z0-9_]*$``).
+
+    :param path: Path to the .env file.
+    :returns: Dict mapping environment-variable names to values.
+    """
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip()
+        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+            val = val[1:-1]
+        if key and _ENV_KEY_RE.match(key):
+            values[key] = val
+    return values
+
+
+def _load_env_token(env_file: Path, keys: tuple[str, ...]) -> str | None:
+    """Read a token value from a .env file without mutating os.environ.
+
+    Uses ``dotenv_values`` from python-dotenv if available, otherwise falls
+    back to :func:`_parse_env_file`.  Returns the first truthy (post-strip)
+    value among ``keys``, in order, or None if none is present.
+
+    :param env_file: Path to the .env file.
+    :param keys: Environment-variable names to look for, in priority order.
+    :returns: Token string, or None.
+    """
+    try:
+        from dotenv import dotenv_values  # type: ignore[import-not-found]
+        values = dotenv_values(env_file)
+    except ImportError:
+        values = _parse_env_file(env_file)
+    for key in keys:
+        val = values.get(key)
+        if val is None:
+            continue
+        val = val.strip()
+        if val:
+            return val
+    return None
+
+
 def _load_github_token(target_config: dict[str, Any]) -> str | None:
     """Load a GitHub token from target_config or environment.
 
@@ -701,6 +759,9 @@ def _load_github_token(target_config: dict[str, Any]) -> str | None:
     directory is NOT searched, to avoid loading credentials from an
     untrusted CWD.
 
+    The ``.env`` file is read directly (never loaded into ``os.environ``), so
+    this function never mutates the process environment.
+
     :param target_config: Per-target config dict.
     :returns: Token string, or None.
     """
@@ -711,7 +772,7 @@ def _load_github_token(target_config: dict[str, Any]) -> str | None:
         val = os.environ.get(key, "")
         if val:
             return val
-    # Fallback: load .env file (workspace dir, parent dirs, and home dir)
+    # Fallback: read .env file (workspace dir, parent dirs, and home dir)
     env_candidates = [SWE_WORKSPACE_DIR / ".env"]
     parent = SWE_WORKSPACE_DIR.parent
     for _ in range(3):
@@ -721,39 +782,25 @@ def _load_github_token(target_config: dict[str, Any]) -> str | None:
     for env_file in env_candidates:
         if not env_file.exists():
             continue
-        _load_env_file(env_file)
-        for key in ("SWE_GITHUB_TOKEN", "GITHUB_TOKEN"):
-            val = os.environ.get(key, "")
-            if val:
-                return val
+        token = _load_env_token(env_file, ("SWE_GITHUB_TOKEN", "GITHUB_TOKEN"))
+        if token:
+            return token
     return None
 
 
 def _load_env_file(path: Path) -> None:
-    """Load environment variables from a .env file.
+    """Load environment variables from a .env file into ``os.environ``.
 
-    Uses python-dotenv if available, otherwise falls back to a simple parser.
+    Deprecated: retained only for backwards compatibility with callers and
+    tests that monkeypatch ``_load_env_file``.  The production code path no
+    longer calls this function; :func:`_load_github_token` now reads ``.env``
+    files directly via :func:`_load_env_token` without mutating the process
+    environment.
 
     :param path: Path to the .env file.
     """
-    try:
-        from dotenv import load_dotenv  # type: ignore[import-not-found]
-        load_dotenv(path, override=False)
-        return
-    except ImportError:
-        pass
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        key = key.strip()
-        val = val.strip()
-        if val.startswith('"') and val.endswith('"') or val.startswith("'") and val.endswith("'"):
-            val = val[1:-1]
-        if key and key not in os.environ:
+    for key, val in _parse_env_file(path).items():
+        if key not in os.environ:
             os.environ[key] = val
 
 
