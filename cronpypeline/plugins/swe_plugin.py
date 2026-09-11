@@ -1287,10 +1287,49 @@ def detect_c_issue_fix(context: dict[str, Any]) -> bool:
     repo_name = context.get("target", "")
     target_config = context.get("target_config", {})
 
-    # Active task always takes priority — the state machine must run to
-    # manage it (gate, stale cleanup, etc.) regardless of session state.
-    if _find_active_task(repo_name) is not None:
-        return True
+    # Active task takes priority — but only fire if there's actionable work.
+    # If the task is just waiting on an agent (no marker, not stale, no
+    # commits to gate), return False so the pipeline can move to other
+    # targets instead of monopolising every tick.
+    active = _find_active_task(repo_name)
+    if active is not None:
+        from cronpypeline.plugins.issue_fix import (
+            CODING_COMPLETE_MARKER,
+            _is_task_stale,
+            _read_task,
+            _task_created_at,
+        )
+        # Gate: agent wrote coding_complete.marker
+        if (active / CODING_COMPLETE_MARKER).exists():
+            return True
+        # Stale: cleanup + re-select needed
+        if _is_task_stale(active):
+            return True
+        # Corrupted task.json: cleanup needed
+        task = _read_task(active)
+        if task is None:
+            return True
+        # Agent-finished-but-forgot-marker: gate needed
+        issue_type = (task.get("issue_type") or "").lower()
+        task_age = (datetime.now(timezone.utc) -
+                    _task_created_at(active, task)).total_seconds() / 60
+        if task_age >= 2:
+            if issue_type == "review":
+                # Review agents don't commit — can't check queue from
+                # trigger context, so let the state machine handle it.
+                return True
+            # Non-review: check if agent committed but forgot marker
+            branch = task.get("branch", "")
+            if branch:
+                try:
+                    result = _git(target_dir, "log", "--oneline",
+                                  f"{INTEGRATION_BRANCH}..{branch}", check=False)
+                    if result.stdout.strip():
+                        return True
+                except OSError:
+                    pass
+        # Task is waiting on an agent — no actionable work this tick
+        return False
 
     session = _read_github_session(target_dir)
     if session is not None and session.get("active"):
@@ -1951,7 +1990,16 @@ def _build_pr_review_prompt(
         f"After a SUCCESSFUL post (verified by RunCommand output), write a "
         f"completion marker with WriteFile to:\n"
         f"  {marker_path}\n"
-        f'Content: {{"pr_number": {pr_number}, "reviewed_at": "<ISO timestamp>"}}\n\n'
+        f"Content (replace placeholder values):\n"
+        f'  {{"pr_number": {pr_number}, "reviewed_at": "<ISO timestamp>", '
+        f'"verdict": "<approve or changes_requested>", '
+        f'"change_requests": [<list of change request strings>]}}\n\n'
+        f"The \"verdict\" field MUST be exactly \"approve\" (if the PR is ready "
+        f"to merge) or \"changes_requested\" (if fixes are needed before "
+        f"merging). The \"change_requests\" field is a JSON array of "
+        f"individual change request strings — one per issue listed in the "
+        f"Issues & Concerns section. Use an empty array [] when the verdict "
+        f"is \"approve\".\n\n"
         f"Do NOT modify any source code and do NOT commit anything.\n"
     )
 
@@ -2119,15 +2167,38 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
             latest_comment = rev
 
     # Defensive fallback: treat COMMENTED review as CHANGES_REQUESTED when
-    # its body recommends changes.
+    # appropriate.  Prefer the structured verdict from pr_reviewed.json
+    # (written by the PRReviewAgent) over regex parsing of the review body.
     if latest_changes is None and latest_comment is not None:
-        body = latest_comment.get("body", "")
-        if re.search(
-            r"(?:changes?\s*(?:needed|required)\s*before\s*merg|"
-            r"request\s*changes?\b)",
-            body, re.IGNORECASE,
-        ):
+        reviewed_marker = target_dir / SWE_SUBDIR / "pr_reviewed.json"
+        marker_verdict = None
+        marker_change_requests: list[str] | None = None
+        if reviewed_marker.exists():
+            try:
+                reviewed_data = json.loads(
+                    reviewed_marker.read_text(encoding="utf-8"))
+                marker_verdict = reviewed_data.get("verdict")
+                marker_change_requests = reviewed_data.get("change_requests")
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        if marker_verdict == "changes_requested":
             latest_changes = latest_comment
+            if marker_change_requests is not None:
+                latest_changes = dict(latest_comment)
+                latest_changes["_structured_change_requests"] = (
+                    marker_change_requests)
+        elif marker_verdict == "approve":
+            latest_approve = latest_comment
+        elif marker_verdict is None:
+            # No structured verdict — fall back to regex for backward compat
+            body = latest_comment.get("body", "")
+            if re.search(
+                r"(?:changes?\s*(?:needed|required)\s*before\s*merg|"
+                r"request\s*changes?\b)",
+                body, re.IGNORECASE,
+            ):
+                latest_changes = latest_comment
 
     pr_state = pr_data.get("pr_state", "open")
     pr_cycles = pr_data.get("pr_review_cycles", 0)
@@ -2149,11 +2220,15 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                 return ActionResult(success=True, data={"pr_state": "changes_requested"})
 
             pr_cycles += 1
-            body = latest_changes.get("body", "")
-            from cronpypeline.plugins.swe_prompts import _parse_change_requests
-            requests_list = _parse_change_requests(body)
-            if not requests_list:
-                requests_list = [body.strip()] if body.strip() else []
+            structured_requests = latest_changes.get("_structured_change_requests")
+            if structured_requests:
+                requests_list = list(structured_requests)
+            else:
+                body = latest_changes.get("body", "")
+                from cronpypeline.plugins.swe_prompts import _parse_change_requests
+                requests_list = _parse_change_requests(body)
+                if not requests_list:
+                    requests_list = [body.strip()] if body.strip() else []
 
             filed_issues: list[str] = []
             if requests_list:
@@ -2238,7 +2313,13 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
             _update_marker("approved", last_review_id=review_id)
             return ActionResult(success=True, data={"pr_state": "approved"})
 
-    # Nothing actionable
+    # Nothing actionable — but if the marker still says "changes_requested"
+    # and there's no CHANGES_REQUESTED review anymore, clear it so stale
+    # revision issues don't keep being processed.
+    if pr_state == "changes_requested" and latest_changes is None:
+        _update_marker("open", filed_issues=[])
+        return ActionResult(success=True, data={"pr_state": "open"})
+
     return ActionResult(success=True, data={"pr_state": "open"})
 
 

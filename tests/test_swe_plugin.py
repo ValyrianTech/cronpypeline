@@ -1635,15 +1635,131 @@ class TestDetectCIssueFix:
         ctx = {"target_dir": str(target), "target": "repo"}
         assert detect_c_issue_fix(ctx) is True
 
-    def test_fires_when_active_task_exists(self, tmp_path, monkeypatch):
+    def test_does_not_fire_when_task_waiting_on_agent(self, tmp_path, monkeypatch):
+        """Active task with no marker, not stale, no commits → should not fire."""
         target = _make_target_dir(tmp_path)
         tasks_dir = tmp_path / "tasks"
         task_dir = tasks_dir / "2025-01-01" / "task-001"
         task_dir.mkdir(parents=True)
-        (task_dir / "task.json").write_text(json.dumps({"repo_name": "repo"}))
+        (task_dir / "task.json").write_text(json.dumps({
+            "repo_name": "repo",
+            "branch": "swe-pipeline/task_task-001",
+            "issue_type": "bug",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
+        # No coding_complete.marker, not stale, no commits on branch
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._git",
+                            lambda *a, **k: MagicMock(stdout=""))
+        ctx = {"target_dir": str(target), "target": "repo"}
+        assert detect_c_issue_fix(ctx) is False
+
+    def test_fires_when_active_task_has_coding_complete_marker(self, tmp_path, monkeypatch):
+        """Active task with coding_complete.marker → should fire (gate needed)."""
+        target = _make_target_dir(tmp_path)
+        tasks_dir = tmp_path / "tasks"
+        task_dir = tasks_dir / "2025-01-01" / "task-001"
+        task_dir.mkdir(parents=True)
+        (task_dir / "task.json").write_text(json.dumps({
+            "repo_name": "repo",
+            "issue_type": "bug",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        (task_dir / "coding_complete.marker").write_text("done")
         monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
         ctx = {"target_dir": str(target), "target": "repo"}
         assert detect_c_issue_fix(ctx) is True
+
+    def test_fires_when_active_task_is_stale(self, tmp_path, monkeypatch):
+        """Active task older than timeout → should fire (cleanup needed)."""
+        target = _make_target_dir(tmp_path)
+        tasks_dir = tmp_path / "tasks"
+        task_dir = tasks_dir / "2025-01-01" / "task-001"
+        task_dir.mkdir(parents=True)
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        (task_dir / "task.json").write_text(json.dumps({
+            "repo_name": "repo",
+            "issue_type": "bug",
+            "created_at": old_time,
+        }))
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
+        ctx = {"target_dir": str(target), "target": "repo"}
+        assert detect_c_issue_fix(ctx) is True
+
+    def test_fires_when_active_task_has_commits(self, tmp_path, monkeypatch):
+        """Active task with commits on branch (agent finished, forgot marker) → should fire."""
+        target = _make_target_dir(tmp_path)
+        tasks_dir = tmp_path / "tasks"
+        task_dir = tasks_dir / "2025-01-01" / "task-001"
+        task_dir.mkdir(parents=True)
+        old_time = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        (task_dir / "task.json").write_text(json.dumps({
+            "repo_name": "repo",
+            "branch": "swe-pipeline/task_task-001",
+            "issue_type": "bug",
+            "created_at": old_time,
+        }))
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
+        mock_git = MagicMock()
+        mock_git.stdout = "abc123 commit message"
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._git", lambda *a, **k: mock_git)
+        ctx = {"target_dir": str(target), "target": "repo"}
+        assert detect_c_issue_fix(ctx) is True
+
+    def test_fires_when_active_task_has_corrupted_task_json(self, tmp_path, monkeypatch):
+        """Active task where _read_task returns None (corrupted) → should fire (cleanup needed)."""
+        target = _make_target_dir(tmp_path)
+        tasks_dir = tmp_path / "tasks"
+        task_dir = tasks_dir / "2025-01-01" / "task-001"
+        task_dir.mkdir(parents=True)
+        (task_dir / "task.json").write_text(json.dumps({
+            "repo_name": "repo",
+            "issue_type": "bug",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
+        # Simulate _read_task returning None (corrupted between reads)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix._read_task", lambda d: None)
+        ctx = {"target_dir": str(target), "target": "repo"}
+        assert detect_c_issue_fix(ctx) is True
+
+    def test_fires_when_review_task_age_over_2_min(self, tmp_path, monkeypatch):
+        """Active review task older than 2 min → should fire (state machine handles it)."""
+        target = _make_target_dir(tmp_path)
+        tasks_dir = tmp_path / "tasks"
+        task_dir = tasks_dir / "2025-01-01" / "task-001"
+        task_dir.mkdir(parents=True)
+        old_time = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        (task_dir / "task.json").write_text(json.dumps({
+            "repo_name": "repo",
+            "issue_type": "review",
+            "created_at": old_time,
+        }))
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
+        ctx = {"target_dir": str(target), "target": "repo"}
+        assert detect_c_issue_fix(ctx) is True
+
+    def test_does_not_fire_when_git_raises_oserror(self, tmp_path, monkeypatch):
+        """Active task with branch but git raises OSError → should not fire."""
+        target = _make_target_dir(tmp_path)
+        tasks_dir = tmp_path / "tasks"
+        task_dir = tasks_dir / "2025-01-01" / "task-001"
+        task_dir.mkdir(parents=True)
+        old_time = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        (task_dir / "task.json").write_text(json.dumps({
+            "repo_name": "repo",
+            "branch": "swe-pipeline/task_task-001",
+            "issue_type": "bug",
+            "created_at": old_time,
+        }))
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
+
+        def _raise_oserror(*a, **k):
+            raise OSError("git not found")
+
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._git", _raise_oserror)
+        ctx = {"target_dir": str(target), "target": "repo"}
+        assert detect_c_issue_fix(ctx) is False
 
     def test_does_not_fire_when_active_session(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
@@ -1690,6 +1806,7 @@ class TestDetectCIssueFix:
         task_dir = tasks_dir / "2025-01-01" / "task-001"
         task_dir.mkdir(parents=True)
         (task_dir / "task.json").write_text(json.dumps({"repo_name": "repo"}))
+        (task_dir / "coding_complete.marker").write_text("done")
         monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
         ctx = {"target_dir": str(target), "target": "repo"}
         assert detect_c_issue_fix(ctx) is True
@@ -5622,6 +5739,109 @@ class TestRunCPrStatusReviews:
         assert result.success is True
         assert result.data["pr_state"] == "changes_requested"
 
+    def test_structured_marker_changes_requested(self, tmp_path, monkeypatch):
+        """Marker with verdict=changes_requested → file revision issues from change_requests."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        (target / ".SWE" / "pr_reviewed.json").write_text(json.dumps({
+            "pr_number": 7,
+            "reviewed_at": "2026-09-11T20:00:00Z",
+            "verdict": "changes_requested",
+            "change_requests": ["Fix the ordering bug", "Add init_db call"],
+        }))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 102, "state": "COMMENTED", "body": "### Recommendation\n\nChanges needed before merging."}])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "changes_requested"
+        issues = sorted((target / ".SWE" / "issues").glob("pr-revision-7-*.md"))
+        assert len(issues) == 2
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["filed_issues"] == ["pr-revision-7-1", "pr-revision-7-2"]
+
+    def test_structured_marker_approve_overrides_regex(self, tmp_path, monkeypatch):
+        """Marker with verdict=approve should NOT trigger changes_requested
+        even when the review body contains 'changes needed before merging'."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        (target / ".SWE" / "pr_reviewed.json").write_text(json.dumps({
+            "pr_number": 7,
+            "reviewed_at": "2026-09-11T20:00:00Z",
+            "verdict": "approve",
+            "change_requests": [],
+        }))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 103, "state": "COMMENTED", "body": "No changes needed before merging."}])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "approved"
+        assert not list((target / ".SWE" / "issues").glob("pr-revision-*.md"))
+
+    def test_regex_fallback_when_marker_has_no_verdict(self, tmp_path, monkeypatch):
+        """Old marker without verdict field → fall back to regex parsing."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        (target / ".SWE" / "pr_reviewed.json").write_text(json.dumps({
+            "pr_number": 7,
+            "reviewed_at": "2026-09-11T20:00:00Z",
+        }))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 104, "state": "COMMENTED", "body": "Changes needed before merging."}])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "changes_requested"
+
+    def test_regex_fallback_when_marker_corrupt_json(self, tmp_path, monkeypatch):
+        """Corrupt pr_reviewed.json → fall back to regex parsing."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        (target / ".SWE" / "pr_reviewed.json").write_text("not valid json{{{")
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 106, "state": "COMMENTED", "body": "Changes needed before merging."}])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "changes_requested"
+
+    def test_stale_changes_requested_cleared_when_no_changes_review(self, tmp_path, monkeypatch):
+        """pr_state=changes_requested but no CHANGES_REQUESTED review → clear to open."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7,
+            "pr_state": "changes_requested",
+            "last_review_id": 105,
+            "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 1,
+        }))
+        (target / ".SWE" / "pr_reviewed.json").write_text(json.dumps({
+            "pr_number": 7,
+            "reviewed_at": "2026-09-11T20:00:00Z",
+            "verdict": "approve",
+            "change_requests": [],
+        }))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 105, "state": "COMMENTED", "body": "Looks good."}])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["pr_state"] == "open"
+        assert pr_data["filed_issues"] == []
+
     def test_changes_requested_cycle_limit(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
@@ -6714,6 +6934,7 @@ class TestDetectCIssueFixBatch:
         task_dir = tasks_dir / "2025-01-01" / "task-001"
         task_dir.mkdir(parents=True)
         (task_dir / "task.json").write_text(json.dumps({"repo_name": "repo"}))
+        (task_dir / "coding_complete.marker").write_text("done")
         monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
         ctx = {"target_dir": str(target), "target": "repo", "target_config": {"issues_per_pr": 1}}
         assert detect_c_issue_fix(ctx) is True
