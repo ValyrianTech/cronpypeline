@@ -61,3 +61,20 @@ class TestBuildSystemConfig:
     def test_build_backend_is_setuptools(self):
         data = _load_pyproject()
         assert data["build-system"]["build-backend"] == "setuptools.build_meta"
+
+
+class TestProjectReadmeConfig:
+    """Tests for the [project] readme field in pyproject.toml."""
+
+    def test_readme_equals_readme_md(self):
+        data = _load_pyproject()
+        assert data["project"]["readme"] == "README.md"
+
+    def test_readme_file_exists_on_disk(self):
+        data = _load_pyproject()
+        readme = data["project"]["readme"]
+        assert (PYPROJECT_PATH.parent / readme).exists()
+
+    def test_readme_is_plain_string(self):
+        data = _load_pyproject()
+        assert isinstance(data["project"]["readme"], str)
