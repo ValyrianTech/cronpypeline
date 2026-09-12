@@ -7585,3 +7585,64 @@ class TestRunCPrStatusRetryIntegration:
         saved = json.loads((target / ".SWE" / "github_session.json").read_text())
         assert saved["gh_close_pending"] is True
         assert saved["active"] is True
+
+
+class TestGhClosePendingSecondTick:
+    """Simulate two full ticks: tick 1 fails the real close, tick 2 retries it."""
+
+    def _merged_pr_resp(self):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "state": "closed", "merged": True, "merged_at": "2025-01-01T00:00:00Z",
+            "html_url": "https://github.com/owner/repo/pull/7",
+        }).encode()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
+    def test_deferred_close_completes_on_second_tick(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.PR_POLL_COOLDOWN_SECONDS", 0)
+
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "github_number": 42, "issue_id": "github-42"})
+        )
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7, "pr_state": "merged", "pr_url": "https://x/pull/7"})
+        )
+        create_issue(
+            target,
+            issue_data={"id": "github-42", "status": "open", "type": "bug"},
+            body="# Issue",
+        )
+        ctx = _make_tick_context(target, slug="owner/repo")
+
+        # Tick 1: the real comment POST and issue PATCH both fail.
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=self._merged_pr_resp()), \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_post", return_value=None), \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_patch", return_value=None):
+            run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+
+        assert detect_c_pr_status(
+            {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        ) is True
+        saved = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert saved["gh_close_pending"] is True
+        assert saved["active"] is True
+        assert saved.get("completed") is not True
+
+        # Tick 2: the deferred close now succeeds.
+        with patch("cronpypeline.plugins.swe_plugin._gh_api_post", return_value={"id": 1}), \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_patch", return_value={"number": 42, "state": "closed"}) as mock_patch:
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+
+        assert result.success is True
+        assert result.data["retried_close"] is True
+        assert result.data["close_succeeded"] is True
+        saved = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert saved["active"] is False
+        assert saved["completed"] is True
+        assert "completed_at" in saved
+        assert "gh_close_pending" not in saved
+        mock_patch.assert_called_once()
