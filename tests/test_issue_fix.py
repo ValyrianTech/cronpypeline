@@ -2100,6 +2100,23 @@ class TestIsQueueEmpty:
         ctx.pipeline.config.action_handler.params = {"queue_dir": str(queue_file)}
         assert _is_queue_empty(ctx) is False
 
+    def test_existing_empty_dir(self, tmp_path):
+        ctx = _make_tick_context(tmp_path)
+        ctx.pipeline = MagicMock()
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        ctx.pipeline.config.action_handler.params = {"queue_dir": str(queue_dir)}
+        assert _is_queue_empty(ctx) is True
+
+    def test_existing_nonempty_dir(self, tmp_path):
+        ctx = _make_tick_context(tmp_path)
+        ctx.pipeline = MagicMock()
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        (queue_dir / "entry.json").write_text("{}")
+        ctx.pipeline.config.action_handler.params = {"queue_dir": str(queue_dir)}
+        assert _is_queue_empty(ctx) is False
+
 
 # ─── Remaining edge cases for 100% coverage ──────────────────────────────────
 
