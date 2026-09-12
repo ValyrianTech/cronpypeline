@@ -13,6 +13,9 @@ except ImportError:  # pragma: no cover - Python < 3.11
 
 PYPROJECT_PATH = Path(__file__).parent.parent / "pyproject.toml"
 
+# Intentionally-pinned expected value from pyproject.toml's [project] readme field.
+EXPECTED_README = "README.md"
+
 
 def _load_pyproject():
     with open(PYPROJECT_PATH, "rb") as f:
@@ -61,3 +64,21 @@ class TestBuildSystemConfig:
     def test_build_backend_is_setuptools(self):
         data = _load_pyproject()
         assert data["build-system"]["build-backend"] == "setuptools.build_meta"
+
+
+class TestProjectReadmeConfig:
+    """Tests for the [project] readme field in pyproject.toml."""
+
+    def test_readme_equals_readme_md(self):
+        # Value is deliberately pinned to the exact intended readme filename.
+        data = _load_pyproject()
+        assert data["project"]["readme"] == EXPECTED_README
+
+    def test_readme_file_exists_on_disk(self):
+        data = _load_pyproject()
+        readme = data["project"]["readme"]
+        assert (PYPROJECT_PATH.parent / readme).exists()
+
+    def test_readme_is_plain_string(self):
+        data = _load_pyproject()
+        assert isinstance(data["project"]["readme"], str)

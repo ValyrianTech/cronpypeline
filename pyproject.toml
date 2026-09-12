@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "cronpypeline"
 version = "0.1.0"
 description = "A Python library for building cron-friendly, stateful, multi-stage agentic pipelines driven by JSON configuration."
-readme = "PRD.md"
+readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Wouter"}]
