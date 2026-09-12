@@ -1954,7 +1954,7 @@ class TestRunIssueFixStateMachine:
             assert run_issue_fix_state_machine(t, "repo", {}, _make_tick_context(t), verbose=True) is True
 
     def test_review_agent_forgot_marker_queue_empty(self, tmp_path, monkeypatch):
-        """Review agent finished (queue empty) but forgot marker — should gate."""
+        """Review agent finished (queue empty) but forgot marker — should wait, not gate."""
         t = _make_target_dir(tmp_path)
         _write_issue(t / ".SWE" / "issues", "rev-1", status="open", source="review", type="review")
         _init_git(t)
@@ -1976,7 +1976,7 @@ class TestRunIssueFixStateMachine:
         ctx.pipeline = MagicMock()
         ctx.pipeline.config.action_handler.params = {"queue_dir": str(queue_dir)}
         assert run_issue_fix_state_machine(t, "repo", {}, ctx, verbose=True) is True
-        assert (td / GATE_RESULT_FILE).exists()
+        assert not (td / GATE_RESULT_FILE).exists()
 
     def test_review_agent_forgot_marker_queue_busy(self, tmp_path, monkeypatch):
         """Review agent still running (queue non-empty) — should wait, not gate."""
@@ -2005,7 +2005,7 @@ class TestRunIssueFixStateMachine:
         assert not (td / GATE_RESULT_FILE).exists()
 
     def test_review_agent_forgot_marker_queue_empty_dry_run(self, tmp_path, monkeypatch):
-        """Review agent finished (queue empty) + dry_run — should gate without writing."""
+        """Review agent finished (queue empty) + dry_run — should wait, not gate."""
         t = _make_target_dir(tmp_path)
         _write_issue(t / ".SWE" / "issues", "rev-1", status="open", source="review", type="review")
         _init_git(t)

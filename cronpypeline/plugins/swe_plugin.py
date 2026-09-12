@@ -1313,11 +1313,7 @@ def detect_c_issue_fix(context: dict[str, Any]) -> bool:
         issue_type = (task.get("issue_type") or "").lower()
         task_age = (datetime.now(timezone.utc) -
                     _task_created_at(active, task)).total_seconds() / 60
-        if task_age >= 2:
-            if issue_type == "review":
-                # Review agents don't commit — can't check queue from
-                # trigger context, so let the state machine handle it.
-                return True
+        if task_age >= 2 and issue_type != "review":
             # Non-review: check if agent committed but forgot marker
             branch = task.get("branch", "")
             if branch:

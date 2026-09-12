@@ -1374,15 +1374,7 @@ def run_issue_fix_state_machine(repo_dir: Path, repo_name: str,
             return True
         task_age = (datetime.now(timezone.utc) -
                     _task_created_at(active, task)).total_seconds() / 60
-        if task_age >= 2 and task.get("issue_type") == "review":
-            # Review agents don't commit — check if the queue is empty instead
-            if _is_queue_empty(context):
-                if not dry_run:
-                    if verbose:
-                        print(f"  {repo_name}: review agent queue empty — gating")
-                    return run_gate(repo_dir, active, repo_name, dry_run=False, verbose=verbose)
-                return True
-        elif task_age >= 2 and task.get("issue_type") != "review":
+        if task_age >= 2 and task.get("issue_type") != "review":
             branch = task.get("branch", "")
             has_commits = False
             if branch:

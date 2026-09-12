@@ -1723,8 +1723,8 @@ class TestDetectCIssueFix:
         ctx = {"target_dir": str(target), "target": "repo"}
         assert detect_c_issue_fix(ctx) is True
 
-    def test_fires_when_review_task_age_over_2_min(self, tmp_path, monkeypatch):
-        """Active review task older than 2 min → should fire (state machine handles it)."""
+    def test_does_not_fire_when_review_task_age_over_2_min_no_marker(self, tmp_path, monkeypatch):
+        """Active review task older than 2 min without marker → should NOT fire (requires marker)."""
         target = _make_target_dir(tmp_path)
         tasks_dir = tmp_path / "tasks"
         task_dir = tasks_dir / "2025-01-01" / "task-001"
@@ -1737,7 +1737,7 @@ class TestDetectCIssueFix:
         }))
         monkeypatch.setattr("cronpypeline.plugins.swe_plugin.TASKS_DIR", tasks_dir)
         ctx = {"target_dir": str(target), "target": "repo"}
-        assert detect_c_issue_fix(ctx) is True
+        assert detect_c_issue_fix(ctx) is False
 
     def test_does_not_fire_when_git_raises_oserror(self, tmp_path, monkeypatch):
         """Active task with branch but git raises OSError → should not fire."""
