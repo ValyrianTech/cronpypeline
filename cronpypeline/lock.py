@@ -68,14 +68,22 @@ class FileLock:
             break
 
         self._fd = fd
-        self._acquired = True
 
         # Write PID and timestamp for debugging
-        content = f"pid:{os.getpid()}\ntimestamp:{time.time()}\n"
-        os.ftruncate(fd, 0)
-        os.write(fd, content.encode())
-        os.fsync(fd)
+        try:
+            content = f"pid:{os.getpid()}\ntimestamp:{time.time()}\n"
+            os.ftruncate(fd, 0)
+            os.write(fd, content.encode())
+            os.fsync(fd)
+        except OSError:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+                self._fd = None
+            raise
 
+        self._acquired = True
         return True
 
     def release(self) -> None:
