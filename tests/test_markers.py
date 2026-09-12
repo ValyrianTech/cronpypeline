@@ -315,6 +315,21 @@ class TestDynamicMarkerNaming:
         delete_marker(m, tmp_path, context={"target": "repo1"})
         assert not (tmp_path / "repo1_done.marker").exists()
 
+    def test_resolve_path_unknown_placeholder_in_name_raises(self, tmp_path):
+        m = MarkerSpec(name="{targt}.marker", type=MarkerType.FILE, directory=".")
+        with pytest.raises(KeyError):
+            m.resolve_path(tmp_path, context={"target": "x"})
+
+    def test_resolve_path_unknown_placeholder_in_directory_raises(self, tmp_path):
+        m = MarkerSpec(name="done.marker", type=MarkerType.FILE, directory="{targt}")
+        with pytest.raises(KeyError):
+            m.resolve_path(tmp_path, context={"target": "x"})
+
+    def test_resolve_target_unknown_placeholder_raises(self):
+        m = MarkerSpec(name="latest.md", type=MarkerType.SYMLINK, directory="reports", target="{targt}.md")
+        with pytest.raises(KeyError):
+            m.resolve_target(context={"target": "x"})
+
 
 class TestMarkerSpecResolveTarget:
     """Tests for MarkerSpec.resolve_target edge cases."""
@@ -392,18 +407,21 @@ class TestFormatTemplate:
         from cronpypeline.markers import _format_template
         assert _format_template("hello {name}", {"name": "world"}) == "hello world"
 
-    def test_key_error_returns_template(self):
+    def test_missing_key_raises_key_error(self):
         from cronpypeline.markers import _format_template
-        assert _format_template("hello {missing}", {"name": "world"}) == "hello {missing}"
+        with pytest.raises(KeyError):
+            _format_template("hello {missing}", {"name": "world"})
 
-    def test_index_error_returns_template(self):
+    def test_index_error_raises(self):
         from cronpypeline.markers import _format_template
-        assert _format_template("item {0}", {}) == "item {0}"
+        with pytest.raises((IndexError, KeyError)):
+            _format_template("item {0}", {})
 
-    def test_value_error_returns_template(self):
+    def test_value_error_raises(self):
         from cronpypeline.markers import _format_template
         # Invalid format spec causes ValueError
-        assert _format_template("{:bad}", {}) == "{:bad}"
+        with pytest.raises(ValueError):
+            _format_template("{name:bad}", {"name": "x"})
 
 
 class TestPathTraversalProtection:
