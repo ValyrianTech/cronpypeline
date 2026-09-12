@@ -53,6 +53,19 @@ GIT_BIN = shutil.which("git") or "git"
 _GH_OPENER = urllib.request.build_opener(NoRedirectHandler())
 
 
+class _GhPostAccepted:
+    """Sentinel returned by :func:`_gh_api_post` for an accepted-but-unparseable POST.
+
+    Indicates the server returned an expected (2xx) status but the response
+    body could not be JSON-decoded. It is distinct from ``None`` (a definite
+    failure), so callers can tell an accepted request apart from one that is
+    safe to retry.
+    """
+
+
+_GH_POST_ACCEPTED = _GhPostAccepted()
+
+
 def _parse_utc_datetime(s: str) -> datetime | None:
     """Parse an ISO datetime string, normalizing naive datetimes to UTC.
 
@@ -870,7 +883,7 @@ def _gh_api_get_list(
 def _gh_api_post(
     owner: str, gh_repo: str, endpoint: str, payload: dict, token: str,
     expected_statuses: tuple[int, ...] = (201,),
-) -> dict[str, Any] | None:
+) -> dict[str, Any] | _GhPostAccepted | None:
     """POST to the GitHub REST API.
 
     :param owner: Repo owner.
@@ -879,7 +892,12 @@ def _gh_api_post(
     :param payload: JSON body dict.
     :param token: GitHub auth token.
     :param expected_statuses: HTTP status codes considered success.
-    :returns: Response JSON dict, or None on error.
+    :returns: Response JSON dict on a successful decode, ``None`` when the
+        request failed (an exception was raised) or the server returned an
+        unexpected status, or :data:`_GH_POST_ACCEPTED` when the server
+        returned an expected status but the response body could not be
+        JSON-decoded (e.g. a body-less 200/201). The sentinel reflects that
+        the server-side side-effect of the POST has still occurred.
     """
     url = f"https://api.github.com/repos/{owner}/{gh_repo}/{endpoint}"
     headers = {
@@ -892,9 +910,19 @@ def _gh_api_post(
         body = json.dumps(payload).encode("utf-8")
         req = Request(url, data=body, headers=headers, method="POST")
         with _GH_OPENER.open(req, timeout=30) as resp:  # nosec B310 - HTTPS URL to GitHub API
-            if resp.status in expected_statuses:
-                return json.loads(resp.read().decode("utf-8"))
-            return None
+            if resp.status not in expected_statuses:
+                return None
+            raw = resp.read()
+            try:
+                return json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                print(
+                    f"[gh] POST {endpoint} accepted (status {resp.status}) "
+                    "but response body could not be JSON-decoded; "
+                    "treating as accepted",
+                    file=sys.stderr,
+                )
+                return _GH_POST_ACCEPTED
     except (HTTPError, URLError, OSError) as e:
         _gh_log_failure("POST", endpoint, e)
         return None
@@ -1745,6 +1773,10 @@ def _close_and_comment_github_issue(
     )
     if posted is None:
         return False
+    # A _GH_POST_ACCEPTED sentinel means the comment POST returned an expected
+    # 2xx status (the comment was posted server-side) but its body couldn't be
+    # JSON-decoded. Treat that as a successful post so a retry does NOT
+    # re-post a duplicate comment.
     if merged:
         closed = _gh_api_patch(
             owner, gh_repo, f"issues/{gh_issue_number}",

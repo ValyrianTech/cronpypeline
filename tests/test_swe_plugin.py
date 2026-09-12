@@ -21,6 +21,7 @@ from cronpypeline.plugins.issue_store import create_issue
 from cronpypeline.plugins.swe_plugin import (
     INTEGRATION_BRANCH,
     PR_POLL_COOLDOWN_SECONDS,
+    _GH_POST_ACCEPTED,
     _a1_is_pass,
     _a7_coverage_pct,
     _batch_fixed_count,
@@ -1057,6 +1058,47 @@ class TestGhApiPost:
         assert result is None
         captured = capsys.readouterr()
         assert "[gh] POST issues failed" in captured.err
+
+    def test_returns_sentinel_on_empty_body_with_expected_status(self):
+        mock_resp = MagicMock()
+        mock_resp.status = 201
+        mock_resp.read.return_value = b""
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp):
+            result = _gh_api_post(
+                "owner", "repo", "issues/1/comments", {"body": "x"}, "token",
+                expected_statuses=(200, 201),
+            )
+        assert result is _GH_POST_ACCEPTED
+
+    def test_returns_sentinel_on_unparseable_body_with_expected_status(self):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b"not json"
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp):
+            result = _gh_api_post(
+                "owner", "repo", "issues/1/comments", {"body": "x"}, "token",
+                expected_statuses=(200, 201),
+            )
+        assert result is _GH_POST_ACCEPTED
+
+    def test_logs_decode_failure_to_stderr(self, capsys):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b""
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=mock_resp):
+            result = _gh_api_post(
+                "owner", "repo", "issues/1/comments", {"body": "x"}, "token",
+                expected_statuses=(200, 201),
+            )
+        assert result is _GH_POST_ACCEPTED
+        captured = capsys.readouterr()
+        assert "[gh] POST issues/1/comments accepted" in captured.err
 
 
 # ─── _gh_api_patch ──────────────────────────────────────────────────────────
@@ -2200,6 +2242,22 @@ class TestCloseAndCommentGithubIssue:
     def test_not_merged_patch_failure_irrelevant(self):
         with patch("cronpypeline.plugins.swe_plugin._gh_api_post", return_value={"id": 1}) as mock_post, \
              patch("cronpypeline.plugins.swe_plugin._gh_api_patch", return_value=None) as mock_patch:
+            result = _close_and_comment_github_issue("owner", "repo", 42, 7, "https://github.com/owner/repo/pull/7", "token", merged=False)
+        assert result is True
+        mock_post.assert_called_once()
+        mock_patch.assert_not_called()
+
+    def test_merged_sentinel_treated_as_posted(self):
+        with patch("cronpypeline.plugins.swe_plugin._gh_api_post", return_value=_GH_POST_ACCEPTED) as mock_post, \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_patch", return_value={"state": "closed"}) as mock_patch:
+            result = _close_and_comment_github_issue("owner", "repo", 42, 7, "https://github.com/owner/repo/pull/7", "token", merged=True)
+        assert result is True
+        mock_post.assert_called_once()
+        mock_patch.assert_called_once()
+
+    def test_not_merged_sentinel_treated_as_posted(self):
+        with patch("cronpypeline.plugins.swe_plugin._gh_api_post", return_value=_GH_POST_ACCEPTED) as mock_post, \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_patch") as mock_patch:
             result = _close_and_comment_github_issue("owner", "repo", 42, 7, "https://github.com/owner/repo/pull/7", "token", merged=False)
         assert result is True
         mock_post.assert_called_once()
