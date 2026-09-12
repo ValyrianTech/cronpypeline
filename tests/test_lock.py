@@ -270,3 +270,106 @@ class TestFileLockErrorHandling:
         ):
             assert lock.acquire() is False
         assert lock.is_acquired is False
+
+
+class TestFileLockMetadataWriteFailure:
+    """Tests for rollback when writing PID/timestamp metadata fails."""
+
+    def _recording_close(self):
+        """Patch os.close to record closed fds while still closing them."""
+        closed_fds = []
+        real_close = os.close
+
+        def recording_close(fd):
+            closed_fds.append(fd)
+            real_close(fd)
+
+        return closed_fds, mock.patch(
+            "cronpypeline.lock.os.close", side_effect=recording_close
+        )
+
+    def _assert_fd_closed(self, fd):
+        import pytest
+
+        with pytest.raises(OSError) as exc_info:
+            os.fstat(fd)
+        assert exc_info.value.errno == errno.EBADF
+
+    def test_write_oserror_rolls_back_and_closes_fd(self, tmp_path):
+        import pytest
+
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        closed_fds, close_patch = self._recording_close()
+        with mock.patch(
+            "cronpypeline.lock.os.write",
+            side_effect=OSError(errno.ENOSPC, "No space left on device"),
+        ):
+            with close_patch:
+                with pytest.raises(OSError) as exc_info:
+                    lock.acquire()
+                assert exc_info.value.errno == errno.ENOSPC
+
+        assert lock.is_acquired is False
+        assert lock._fd is None
+        assert len(closed_fds) == 1
+        self._assert_fd_closed(closed_fds[0])
+
+    def test_ftruncate_oserror_rolls_back_and_closes_fd(self, tmp_path):
+        import pytest
+
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        closed_fds, close_patch = self._recording_close()
+        with mock.patch(
+            "cronpypeline.lock.os.ftruncate",
+            side_effect=OSError(errno.ENOSPC, "No space left on device"),
+        ):
+            with close_patch:
+                with pytest.raises(OSError) as exc_info:
+                    lock.acquire()
+                assert exc_info.value.errno == errno.ENOSPC
+
+        assert lock.is_acquired is False
+        assert lock._fd is None
+        assert len(closed_fds) == 1
+        self._assert_fd_closed(closed_fds[0])
+
+    def test_fsync_oserror_rolls_back_and_closes_fd(self, tmp_path):
+        import pytest
+
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        closed_fds, close_patch = self._recording_close()
+        with mock.patch(
+            "cronpypeline.lock.os.fsync",
+            side_effect=OSError(errno.ENOSPC, "No space left on device"),
+        ):
+            with close_patch:
+                with pytest.raises(OSError) as exc_info:
+                    lock.acquire()
+                assert exc_info.value.errno == errno.ENOSPC
+
+        assert lock.is_acquired is False
+        assert lock._fd is None
+        assert len(closed_fds) == 1
+        self._assert_fd_closed(closed_fds[0])
+
+    def test_acquire_succeeds_after_failed_metadata_write(self, tmp_path):
+        import pytest
+
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        with mock.patch(
+            "cronpypeline.lock.os.write",
+            side_effect=OSError(errno.ENOSPC, "No space left on device"),
+        ):
+            with pytest.raises(OSError):
+                lock.acquire()
+        assert lock.is_acquired is False
+        assert lock._fd is None
+
+        lock2 = FileLock(lock_file)
+        assert lock2.acquire() is True
+        assert lock2.is_acquired is True
+        lock2.release()
