@@ -304,11 +304,10 @@ class TestFileLockMetadataWriteFailure:
         with mock.patch(
             "cronpypeline.lock.os.write",
             side_effect=OSError(errno.ENOSPC, "No space left on device"),
-        ):
-            with close_patch:
-                with pytest.raises(OSError) as exc_info:
-                    lock.acquire()
-                assert exc_info.value.errno == errno.ENOSPC
+        ), close_patch:
+            with pytest.raises(OSError) as exc_info:
+                lock.acquire()
+            assert exc_info.value.errno == errno.ENOSPC
 
         assert lock.is_acquired is False
         assert lock._fd is None
@@ -324,11 +323,10 @@ class TestFileLockMetadataWriteFailure:
         with mock.patch(
             "cronpypeline.lock.os.ftruncate",
             side_effect=OSError(errno.ENOSPC, "No space left on device"),
-        ):
-            with close_patch:
-                with pytest.raises(OSError) as exc_info:
-                    lock.acquire()
-                assert exc_info.value.errno == errno.ENOSPC
+        ), close_patch:
+            with pytest.raises(OSError) as exc_info:
+                lock.acquire()
+            assert exc_info.value.errno == errno.ENOSPC
 
         assert lock.is_acquired is False
         assert lock._fd is None
@@ -344,11 +342,10 @@ class TestFileLockMetadataWriteFailure:
         with mock.patch(
             "cronpypeline.lock.os.fsync",
             side_effect=OSError(errno.ENOSPC, "No space left on device"),
-        ):
-            with close_patch:
-                with pytest.raises(OSError) as exc_info:
-                    lock.acquire()
-                assert exc_info.value.errno == errno.ENOSPC
+        ), close_patch:
+            with pytest.raises(OSError) as exc_info:
+                lock.acquire()
+            assert exc_info.value.errno == errno.ENOSPC
 
         assert lock.is_acquired is False
         assert lock._fd is None
@@ -363,9 +360,8 @@ class TestFileLockMetadataWriteFailure:
         with mock.patch(
             "cronpypeline.lock.os.write",
             side_effect=OSError(errno.ENOSPC, "No space left on device"),
-        ):
-            with pytest.raises(OSError):
-                lock.acquire()
+        ), pytest.raises(OSError):
+            lock.acquire()
         assert lock.is_acquired is False
         assert lock._fd is None
 
