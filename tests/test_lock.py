@@ -1,7 +1,9 @@
 """Tests for cronpypeline.lock — FileLock (fcntl-based, non-blocking)."""
 
+import errno
 import os
 import time
+from unittest import mock
 
 from cronpypeline.lock import FileLock
 
@@ -215,4 +217,56 @@ class TestFileLockIsAcquired:
         lock = FileLock(lock_file)
         lock.acquire()
         lock.release()
+        assert lock.is_acquired is False
+
+
+class TestFileLockErrorHandling:
+    """Tests for flock error handling in FileLock.acquire."""
+
+    def test_flock_eintr_is_retried_then_succeeds(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        with mock.patch(
+            "cronpypeline.lock.fcntl.flock",
+            side_effect=[OSError(errno.EINTR, "Interrupted system call"), None],
+        ) as mocked_flock:
+            assert lock.acquire() is True
+            assert lock.is_acquired is True
+            assert mocked_flock.call_count == 2
+        lock.release()
+
+    def test_flock_unexpected_oserror_is_reraised(self, tmp_path):
+        import pytest
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        with mock.patch(
+            "cronpypeline.lock.fcntl.flock",
+            side_effect=OSError(errno.ENOLCK, "No locks available"),
+        ):
+            with pytest.raises(OSError) as exc_info:
+                lock.acquire()
+            assert exc_info.value.errno == errno.ENOLCK
+        assert lock.is_acquired is False
+
+    def test_flock_badf_is_reraised(self, tmp_path):
+        import pytest
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        with mock.patch(
+            "cronpypeline.lock.fcntl.flock",
+            side_effect=OSError(errno.EBADF, "Bad file descriptor"),
+        ):
+            with pytest.raises(OSError) as exc_info:
+                lock.acquire()
+            assert exc_info.value.errno == errno.EBADF
+        assert lock.is_acquired is False
+
+    def test_flock_contention_returns_false(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        lock = FileLock(lock_file)
+        with mock.patch(
+            "cronpypeline.lock.fcntl.flock",
+            side_effect=BlockingIOError(errno.EAGAIN, "Try again"),
+        ):
+            assert lock.acquire() is False
         assert lock.is_acquired is False
