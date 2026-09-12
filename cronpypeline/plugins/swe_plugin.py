@@ -2067,7 +2067,9 @@ def detect_c_pr_status(context: dict[str, Any]) -> bool:
         return False
     pr_state = pr_data.get("pr_state", "open")
     if pr_state in ("merged", "rejected"):
-        return False
+        session = _read_github_session(target_dir)
+        if not (session is not None and session.get("active") and session.get("gh_close_pending")):
+            return False
 
     # Cooldown: don't poll more often than the configured interval
     last_polled = pr_data.get("last_polled_at", "")
@@ -2084,6 +2086,71 @@ def detect_c_pr_status(context: dict[str, Any]) -> bool:
 
     slug = (target_config.get("slug") or "").strip()
     return "/" in slug
+
+
+def _retry_pending_github_close(
+    target_dir: Path, target_config: dict[str, Any], token: str,
+    owner: str, gh_repo_name: str,
+) -> ActionResult | None:
+    """Retry a previously-failed GitHub issue close for a terminal PR.
+
+    Reads the GitHub session; when ``gh_close_pending`` is set and the PR
+    marker records a terminal state (``merged``/``rejected``), re-attempts
+    the comment + close. Returns an ActionResult when it handled the retry
+    (whether the close succeeded or not), or None when there is nothing to
+    retry so the caller can continue with normal status handling.
+
+    :param target_dir: Target repo directory.
+    :param target_config: Per-target config dict (unused; kept for symmetry).
+    :param token: GitHub auth token.
+    :param owner: Repo owner.
+    :param gh_repo_name: Repo name on GitHub.
+    :returns: ActionResult if a retry was attempted, else None.
+    """
+    session = _read_github_session(target_dir)
+    if session is None or not session.get("active"):
+        return None
+    if not session.get("gh_close_pending"):
+        return None
+
+    pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
+    if not pr_marker.exists():
+        return None
+    try:
+        pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    pr_state = pr_data.get("pr_state", "open")
+    if pr_state not in ("merged", "rejected"):
+        return None
+
+    gh_issue_number = session.get("github_number")
+    if not gh_issue_number:
+        session["active"] = False
+        session["completed"] = True
+        session["completed_at"] = datetime.now(timezone.utc).isoformat()
+        session.pop("gh_close_pending", None)
+        (target_dir / GITHUB_SESSION_FILE).write_text(
+            json.dumps(session, indent=2), encoding="utf-8")
+        return ActionResult(success=True, data={"pr_state": pr_state, "retried_close": True})
+
+    pr_number = pr_data.get("pr_number")
+    pr_url = pr_data.get("pr_url", "")
+    closed = _close_and_comment_github_issue(
+        owner, gh_repo_name, gh_issue_number, pr_number, pr_url, token,
+        merged=pr_state == "merged",
+    )
+    if closed:
+        session["active"] = False
+        session["completed"] = True
+        session["completed_at"] = datetime.now(timezone.utc).isoformat()
+        session.pop("gh_close_pending", None)
+    (target_dir / GITHUB_SESSION_FILE).write_text(
+        json.dumps(session, indent=2), encoding="utf-8")
+    return ActionResult(
+        success=True,
+        data={"pr_state": pr_state, "retried_close": True, "close_succeeded": closed},
+    )
 
 
 def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -2109,6 +2176,12 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         return ActionResult(success=False, stderr="No GitHub token configured")
     slug = (target_config.get("slug") or "").strip()
     owner, gh_repo_name = slug.split("/", 1)
+
+    retry_result = _retry_pending_github_close(
+        target_dir, target_config, token, owner, gh_repo_name,
+    )
+    if retry_result is not None:
+        return retry_result
 
     # Fetch PR info
     url = f"https://api.github.com/repos/{owner}/{gh_repo_name}/pulls/{pr_number}"

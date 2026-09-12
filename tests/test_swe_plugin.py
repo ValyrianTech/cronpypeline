@@ -60,6 +60,7 @@ from cronpypeline.plugins.swe_plugin import (
     _read_batch_marker,
     _read_github_session,
     _resolve_latest_report,
+    _retry_pending_github_close,
     _sha_is_ancestor,
     _should_block_on_open_issues,
     _slugify,
@@ -7367,3 +7368,220 @@ class TestDetectCPrPublishBatch:
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr", "issues_per_pr": 1}}
         assert detect_c_pr_publish(ctx) is False
+
+
+# ─── gh_close_pending retry ─────────────────────────────────────────────────
+
+
+class TestDetectCPrStatusClosePending:
+    """detect_c_pr_status must re-fire while a GitHub close is pending."""
+
+    def test_fires_when_terminal_and_close_pending(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 1, "pr_state": "merged"})
+        )
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True})
+        )
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is True
+
+    def test_does_not_fire_when_terminal_and_no_session(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 1, "pr_state": "merged"})
+        )
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is False
+
+    def test_does_not_fire_when_terminal_and_session_inactive(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 1, "pr_state": "rejected"})
+        )
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": False, "gh_close_pending": True})
+        )
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is False
+
+    def test_does_not_fire_when_terminal_and_no_close_pending(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 1, "pr_state": "merged"})
+        )
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True})
+        )
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is False
+
+    def test_does_not_fire_when_close_pending_but_no_token(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin._load_env_token", lambda env_file, keys: None)
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 1, "pr_state": "merged"})
+        )
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True})
+        )
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is False
+
+
+class TestRetryPendingGithubClose:
+    """Unit tests for the _retry_pending_github_close helper."""
+
+    def _ctx(self, target):
+        return _make_tick_context(target, slug="owner/repo")
+
+    def test_returns_none_without_session(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = self._ctx(target)
+        assert _retry_pending_github_close(ctx.target_dir, ctx.target_config, "t", "o", "r") is None
+
+    def test_returns_none_when_session_inactive(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": False, "gh_close_pending": True})
+        )
+        ctx = self._ctx(target)
+        assert _retry_pending_github_close(ctx.target_dir, ctx.target_config, "t", "o", "r") is None
+
+    def test_returns_none_when_no_flag(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(json.dumps({"active": True}))
+        ctx = self._ctx(target)
+        assert _retry_pending_github_close(ctx.target_dir, ctx.target_config, "t", "o", "r") is None
+
+    def test_returns_none_when_no_pr_marker(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True, "github_number": 42})
+        )
+        ctx = self._ctx(target)
+        assert _retry_pending_github_close(ctx.target_dir, ctx.target_config, "t", "o", "r") is None
+
+    def test_returns_none_when_pr_marker_corrupt(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True, "github_number": 42})
+        )
+        (target / ".SWE" / "pr_published.json").write_text("not json")
+        ctx = self._ctx(target)
+        assert _retry_pending_github_close(ctx.target_dir, ctx.target_config, "t", "o", "r") is None
+
+    def test_returns_none_when_pr_not_terminal(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True, "github_number": 42})
+        )
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        ctx = self._ctx(target)
+        assert _retry_pending_github_close(ctx.target_dir, ctx.target_config, "t", "o", "r") is None
+
+    def test_completes_session_when_no_gh_number(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True})
+        )
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "merged"}))
+        ctx = self._ctx(target)
+        result = _retry_pending_github_close(ctx.target_dir, ctx.target_config, "t", "o", "r")
+        assert result is not None
+        assert result.success is True
+        assert result.data["retried_close"] is True
+        saved = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert saved["active"] is False
+        assert saved["completed"] is True
+        assert "gh_close_pending" not in saved
+
+    def test_successful_retry_clears_flag_and_completes(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True, "github_number": 42})
+        )
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7, "pr_state": "merged", "pr_url": "https://x/pull/7"})
+        )
+        ctx = self._ctx(target)
+        with patch("cronpypeline.plugins.swe_plugin._close_and_comment_github_issue", return_value=True) as mock_close:
+            result = _retry_pending_github_close(ctx.target_dir, ctx.target_config, "t", "o", "r")
+        assert result is not None
+        assert result.data["close_succeeded"] is True
+        assert mock_close.call_args.kwargs["merged"] is True
+        saved = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert saved["active"] is False
+        assert saved["completed"] is True
+        assert "gh_close_pending" not in saved
+
+    def test_failed_retry_keeps_flag(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True, "github_number": 42})
+        )
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7, "pr_state": "rejected"})
+        )
+        ctx = self._ctx(target)
+        with patch("cronpypeline.plugins.swe_plugin._close_and_comment_github_issue", return_value=False) as mock_close:
+            result = _retry_pending_github_close(ctx.target_dir, ctx.target_config, "t", "o", "r")
+        assert result is not None
+        assert result.data["close_succeeded"] is False
+        assert mock_close.call_args.kwargs["merged"] is False
+        saved = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert saved["active"] is True
+        assert saved["gh_close_pending"] is True
+        assert saved.get("completed") is not True
+
+
+class TestRunCPrStatusRetryIntegration:
+    """run_c_pr_status must consume the gh_close_pending flag before polling."""
+
+    def test_retry_success_short_circuits_api_fetch(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True, "github_number": 42})
+        )
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7, "pr_state": "merged", "pr_url": "https://x/pull/7"})
+        )
+        ctx = _make_tick_context(target, slug="owner/repo")
+        with patch("cronpypeline.plugins.swe_plugin._close_and_comment_github_issue", return_value=True), \
+             patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open") as mock_open:
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["retried_close"] is True
+        assert result.data["pr_state"] == "merged"
+        mock_open.assert_not_called()
+        saved = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert saved["active"] is False
+        assert saved["completed"] is True
+        assert "gh_close_pending" not in saved
+
+    def test_retry_failure_returns_success_and_keeps_flag(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True, "github_number": 42})
+        )
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7, "pr_state": "rejected"})
+        )
+        ctx = _make_tick_context(target, slug="owner/repo")
+        with patch("cronpypeline.plugins.swe_plugin._close_and_comment_github_issue", return_value=False):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["retried_close"] is True
+        assert result.data["close_succeeded"] is False
+        saved = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert saved["gh_close_pending"] is True
+        assert saved["active"] is True
