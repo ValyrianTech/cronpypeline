@@ -1,5 +1,6 @@
 """FileLock — fcntl-based, non-blocking single-instance lock for cron pipelines."""
 
+import errno
 import fcntl
 import os
 import time
@@ -50,11 +51,21 @@ class FileLock:
         self.lock_file.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(self.lock_file), os.O_CREAT | os.O_RDWR, 0o644)
 
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (BlockingIOError, OSError):
-            os.close(fd)
-            return False
+        # Distinguish lock contention (return False) from genuine errors
+        # (re-raise, except EINTR which is retried). BlockingIOError is a
+        # subclass of OSError, so handle it first.
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(fd)
+                return False
+            except OSError as e:
+                if e.errno == errno.EINTR:
+                    continue
+                os.close(fd)
+                raise
+            break
 
         self._fd = fd
         self._acquired = True
