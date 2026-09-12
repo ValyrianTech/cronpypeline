@@ -19,16 +19,20 @@ from typing import Any
 def _format_template(template: str, context: dict[str, Any]) -> str:
     """Substitute {key} placeholders in template using context dict.
 
+    If the template contains no ``{`` it is returned unchanged. Otherwise
+    ``str.format`` is applied and any substitution failure (missing key,
+    bad format spec, etc.) propagates to the caller so that configuration
+    typos fail loudly instead of silently producing a literal ``{key}`` path.
+
     :param template: Template string with ``{key}`` placeholders.
     :param context: Mapping of keys to substitution values.
-    :returns: Formatted string, or the original template if substitution fails.
+    :returns: Formatted string, or the original template when it has no placeholders.
+    :raises KeyError: If a placeholder key is missing from context.
+    :raises (IndexError, ValueError): If the template format is invalid.
     """
-    if not context or "{" not in template:
+    if "{" not in template:
         return template
-    try:
-        return template.format(**context)
-    except (KeyError, IndexError, ValueError):
-        return template
+    return template.format(**context)
 
 
 class MarkerType(str, Enum):
@@ -75,11 +79,14 @@ class MarkerSpec:
         """Resolve the full path of this marker relative to base_dir.
 
         If context is provided, template-substitutes ``{key}`` placeholders
-        in name and directory.
+        in name and directory. A missing placeholder key raises :class:`KeyError`.
 
         :param base_dir: Base directory to resolve against.
         :param context: Optional context dict for template substitution.
         :returns: Full :class:`~pathlib.Path` to the marker.
+        :raises KeyError: If a placeholder key is missing from context.
+        :raises ValueError: If the resolved path contains '..', is absolute, or
+            escapes the base directory.
         """
         ctx = context or {}
         name = _format_template(self.name, ctx)
@@ -121,8 +128,11 @@ class MarkerSpec:
     def resolve_target(self, context: dict[str, Any] | None = None) -> str | None:
         """Resolve symlink target with optional context substitution.
 
+        A missing placeholder key raises :class:`KeyError`.
+
         :param context: Optional context dict for template substitution.
         :returns: Resolved target string, or None if no target is set.
+        :raises KeyError: If a placeholder key is missing from context.
         """
         if self.target is None:
             return None
