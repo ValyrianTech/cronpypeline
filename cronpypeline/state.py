@@ -30,6 +30,7 @@ class StageState:
     :ivar is_stale: Whether the processing marker is stale (timeout or queue file gone).
     :ivar retry_count: Number of retries so far (from processing marker).
     :ivar processing_data: Raw data from the processing marker, if present.
+    :ivar processing_age_seconds: Age of the processing marker in seconds, or None when not processing or the marker has no readable mtime.
     :ivar rejection_count: Number of rejections so far (from rejection marker).
     :ivar is_rejected: Whether the rejection marker exists.
     """
@@ -41,6 +42,7 @@ class StageState:
     is_stale: bool = False
     retry_count: int = 0
     processing_data: dict[str, Any] | None = None
+    processing_age_seconds: float | None = None
     rejection_count: int = 0
     is_rejected: bool = False
     _rejection_override: bool = dc_field(default=False, repr=False)
@@ -81,6 +83,13 @@ class StageState:
                 if data and "retry_count" in data:
                     self.retry_count = data["retry_count"]
 
+                # Compute the processing marker age once for all processing
+                # stages so the web UI can display a live countdown even when
+                # queue-file-based staleness is used (which does not otherwise
+                # compute age).
+                age = marker_age_seconds(markers["processing"], base_dir, context=ctx)
+                self.processing_age_seconds = age
+
                 # Queue-file-based staleness: if queue_file is gone, agent finished
                 # but didn't produce completion → immediately stale.
                 # Exception: if reminder files exist in the queue directory, the
@@ -99,9 +108,10 @@ class StageState:
                         self.is_stale = False
                 else:
                     # Time-based staleness (fallback)
-                    age = marker_age_seconds(markers["processing"], base_dir, context=ctx)
                     if age is not None:
                         self.is_stale = age >= self.stage.timeout_minutes * 60
+            else:
+                self.processing_age_seconds = None
 
     @property
     def is_actionable(self) -> bool:

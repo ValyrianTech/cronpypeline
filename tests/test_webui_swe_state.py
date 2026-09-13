@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 import sys
+import time
 import types
 from pathlib import Path
 from unittest import mock
@@ -1155,6 +1156,116 @@ class TestBuildApp:
         assert stage_state["stateless"] is False
         assert stage_state["complete"] is False
         assert result["summary"]["tracked_stages"] == 1
+
+    def test_pipeline_status_processing_countdown(self, tmp_path):
+        """Processing stage should expose countdown fields on /api/status."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        (workspace / "repo1").mkdir(parents=True)
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo1"]},
+            "stages": [
+                {"id": "A0", "name": "Step", "trigger": {"type": "file_missing", "path": "a.md"},
+                 "action": {"type": "command", "params": {"command": "echo a"}},
+                 "timeout_minutes": 30,
+                 "markers": {"processing": {"type": "json", "name": ".processing"}}},
+            ],
+        })
+        (workspace / "repo1" / ".processing").write_text(json.dumps({"agent": "test"}))
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/status"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        stage_state = result["targets"]["repo1"]["stages"]["A0"]
+        assert stage_state["processing"] is True
+        assert isinstance(stage_state["processing_age_seconds"], float)
+        assert stage_state["timeout_seconds"] == 1800
+        assert stage_state["seconds_until_timeout"] >= 0
+        assert stage_state["timeout_at"] is not None
+        assert "T" in stage_state["timeout_at"]
+
+    def test_pipeline_status_countdown_uses_marker_age(self, tmp_path):
+        """seconds_until_timeout should reflect the processing marker mtime."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        (workspace / "repo1").mkdir(parents=True)
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo1"]},
+            "stages": [
+                {"id": "A0", "name": "Step", "trigger": {"type": "file_missing", "path": "a.md"},
+                 "action": {"type": "command", "params": {"command": "echo a"}},
+                 "timeout_minutes": 30,
+                 "markers": {"processing": {"type": "json", "name": ".processing"}}},
+            ],
+        })
+        marker = workspace / "repo1" / ".processing"
+        marker.write_text(json.dumps({"agent": "test"}))
+        old = time.time() - 60
+        os.utime(marker, (old, old))
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/status"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        stage_state = result["targets"]["repo1"]["stages"]["A0"]
+        assert stage_state["processing"] is True
+        assert stage_state["timeout_seconds"] == 1800
+        assert abs(stage_state["seconds_until_timeout"] - 1740) < 10
+
+    def test_pipeline_status_non_processing_countdown_fields(self, tmp_path):
+        """Non-processing tracked stage should have null countdown fields but a timeout_seconds value."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        (workspace / "repo1").mkdir(parents=True)
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo1"]},
+            "stages": [
+                {"id": "A0", "name": "Step", "trigger": {"type": "file_missing", "path": "a.md"},
+                 "action": {"type": "command", "params": {"command": "echo a"}},
+                 "timeout_minutes": 45,
+                 "markers": {"completion": {"type": "file", "name": "done.md"}}},
+            ],
+        })
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/status"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        stage_state = result["targets"]["repo1"]["stages"]["A0"]
+        assert stage_state["processing"] is False
+        assert stage_state["processing_age_seconds"] is None
+        assert stage_state["seconds_until_timeout"] is None
+        assert stage_state["timeout_at"] is None
+        assert stage_state["timeout_seconds"] == 2700
+
+    def test_pipeline_status_stateless_stage_dict(self, tmp_path):
+        """Stateless stage dict should be exactly {'stateless': True}."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        (workspace / "repo1").mkdir(parents=True)
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo1"]},
+            "stages": [
+                {"id": "A0", "name": "Step", "trigger": {"type": "file_missing", "path": "a.md"},
+                 "action": {"type": "command", "params": {"command": "echo a"}}},
+            ],
+        })
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/status"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        stage_state = result["targets"]["repo1"]["stages"]["A0"]
+        assert stage_state == {"stateless": True}
 
     def test_pipeline_log_endpoint(self, tmp_path):
         configs_dir = tmp_path / "configs"
