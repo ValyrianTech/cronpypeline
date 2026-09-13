@@ -358,6 +358,39 @@ class TestCLIMain:
         assert "Warning" in capsys.readouterr().err
         assert not (workspace / "my-repo" / "a.md").exists()
 
+    def test_cli_reset_stage_registry_enriches_target_config(self, tmp_path):
+        """--reset-stage should enrich marker context from the registry's per-target config.
+
+        Unlike the static-targets tests, this uses a registry-type targets spec
+        whose items carry extra keys. The ``slug`` key is resolved from the
+        registry entry and substituted into the marker name template
+        (``{slug}.done``), proving the registry-config path is actually read
+        and feeds marker-path resolution.
+        """
+        registry_content = json.dumps({"repos": [{"name": "my-repo", "slug": "my-repo-slug"}]})
+        config_file, workspace = self._make_registry_config_file(
+            tmp_path, tmp_path / "registry.json", registry_content
+        )
+        config_data = json.loads(config_file.read_text())
+        config_data["stages"][0]["markers"]["completion"] = {
+            "type": "file",
+            "name": "{slug}.done",
+        }
+        config_file.write_text(json.dumps(config_data))
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "my-repo-slug.done").touch()
+        (workspace / "my-repo" / "unrelated.keep").touch()
+        exit_code = main([
+            "--config", str(config_file),
+            "--target", "my-repo",
+            "--reset-stage", "A0",
+        ])
+        assert exit_code == 0
+        # The marker named from the registry-derived slug was deleted...
+        assert not (workspace / "my-repo" / "my-repo-slug.done").exists()
+        # ...but unrelated files were left untouched.
+        assert (workspace / "my-repo" / "unrelated.keep").exists()
+
     def test_cli_tick_path_traversal(self, tmp_path, capsys):
         """Normal tick with a path traversal target should error."""
         config_file, _workspace = self._make_config_file(tmp_path)
