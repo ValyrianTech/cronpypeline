@@ -298,6 +298,39 @@ def _serialize_stage(stage: Any) -> dict[str, Any]:
     }
 
 
+_SENSITIVE_CONFIG_KEYS = {
+    "github_token",
+    "token",
+    "api_key",
+    "apikey",
+    "secret",
+    "password",
+    "credential",
+}
+
+_SENSITIVE_KEY_SUBSTRINGS = ("token", "secret", "password", "credential", "api_key")
+
+
+def _public_target_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a target config with sensitive keys removed.
+
+    Drops any key whose lowercased name is an exact match for a known sensitive
+    key, or which contains a sensitive substring in its lowercased name.
+    Non-sensitive keys and their values are kept unchanged.
+
+    :param cfg: Per-target config dict.
+    :returns: Filtered, JSON-safe dict.
+    """
+    return {
+        key: value
+        for key, value in cfg.items()
+        if not (
+            key.lower() in _SENSITIVE_CONFIG_KEYS
+            or any(sub in key.lower() for sub in _SENSITIVE_KEY_SUBSTRINGS)
+        )
+    }
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     """Read a JSON file, returning None if missing, unreadable, or not a dict.
 
@@ -444,7 +477,7 @@ def _build_app():
         targets: list[dict[str, Any]] = []
         targets_error: str | None = None
         try:
-            targets = [{"name": t.name, "config": t.config} for t in load_targets_with_config(cfg.targets)]
+            targets = [{"name": t.name, "config": _public_target_config(t.config)} for t in load_targets_with_config(cfg.targets)]
         except Exception as e:  # noqa: BLE001
             targets_error = str(e)
 
