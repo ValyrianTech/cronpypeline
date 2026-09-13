@@ -250,6 +250,114 @@ class TestCLIMain:
         assert exit_code == 0
         assert not (workspace / "my-repo" / "my-repo.done").exists()
 
+    def _make_registry_config_file(self, tmp_path, registry_path, registry_content):
+        """Build a config with registry-type targets, optionally writing the registry."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        config_data = json.loads(config_file.read_text())
+        config_data["targets"] = {
+            "type": "registry",
+            "file": str(registry_path),
+            "key": "repos",
+        }
+        config_file.write_text(json.dumps(config_data))
+        if registry_content is not None:
+            registry_path.parent.mkdir(parents=True, exist_ok=True)
+            registry_path.write_text(registry_content)
+        return config_file, workspace
+
+    def test_cli_reset_stage_registry_missing_file(self, tmp_path, capsys):
+        """--reset-stage with a missing registry file should degrade gracefully."""
+        config_file, workspace = self._make_registry_config_file(
+            tmp_path, tmp_path / "registry.json", None
+        )
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "a.md").touch()
+        exit_code = main([
+            "--config", str(config_file),
+            "--target", "my-repo",
+            "--reset-stage", "A0",
+        ])
+        assert exit_code == 0
+        assert "Warning" in capsys.readouterr().err
+        assert not (workspace / "my-repo" / "a.md").exists()
+
+    def test_cli_reset_stage_registry_missing_key(self, tmp_path, capsys):
+        """--reset-stage with a registry missing the configured key should degrade gracefully."""
+        config_file, workspace = self._make_registry_config_file(
+            tmp_path, tmp_path / "registry.json", '{"other": []}'
+        )
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "a.md").touch()
+        exit_code = main([
+            "--config", str(config_file),
+            "--target", "my-repo",
+            "--reset-stage", "A0",
+        ])
+        assert exit_code == 0
+        assert "Warning" in capsys.readouterr().err
+        assert not (workspace / "my-repo" / "a.md").exists()
+
+    def test_cli_reset_stage_registry_malformed_json(self, tmp_path, capsys):
+        """--reset-stage with a malformed registry should degrade gracefully."""
+        config_file, workspace = self._make_registry_config_file(
+            tmp_path, tmp_path / "registry.json", "{invalid json"
+        )
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "a.md").touch()
+        exit_code = main([
+            "--config", str(config_file),
+            "--target", "my-repo",
+            "--reset-stage", "A0",
+        ])
+        assert exit_code == 0
+        assert "Warning" in capsys.readouterr().err
+        assert not (workspace / "my-repo" / "a.md").exists()
+
+    def test_cli_reset_target_registry_missing_file(self, tmp_path, capsys):
+        """--reset-target with a missing registry file should degrade gracefully."""
+        config_file, workspace = self._make_registry_config_file(
+            tmp_path, tmp_path / "registry.json", None
+        )
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "a.md").touch()
+        exit_code = main([
+            "--config", str(config_file),
+            "--reset-target", "my-repo",
+        ])
+        assert exit_code == 0
+        assert "Warning" in capsys.readouterr().err
+        assert not (workspace / "my-repo" / "a.md").exists()
+
+    def test_cli_reset_target_registry_missing_key(self, tmp_path, capsys):
+        """--reset-target with a registry missing the configured key should degrade gracefully."""
+        config_file, workspace = self._make_registry_config_file(
+            tmp_path, tmp_path / "registry.json", '{"other": []}'
+        )
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "a.md").touch()
+        exit_code = main([
+            "--config", str(config_file),
+            "--reset-target", "my-repo",
+        ])
+        assert exit_code == 0
+        assert "Warning" in capsys.readouterr().err
+        assert not (workspace / "my-repo" / "a.md").exists()
+
+    def test_cli_reset_target_registry_malformed_json(self, tmp_path, capsys):
+        """--reset-target with a malformed registry should degrade gracefully."""
+        config_file, workspace = self._make_registry_config_file(
+            tmp_path, tmp_path / "registry.json", "{invalid json"
+        )
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "a.md").touch()
+        exit_code = main([
+            "--config", str(config_file),
+            "--reset-target", "my-repo",
+        ])
+        assert exit_code == 0
+        assert "Warning" in capsys.readouterr().err
+        assert not (workspace / "my-repo" / "a.md").exists()
+
     def test_cli_tick_path_traversal(self, tmp_path, capsys):
         """Normal tick with a path traversal target should error."""
         config_file, _workspace = self._make_config_file(tmp_path)
