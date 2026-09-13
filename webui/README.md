@@ -28,6 +28,9 @@ tick loop checks).
   final status, duration, stage/action/failure counts, dry-run flag, and
   per-stage result badges showing `action_command`, `stdout`, and `stderr`.
   Requires the pipeline config to set `log_file`.
+- The API strips sensitive per-target config keys (github/token/secret/password/etc.)
+  from target configs before sending them to the browser, so per-repo secrets
+  are not leaked by the dashboard.
 
 ## Setup
 
@@ -86,3 +89,8 @@ The module can be imported even when the web stack is unavailable or broken — 
   migrated to point within the workspace or configs directory.
 - If the workspace or registry paths in a config don't exist on this machine,
   the UI shows an error banner instead of data.
+- `/api/pipeline` (and any endpoint exposing target configs) filters out
+  sensitive keys — exact matches `github_token`, `token`, `api_key`, `apikey`,
+  `secret`, `password`, `credential`, and any key containing `token`, `secret`,
+  `password`, `credential`, or `api_key` — so registry secrets are never
+  serialized to the client.
