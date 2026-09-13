@@ -795,6 +795,52 @@ class TestSerializeStage:
         assert result["agent"] == "fixer"
 
 
+class TestPublicTargetConfig:
+    """Tests for _public_target_config sensitive-key filtering."""
+
+    def test_empty_dict(self):
+        assert app._public_target_config({}) == {}
+
+    def test_drops_github_token(self):
+        result = app._public_target_config({"github_token": "ghp_secret_value", "slug": "repo"})
+        assert "github_token" not in result
+        assert result["slug"] == "repo"
+
+    def test_drops_exact_sensitive_keys(self):
+        result = app._public_target_config({
+            "token": "tok",
+            "api_key": "key",
+            "secret": "sec",
+            "password": "pw",
+            "credential": "cred",
+        })
+        assert result == {}
+
+    def test_drops_apikey_exact_set_only(self):
+        """'apikey' is in the exact-match set but contains no substring."""
+        result = app._public_target_config({"apikey": "abc", "slug": "repo"})
+        assert result == {"slug": "repo"}
+
+    def test_drops_substring_match(self):
+        """'my_secret_thing' is not an exact match but contains 'secret'."""
+        result = app._public_target_config({"my_secret_thing": "xyz", "slug": "repo"})
+        assert result == {"slug": "repo"}
+
+    def test_benign_keys_survive(self):
+        cfg = {
+            "slug": "repo",
+            "default_branch": "main",
+            "language": "python",
+            "test_cmd": "pytest -q",
+            "issue_label": "bug",
+        }
+        assert app._public_target_config(cfg) == cfg
+
+    def test_case_insensitive_sensitive_key(self):
+        result = app._public_target_config({"GitHub_Token": "tok", "slug": "repo"})
+        assert result == {"slug": "repo"}
+
+
 class TestBuildApp:
     """Tests for _build_app with mocked fastapi/pydantic modules."""
 
@@ -998,6 +1044,37 @@ class TestBuildApp:
             result = handler(config="swe.json")
         assert result["targets"] == []
         assert result["targets_error"] is not None
+
+    def test_pipeline_info_strips_sensitive_target_config(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        registry = tmp_path / "repos.json"
+        registry.write_text(json.dumps({
+            "repos": [
+                {
+                    "name": "repo1",
+                    "github_token": "ghp_fake_token_value",
+                    "slug": "org/repo1",
+                },
+            ],
+        }))
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "registry", "file": str(registry), "key": "repos"},
+            "stages": [],
+        })
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/pipeline"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        assert result["targets"] == [{"name": "repo1", "config": {"slug": "org/repo1"}}]
+        serialized = json.dumps(result)
+        assert "github_token" not in serialized
+        assert "ghp_fake_token_value" not in serialized
+        assert "org/repo1" in serialized
 
     def test_pipeline_status_missing_workspace(self, tmp_path):
         configs_dir = tmp_path / "configs"
