@@ -8,8 +8,16 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
-from cronpypeline.pipeline import Pipeline, TickResultStatus, _validate_target_name
+from cronpypeline.markers import delete_marker
+from cronpypeline.pipeline import (
+    Pipeline,
+    TickResultStatus,
+    _build_marker_context,
+    _validate_target_name,
+)
+from cronpypeline.targets import load_targets_with_config
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -73,6 +81,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_target_config(pipeline: Pipeline, target: str) -> dict[str, Any]:
+    """Look up a target's per-target config dict from the registry.
+
+    Mirrors the enrichment performed in :meth:`Pipeline.tick`: the target's
+    full config dict (test_cmd, coverage_threshold, etc.) is needed to build a
+    marker context for template substitution.
+
+    :param pipeline: The loaded pipeline instance.
+    :param target: Target name to resolve.
+    :returns: The matching target's config dict, or ``{}`` if not found.
+        If the target registry cannot be loaded (missing file, missing key,
+        or malformed JSON), a warning is printed to stderr and ``{}`` is
+        returned so callers can degrade gracefully.
+    """
+    try:
+        targets = load_targets_with_config(pipeline.config.targets)
+    except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
+        print(f"Warning: could not load target registry: {e}", file=sys.stderr)
+        return {}
+    for t in targets:
+        if t.name == target:
+            return t.config
+    return {}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point.
 
@@ -116,11 +149,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Error: {e}", file=sys.stderr)
             return 1
         target_dir = pipeline.workspace_dir / target
+        target_config = _resolve_target_config(pipeline, target)
+        marker_ctx = _build_marker_context(target, target_dir, pipeline.workspace_dir, target_config)
         for stage in pipeline.config.stages:
             if stage.id == args.reset_stage:
                 if "completion" in stage.markers:
-                    from cronpypeline.markers import delete_marker
-                    delete_marker(stage.markers["completion"], target_dir)
+                    delete_marker(stage.markers["completion"], target_dir, context=marker_ctx)
                     print(f"Reset stage {stage.id} for target {target}")
                 break
         return 0
@@ -133,10 +167,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Error: {e}", file=sys.stderr)
             return 1
         target_dir = pipeline.workspace_dir / args.reset_target
+        target_config = _resolve_target_config(pipeline, args.reset_target)
+        marker_ctx = _build_marker_context(args.reset_target, target_dir, pipeline.workspace_dir, target_config)
         for stage in pipeline.config.stages:
-            from cronpypeline.markers import delete_marker
             for marker in stage.markers.values():
-                delete_marker(marker, target_dir)
+                delete_marker(marker, target_dir, context=marker_ctx)
         print(f"Reset all markers for target {args.reset_target}")
         return 0
 
