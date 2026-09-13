@@ -17,6 +17,7 @@ from cronpypeline.plugins.pr_review import (
     cmd_post,
     main,
 )
+from cronpypeline.plugins.swe_plugin import _GH_POST_ACCEPTED
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -218,6 +219,14 @@ class TestCmdPost:
         out = capsys.readouterr().out
         assert "id=42" in out
         assert "org/myrepo#5" in out
+
+    def test_post_returns_0_when_accepted_sentinel(self, tmp_path, capsys):
+        path = _write_repos_file(tmp_path, [{"name": "myrepo", "slug": "org/myrepo", "github_token": "tok"}])
+        args = _make_args(repos_file=path, body="Nice!")
+        with patch("cronpypeline.plugins.pr_review._gh_api_post", return_value=_GH_POST_ACCEPTED):
+            assert cmd_post(args) == 0
+        out = capsys.readouterr().out
+        assert "Posted COMMENT review (id=?)" in out
 
     def test_failed_post_returns_1(self, tmp_path, capsys):
         path = _write_repos_file(tmp_path, [{"name": "myrepo", "slug": "org/myrepo", "github_token": "tok"}])
