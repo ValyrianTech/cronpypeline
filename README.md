@@ -563,7 +563,7 @@ Options:
   --reset-target NAME   Clear all markers for a target (nuclear reset)
 ```
 
-`--reset-stage` and `--reset-target` validate the target name and return exit code 1 with an error message if the target name contains path traversal (e.g. `..` segments or absolute paths).
+`--reset-stage` and `--reset-target` validate the target name and return exit code 1 with an error message if the target name contains path traversal (e.g. `..` segments or absolute paths). Both options also build a marker context from the target's registry config (the same enrichment used in `Pipeline.tick`), so markers whose names or directories contain template placeholders (e.g. `{slug}`, `{test_cmd}`, or any flattened target config key) are resolved and deleted correctly.
 
 ## Plugin system
 
