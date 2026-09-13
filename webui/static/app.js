@@ -101,6 +101,45 @@ function nodeIcon(cls) {
   }
 }
 
+function formatDuration(seconds) {
+  if (seconds == null || !isFinite(seconds)) return '';
+  const total = Math.max(0, Math.round(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function formatClock(remainingSeconds) {
+  const total = Math.max(0, Math.ceil(remainingSeconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function updateCountdown(el) {
+  const deadline = new Date(el.getAttribute('data-deadline')).getTime();
+  const timeout = Number(el.getAttribute('data-timeout')) || 0;
+  const remaining = Math.max(0, (deadline - Date.now()) / 1000);
+  el.textContent = formatClock(remaining);
+  const ratio = timeout > 0 ? remaining / timeout : 0;
+  const level = remaining <= 0 || ratio < 0.10 ? 'rose' : (ratio < 0.25 ? 'amber' : 'normal');
+  el.classList.toggle('amber', level === 'amber');
+  el.classList.toggle('rose', level === 'rose');
+}
+
+function tickCountdowns() {
+  document.querySelectorAll('[data-deadline]').forEach(updateCountdown);
+}
+
+function startCountdownTicker() {
+  setInterval(tickCountdowns, 1000);
+}
+
 // ── View options ──────────────────────────────────────────────────────────────────────
 
 els.hidePending.checked = hidePending;
@@ -396,6 +435,16 @@ function renderLanes(status) {
       if (st && st.retry_count > 0) badges += `<span class="node-badge retry" title="retries">${st.retry_count}</span>`;
       if (st && st.rejection_count > 0) badges += `<span class="node-badge reject" title="rejections">${st.rejection_count}</span>`;
 
+      let countdown = '';
+      if (cls === 'processing' && st && st.timeout_at) {
+        const deadlineMs = new Date(st.timeout_at).getTime();
+        const timeout = Number(st.timeout_seconds) || 0;
+        const remaining = Math.max(0, (deadlineMs - Date.now()) / 1000);
+        const ratio = timeout > 0 ? remaining / timeout : 0;
+        const level = remaining <= 0 || ratio < 0.10 ? 'rose' : (ratio < 0.25 ? 'amber' : 'normal');
+        countdown = `<div class="countdown ${level === 'normal' ? '' : level}" data-countdown="1" data-deadline="${esc(st.timeout_at)}" data-timeout="${esc(st.timeout_seconds)}">${formatClock(remaining)}</div>`;
+      }
+
       const name = stageName(sid);
       const sl = STATE_LABELS[cls];
       return `<div class="subway-stop" data-target="${esc(target)}" data-stage="${esc(sid)}" title="${esc(name)} — ${esc(sl.text)}">
@@ -403,6 +452,7 @@ function renderLanes(status) {
         <div class="node ${cls}${isNext ? ' next' : ''}${glow}">${nodeIcon(cls)}${badges}</div>
         <div class="node-label">${esc(sid)}</div>
         <div class="node-name">${esc(name)}</div>
+        ${countdown}
       </div>`;
     }).join('');
 
@@ -564,6 +614,12 @@ function openPanel(target, stageId) {
   if (st && !st.stateless) {
     rows.push(kv('Retry count', st.retry_count));
     if (st.rejection_count > 0) rows.push(kv('Rejection count', st.rejection_count));
+    if (st.processing_age_seconds != null) {
+      rows.push(kv('Processing age', formatDuration(st.processing_age_seconds)));
+      if (st.seconds_until_timeout != null) {
+        rows.push(kv('Time until timeout', formatDuration(st.seconds_until_timeout)));
+      }
+    }
   }
 
   let html = '<div>' + rows.join('') + '</div>';
@@ -615,6 +671,8 @@ els.panelOverlay.addEventListener('click', closePanel);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
+
+startCountdownTicker();
 
 loadConfigs().catch(e => {
   setConn('dead', 'failed to load');

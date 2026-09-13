@@ -323,6 +323,37 @@
 .node-badge.retry { background: #f59e0b; color: #0a0e17; }
 .node-badge.reject { background: #fb923c; color: #0a0e17; }
 
+/* Processing stage countdown */
+.countdown {
+  margin-top: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #22d3ee;
+  background: rgba(34, 211, 238, 0.10);
+  border: 1px solid rgba(34, 211, 238, 0.30);
+  border-radius: 999px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  transition: color 0.3s, background 0.3s, border-color 0.3s;
+}
+.countdown.amber {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.40);
+}
+.countdown.rose {
+  color: #fb7185;
+  background: rgba(244, 63, 94, 0.14);
+  border-color: rgba(244, 63, 94, 0.45);
+  animation: countdown-flash 1s ease-in-out infinite;
+}
+@keyframes countdown-flash {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+
 /* Detail panel key-value rows */
 .kv {
   display: flex;
