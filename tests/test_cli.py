@@ -193,6 +193,63 @@ class TestCLIMain:
         assert exit_code == 1
         assert "Error" in capsys.readouterr().err
 
+    def test_cli_reset_stage_resolves_target_placeholder(self, tmp_path):
+        """--reset-stage should delete a marker whose name contains {target}."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        config_data = json.loads(config_file.read_text())
+        config_data["stages"][0]["markers"]["completion"] = {
+            "type": "file",
+            "name": "{target}.done",
+        }
+        config_file.write_text(json.dumps(config_data))
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "my-repo.done").touch()
+        exit_code = main([
+            "--config", str(config_file),
+            "--target", "my-repo",
+            "--reset-stage", "A0",
+        ])
+        assert exit_code == 0
+        assert not (workspace / "my-repo" / "my-repo.done").exists()
+
+    def test_cli_reset_target_resolves_target_placeholder(self, tmp_path):
+        """--reset-target should delete a marker whose name contains {target}."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        config_data = json.loads(config_file.read_text())
+        config_data["stages"][0]["markers"]["completion"] = {
+            "type": "file",
+            "name": "{target}.done",
+        }
+        config_file.write_text(json.dumps(config_data))
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "my-repo.done").touch()
+        exit_code = main([
+            "--config", str(config_file),
+            "--reset-target", "my-repo",
+        ])
+        assert exit_code == 0
+        assert not (workspace / "my-repo" / "my-repo.done").exists()
+
+    def test_cli_reset_stage_resolves_target_config(self, tmp_path):
+        """--reset-stage should enrich marker context from the registry config."""
+        config_file, workspace = self._make_config_file(tmp_path)
+        config_data = json.loads(config_file.read_text())
+        config_data["targets"] = {"type": "static", "items": ["my-repo"]}
+        config_data["stages"][0]["markers"]["completion"] = {
+            "type": "file",
+            "name": "{target}.done",
+        }
+        config_file.write_text(json.dumps(config_data))
+        (workspace / "my-repo").mkdir()
+        (workspace / "my-repo" / "my-repo.done").touch()
+        exit_code = main([
+            "--config", str(config_file),
+            "--target", "my-repo",
+            "--reset-stage", "A0",
+        ])
+        assert exit_code == 0
+        assert not (workspace / "my-repo" / "my-repo.done").exists()
+
     def test_cli_tick_path_traversal(self, tmp_path, capsys):
         """Normal tick with a path traversal target should error."""
         config_file, _workspace = self._make_config_file(tmp_path)
