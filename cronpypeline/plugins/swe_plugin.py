@@ -53,6 +53,19 @@ GIT_BIN = shutil.which("git") or "git"
 _GH_OPENER = urllib.request.build_opener(NoRedirectHandler())
 
 
+class _GhPostAccepted:
+    """Sentinel returned by :func:`_gh_api_post` for an accepted-but-unparseable POST.
+
+    Indicates the server returned an expected (2xx) status but the response
+    body could not be JSON-decoded. It is distinct from ``None`` (a definite
+    failure), so callers can tell an accepted request apart from one that is
+    safe to retry.
+    """
+
+
+_GH_POST_ACCEPTED = _GhPostAccepted()
+
+
 def _parse_utc_datetime(s: str) -> datetime | None:
     """Parse an ISO datetime string, normalizing naive datetimes to UTC.
 
@@ -344,6 +357,7 @@ def finalize_session(action: ActionSpec, context: TickContext) -> ActionResult:
     token = _load_github_token(target_config)
     slug = (target_config.get("slug") or "").strip()
 
+    closed_ok = True
     if gh_number and token and "/" in slug:
         owner, gh_repo_name = slug.split("/", 1)
         msg = (
@@ -351,18 +365,22 @@ def finalize_session(action: ActionSpec, context: TickContext) -> ActionResult:
             "changes are needed — the issue appears to already be addressed "
             "or is not actionable. Closing."
         )
-        _gh_api_post(
+        posted = _gh_api_post(
             owner, gh_repo_name, f"issues/{gh_number}/comments",
             {"body": msg}, token, expected_statuses=(200, 201),
         )
-        _gh_api_patch(
+        closed = _gh_api_patch(
             owner, gh_repo_name, f"issues/{gh_number}",
             {"state": "closed"}, token,
         )
+        closed_ok = posted is not None and closed is not None
 
-    session["active"] = False
-    session["completed"] = True
-    session["completed_at"] = datetime.now(timezone.utc).isoformat()
+    if closed_ok:
+        session["active"] = False
+        session["completed"] = True
+        session["completed_at"] = datetime.now(timezone.utc).isoformat()
+    else:
+        session["gh_close_pending"] = True
     session_file.write_text(json.dumps(session, indent=2), encoding="utf-8")
     return ActionResult(success=True, data={"gh_number": gh_number})
 
@@ -804,6 +822,31 @@ def _load_env_file(path: Path) -> None:
             os.environ[key] = val
 
 
+def _gh_log_failure(method: str, endpoint: str, error: Exception) -> None:
+    """Log a GitHub API failure to stderr.
+
+    :param method: HTTP method (GET/POST/PATCH).
+    :param endpoint: API endpoint that failed.
+    :param error: The exception that caused the failure.
+    """
+    code = getattr(error, "code", "")
+    body = ""
+    read = getattr(error, "read", None)
+    if callable(read):
+        try:
+            raw = read()
+            if isinstance(raw, bytes):
+                body = raw.decode("utf-8", "replace")
+            elif isinstance(raw, str):
+                body = raw
+        except OSError:
+            body = ""
+    print(
+        f"[gh] {method} {endpoint} failed: {code} {body[:200]}".rstrip(),
+        file=sys.stderr,
+    )
+
+
 def _gh_api_get_list(
     owner: str, gh_repo: str, endpoint: str, token: str,
     params: dict[str, str] | None = None,
@@ -832,14 +875,15 @@ def _gh_api_get_list(
             if isinstance(data, list):
                 return data
             return None
-    except (HTTPError, URLError, OSError):
+    except (HTTPError, URLError, OSError) as e:
+        _gh_log_failure("GET", endpoint, e)
         return None
 
 
 def _gh_api_post(
     owner: str, gh_repo: str, endpoint: str, payload: dict, token: str,
     expected_statuses: tuple[int, ...] = (201,),
-) -> dict[str, Any] | None:
+) -> dict[str, Any] | _GhPostAccepted | None:
     """POST to the GitHub REST API.
 
     :param owner: Repo owner.
@@ -848,7 +892,12 @@ def _gh_api_post(
     :param payload: JSON body dict.
     :param token: GitHub auth token.
     :param expected_statuses: HTTP status codes considered success.
-    :returns: Response JSON dict, or None on error.
+    :returns: Response JSON dict on a successful decode, ``None`` when the
+        request failed (an exception was raised) or the server returned an
+        unexpected status, or :data:`_GH_POST_ACCEPTED` when the server
+        returned an expected status but the response body could not be
+        JSON-decoded (e.g. a body-less 200/201). The sentinel reflects that
+        the server-side side-effect of the POST has still occurred.
     """
     url = f"https://api.github.com/repos/{owner}/{gh_repo}/{endpoint}"
     headers = {
@@ -861,10 +910,21 @@ def _gh_api_post(
         body = json.dumps(payload).encode("utf-8")
         req = Request(url, data=body, headers=headers, method="POST")
         with _GH_OPENER.open(req, timeout=30) as resp:  # nosec B310 - HTTPS URL to GitHub API
-            if resp.status in expected_statuses:
-                return json.loads(resp.read().decode("utf-8"))
-            return None
-    except (HTTPError, URLError, OSError):
+            if resp.status not in expected_statuses:
+                return None
+            raw = resp.read()
+            try:
+                return json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                print(
+                    f"[gh] POST {endpoint} accepted (status {resp.status}) "
+                    "but response body could not be JSON-decoded; "
+                    "treating as accepted",
+                    file=sys.stderr,
+                )
+                return _GH_POST_ACCEPTED
+    except (HTTPError, URLError, OSError) as e:
+        _gh_log_failure("POST", endpoint, e)
         return None
 
 
@@ -892,7 +952,8 @@ def _gh_api_patch(
         req = Request(url, data=body, headers=headers, method="PATCH")
         with _GH_OPENER.open(req, timeout=30) as resp:  # nosec B310 - HTTPS URL to GitHub API
             return json.loads(resp.read().decode("utf-8"))
-    except (HTTPError, URLError, OSError):
+    except (HTTPError, URLError, OSError) as e:
+        _gh_log_failure("PATCH", endpoint, e)
         return None
 
 
@@ -1683,7 +1744,7 @@ def _close_and_comment_github_issue(
     owner: str, gh_repo: str, gh_issue_number: int,
     pr_number: int, pr_url: str, token: str,
     merged: bool,
-) -> None:
+) -> bool:
     """Post a comment on the GitHub issue and close it (if merged).
 
     :param owner: Repo owner.
@@ -1693,6 +1754,7 @@ def _close_and_comment_github_issue(
     :param pr_url: PR URL.
     :param token: GitHub auth token.
     :param merged: Whether the PR was merged.
+    :returns: True if the comment/close were both applied, False otherwise.
     """
     if merged:
         comment = (
@@ -1705,15 +1767,24 @@ def _close_and_comment_github_issue(
             f"The PR [#{pr_number}]({pr_url}) was closed without merging. "
             f"This issue remains open."
         )
-    _gh_api_post(
+    posted = _gh_api_post(
         owner, gh_repo, f"issues/{gh_issue_number}/comments",
         {"body": comment}, token, expected_statuses=(200, 201),
     )
+    if posted is None:
+        return False
+    # A _GH_POST_ACCEPTED sentinel means the comment POST returned an expected
+    # 2xx status (the comment was posted server-side) but its body couldn't be
+    # JSON-decoded. Treat that as a successful post so a retry does NOT
+    # re-post a duplicate comment.
     if merged:
-        _gh_api_patch(
+        closed = _gh_api_patch(
             owner, gh_repo, f"issues/{gh_issue_number}",
             {"state": "closed"}, token,
         )
+        if closed is None:
+            return False
+    return True
 
 
 def _count_done_issues(target_dir: Path) -> tuple[int, int, int]:
@@ -2028,7 +2099,9 @@ def detect_c_pr_status(context: dict[str, Any]) -> bool:
         return False
     pr_state = pr_data.get("pr_state", "open")
     if pr_state in ("merged", "rejected"):
-        return False
+        session = _read_github_session(target_dir)
+        if not (session is not None and session.get("active") and session.get("gh_close_pending")):
+            return False
 
     # Cooldown: don't poll more often than the configured interval
     last_polled = pr_data.get("last_polled_at", "")
@@ -2045,6 +2118,71 @@ def detect_c_pr_status(context: dict[str, Any]) -> bool:
 
     slug = (target_config.get("slug") or "").strip()
     return "/" in slug
+
+
+def _retry_pending_github_close(
+    target_dir: Path, target_config: dict[str, Any], token: str,
+    owner: str, gh_repo_name: str,
+) -> ActionResult | None:
+    """Retry a previously-failed GitHub issue close for a terminal PR.
+
+    Reads the GitHub session; when ``gh_close_pending`` is set and the PR
+    marker records a terminal state (``merged``/``rejected``), re-attempts
+    the comment + close. Returns an ActionResult when it handled the retry
+    (whether the close succeeded or not), or None when there is nothing to
+    retry so the caller can continue with normal status handling.
+
+    :param target_dir: Target repo directory.
+    :param target_config: Per-target config dict (unused; kept for symmetry).
+    :param token: GitHub auth token.
+    :param owner: Repo owner.
+    :param gh_repo_name: Repo name on GitHub.
+    :returns: ActionResult if a retry was attempted, else None.
+    """
+    session = _read_github_session(target_dir)
+    if session is None or not session.get("active"):
+        return None
+    if not session.get("gh_close_pending"):
+        return None
+
+    pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
+    if not pr_marker.exists():
+        return None
+    try:
+        pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    pr_state = pr_data.get("pr_state", "open")
+    if pr_state not in ("merged", "rejected"):
+        return None
+
+    gh_issue_number = session.get("github_number")
+    if not gh_issue_number:
+        session["active"] = False
+        session["completed"] = True
+        session["completed_at"] = datetime.now(timezone.utc).isoformat()
+        session.pop("gh_close_pending", None)
+        (target_dir / GITHUB_SESSION_FILE).write_text(
+            json.dumps(session, indent=2), encoding="utf-8")
+        return ActionResult(success=True, data={"pr_state": pr_state, "retried_close": True})
+
+    pr_number = pr_data.get("pr_number")
+    pr_url = pr_data.get("pr_url", "")
+    closed = _close_and_comment_github_issue(
+        owner, gh_repo_name, gh_issue_number, pr_number, pr_url, token,
+        merged=pr_state == "merged",
+    )
+    if closed:
+        session["active"] = False
+        session["completed"] = True
+        session["completed_at"] = datetime.now(timezone.utc).isoformat()
+        session.pop("gh_close_pending", None)
+    (target_dir / GITHUB_SESSION_FILE).write_text(
+        json.dumps(session, indent=2), encoding="utf-8")
+    return ActionResult(
+        success=True,
+        data={"pr_state": pr_state, "retried_close": True, "close_succeeded": closed},
+    )
 
 
 def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -2070,6 +2208,12 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         return ActionResult(success=False, stderr="No GitHub token configured")
     slug = (target_config.get("slug") or "").strip()
     owner, gh_repo_name = slug.split("/", 1)
+
+    retry_result = _retry_pending_github_close(
+        target_dir, target_config, token, owner, gh_repo_name,
+    )
+    if retry_result is not None:
+        return retry_result
 
     # Fetch PR info
     url = f"https://api.github.com/repos/{owner}/{gh_repo_name}/pulls/{pr_number}"
@@ -2109,13 +2253,20 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         if session is not None and session.get("active"):
             gh_issue_number = session.get("github_number")
             if gh_issue_number:
-                _close_and_comment_github_issue(
+                closed = _close_and_comment_github_issue(
                     owner, gh_repo_name, gh_issue_number, pr_number,
                     pr_info.get("html_url", ""), token, merged=True,
                 )
-            session["active"] = False
-            session["completed"] = True
-            session["completed_at"] = datetime.now(timezone.utc).isoformat()
+                if closed:
+                    session["active"] = False
+                    session["completed"] = True
+                    session["completed_at"] = datetime.now(timezone.utc).isoformat()
+                else:
+                    session["gh_close_pending"] = True
+            else:
+                session["active"] = False
+                session["completed"] = True
+                session["completed_at"] = datetime.now(timezone.utc).isoformat()
             (target_dir / GITHUB_SESSION_FILE).write_text(
                 json.dumps(session, indent=2), encoding="utf-8")
         return ActionResult(success=True, data={"pr_state": "merged"})
@@ -2127,13 +2278,20 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         if session is not None and session.get("active"):
             gh_issue_number = session.get("github_number")
             if gh_issue_number:
-                _close_and_comment_github_issue(
+                closed = _close_and_comment_github_issue(
                     owner, gh_repo_name, gh_issue_number, pr_number,
                     pr_info.get("html_url", ""), token, merged=False,
                 )
-            session["active"] = False
-            session["completed"] = True
-            session["completed_at"] = datetime.now(timezone.utc).isoformat()
+                if closed:
+                    session["active"] = False
+                    session["completed"] = True
+                    session["completed_at"] = datetime.now(timezone.utc).isoformat()
+                else:
+                    session["gh_close_pending"] = True
+            else:
+                session["active"] = False
+                session["completed"] = True
+                session["completed_at"] = datetime.now(timezone.utc).isoformat()
             (target_dir / GITHUB_SESSION_FILE).write_text(
                 json.dumps(session, indent=2), encoding="utf-8")
         return ActionResult(success=True, data={"pr_state": "rejected"})
