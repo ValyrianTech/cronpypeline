@@ -64,6 +64,63 @@ class TestStageState:
         assert state.is_processing is True
         assert state.is_complete is False
 
+    def test_processing_age_seconds_set_when_processing(self, tmp_path):
+        """processing_age_seconds should be a float when the processing marker exists."""
+        stage = Stage(
+            id="A0",
+            name="Onboarding",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="briefing.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            timeout_minutes=30,
+            markers={
+                "completion": MarkerSpec(name="briefing.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+        create_marker(stage.markers["processing"], tmp_path)
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert isinstance(state.processing_age_seconds, float)
+        assert state.processing_age_seconds >= 0
+
+    def test_processing_age_seconds_none_when_not_processing(self, tmp_path):
+        """processing_age_seconds should be None when not processing."""
+        stage = Stage(
+            id="A0",
+            name="Onboarding",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="briefing.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={"completion": MarkerSpec(name="briefing.md", type=MarkerType.FILE)},
+        )
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is False
+        assert state.processing_age_seconds is None
+
+    def test_processing_age_seconds_set_with_queue_file(self, tmp_path):
+        """processing_age_seconds should be set even when queue-file staleness is used."""
+        stage = Stage(
+            id="A0",
+            name="Onboarding",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="briefing.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            timeout_minutes=30,
+            markers={
+                "completion": MarkerSpec(name="briefing.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+        queue_file = tmp_path / "queue" / "entry.json"
+        queue_file.parent.mkdir()
+        queue_file.touch()
+        (tmp_path / ".processing").write_text(json.dumps({"queue_file": str(queue_file)}))
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is False
+        assert isinstance(state.processing_age_seconds, float)
+
     def test_stage_given_up(self, tmp_path):
         stage = Stage(
             id="A0",

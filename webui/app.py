@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -549,6 +550,14 @@ def _build_app():
                 n_processing += ss.is_processing
                 n_stale += ss.is_stale
                 n_given_up += ss.is_given_up
+                timeout_seconds = ss.stage.timeout_minutes * 60
+                processing_age_seconds = ss.processing_age_seconds
+                if ss.is_processing and processing_age_seconds is not None:
+                    seconds_until_timeout = max(0.0, timeout_seconds - processing_age_seconds)
+                    timeout_at = (datetime.now(timezone.utc) + timedelta(seconds=seconds_until_timeout)).isoformat()
+                else:
+                    seconds_until_timeout = None
+                    timeout_at = None
                 stage_states[stage_id] = {
                     "stateless": False,
                     "complete": ss.is_complete,
@@ -559,6 +568,10 @@ def _build_app():
                     "retry_count": ss.retry_count,
                     "rejection_count": ss.rejection_count,
                     "processing_data": ss.processing_data,
+                    "processing_age_seconds": processing_age_seconds,
+                    "timeout_seconds": timeout_seconds,
+                    "seconds_until_timeout": seconds_until_timeout,
+                    "timeout_at": timeout_at,
                 }
             first = ts.first_actionable_stage
             result[target] = {
