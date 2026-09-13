@@ -274,7 +274,10 @@ def detect_session_complete(context: dict[str, Any]) -> bool:
     issue_id = session.get("issue_id", "")
     if not issue_id:
         return False
-    issue_path = target_dir / ".SWE" / "issues" / f"{issue_id}.md"
+    try:
+        issue_path = target_dir / ".SWE" / "issues" / f"{issue_filename(issue_id)}.md"
+    except ValueError:
+        return False
     if not issue_path.exists():
         return False
     try:
@@ -345,9 +348,13 @@ def finalize_session(action: ActionSpec, context: TickContext) -> ActionResult:
         return ActionResult(success=False, stderr="Failed to read session file")
 
     issue_id = session.get("issue_id", "")
-    issue_path = target_dir / ".SWE" / "issues" / f"{issue_id}.md"
+    issue_path = None
+    try:
+        issue_path = target_dir / ".SWE" / "issues" / f"{issue_filename(issue_id)}.md"
+    except ValueError:
+        issue_path = None
     gh_number = 0
-    if issue_path.exists():
+    if issue_path is not None and issue_path.exists():
         try:
             fm, _ = parse_frontmatter(issue_path.read_text(encoding="utf-8"))
             gh_number = int(fm.get("github_number", 0))
@@ -2426,7 +2433,11 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
 
             all_done = True
             for issue_id in pr_data.get("filed_issues", []):
-                issue_path = target_dir / SWE_SUBDIR / "issues" / f"{issue_id}.md"
+                try:
+                    issue_path = target_dir / SWE_SUBDIR / "issues" / f"{issue_filename(issue_id)}.md"
+                except ValueError:
+                    all_done = False
+                    break
                 if issue_path.exists():
                     fm, _ = parse_frontmatter(issue_path.read_text(encoding="utf-8"))
                     if fm.get("status") not in ("done", "discarded"):
@@ -3635,6 +3646,8 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     )
     if pr_data is None:
         return ActionResult(success=False, stderr="Failed to create PR")
+    if isinstance(pr_data, _GhPostAccepted):
+        pr_data = {}
 
     pr_number = pr_data.get("number")
     pr_url = pr_data.get("html_url", "")

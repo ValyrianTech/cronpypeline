@@ -21,6 +21,7 @@ from typing import Any
 
 from cronpypeline.plugins.swe_plugin import (
     _gh_api_post,
+    _GhPostAccepted,
     _load_github_token,
 )
 
@@ -114,6 +115,8 @@ def cmd_post(args: argparse.Namespace) -> int:
     if result is None:
         print("ERROR: failed to post PR review.", file=sys.stderr)
         return 1
+    if isinstance(result, _GhPostAccepted):
+        result = {}
 
     review_id = result.get("id", "?")
     print(f"Posted {event} review (id={review_id}) on "
