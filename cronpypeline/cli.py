@@ -91,8 +91,16 @@ def _resolve_target_config(pipeline: Pipeline, target: str) -> dict[str, Any]:
     :param pipeline: The loaded pipeline instance.
     :param target: Target name to resolve.
     :returns: The matching target's config dict, or ``{}`` if not found.
+        If the target registry cannot be loaded (missing file, missing key,
+        or malformed JSON), a warning is printed to stderr and ``{}`` is
+        returned so callers can degrade gracefully.
     """
-    for t in load_targets_with_config(pipeline.config.targets):
+    try:
+        targets = load_targets_with_config(pipeline.config.targets)
+    except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
+        print(f"Warning: could not load target registry: {e}", file=sys.stderr)
+        return {}
+    for t in targets:
         if t.name == target:
             return t.config
     return {}
