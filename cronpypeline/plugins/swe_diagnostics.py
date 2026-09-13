@@ -334,7 +334,7 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
     try:
         proc = subprocess.run(
             cmd_args,
-            shell=False,
+            shell=False,  # nosec B603 - arg list, no shell injection
             cwd=str(context.target_dir),
             capture_output=True,
             text=True,

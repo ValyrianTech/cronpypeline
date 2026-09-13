@@ -305,7 +305,7 @@ class Pipeline:
     def _generate_tick_id(self) -> str:
         """Generate a unique tick ID: YYYYMMDD-HHMMSS-XXXXXX."""
         now = datetime.datetime.now(datetime.timezone.utc)
-        suffix = "".join(random.choices(string.hexdigits.lower(), k=6))
+        suffix = "".join(random.choices(string.hexdigits.lower(), k=6))  # nosec B311 - log ID, not crypto
         return f"{now.strftime('%Y%m%d-%H%M%S')}-{suffix}"
 
     def _log_tick_start(self, target: str, dry_run: bool) -> None:

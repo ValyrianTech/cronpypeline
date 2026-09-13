@@ -202,11 +202,11 @@ def merge_into_integration(repo_dir: Path, task_branch: str,
         env["GIT_AUTHOR_EMAIL"] = GIT_AUTHOR_EMAIL
         env["GIT_COMMITTER_NAME"] = GIT_AUTHOR_NAME
         env["GIT_COMMITTER_EMAIL"] = GIT_AUTHOR_EMAIL
-        subprocess.run(
+        subprocess.run(  # nosec - static args, git on PATH
             ["git", "-C", str(repo_dir), "merge", "--no-ff", task_branch,
              "-m", f"merge {task_branch} into {INTEGRATION_BRANCH}"],
             check=True, env=env, capture_output=True, text=True,
-        )  # nosec B603 - static args
+        )
         if verbose:
             print(f"  [git] merged {task_branch} -> {INTEGRATION_BRANCH}")
         return True
@@ -954,7 +954,7 @@ def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str, str]:
     if not cmd_args:
         return 1, "", "Empty command string"
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603 - arg list, no shell
             cmd_args, cwd=str(cwd),
             capture_output=True, text=True, timeout=timeout, check=False,
         )

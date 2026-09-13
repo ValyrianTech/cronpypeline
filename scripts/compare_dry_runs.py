@@ -12,7 +12,7 @@ Usage:
 
 import argparse
 import json
-import subprocess
+import subprocess  # nosec B404 - arg list usage, no shell
 import sys
 from pathlib import Path
 
@@ -45,7 +45,7 @@ def load_enabled_repos() -> list[dict]:
 def run_command(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str, str]:
     """Run a command and return (exit_code, stdout, stderr)."""
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603 - arg list, no shell
             cmd,
             cwd=str(cwd),
             capture_output=True,

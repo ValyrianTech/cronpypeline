@@ -608,7 +608,7 @@ class CommandActionHandler(ActionHandler):
         try:
             proc = subprocess.run(
                 cmd_args,
-                shell=False,
+                shell=False,  # nosec B603 - arg list, no shell injection
                 cwd=cwd,
                 capture_output=True,
                 text=True,

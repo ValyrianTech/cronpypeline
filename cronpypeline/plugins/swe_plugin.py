@@ -649,7 +649,7 @@ def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
     if not cmd_args:
         return ActionResult(success=False, stderr="Empty command string")
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603 - arg list, no shell
             cmd_args, cwd=str(target_dir),
             capture_output=True, text=True, timeout=600, check=False,
         )
