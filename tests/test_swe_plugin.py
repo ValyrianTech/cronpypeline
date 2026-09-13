@@ -19,9 +19,9 @@ import pytest
 from cronpypeline.actions import ActionResult, ActionSpec, ActionType, TickContext
 from cronpypeline.plugins.issue_store import create_issue
 from cronpypeline.plugins.swe_plugin import (
+    _GH_POST_ACCEPTED,
     INTEGRATION_BRANCH,
     PR_POLL_COOLDOWN_SECONDS,
-    _GH_POST_ACCEPTED,
     _a1_is_pass,
     _a7_coverage_pct,
     _batch_fixed_count,
