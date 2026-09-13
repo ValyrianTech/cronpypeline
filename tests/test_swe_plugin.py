@@ -7726,3 +7726,47 @@ class TestGhClosePendingSecondTick:
         assert "completed_at" in saved
         assert "gh_close_pending" not in saved
         mock_patch.assert_called_once()
+
+
+# ─── Invalid issue_id branches (ValueError coverage) ────────────────────────
+
+
+class TestDetectSessionCompleteInvalidIssueId:
+    def test_invalid_issue_id_returns_false(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "issue_id": "../evil"})
+        )
+        assert detect_session_complete({"target_dir": str(target)}) is False
+
+
+class TestFinalizeSessionInvalidIssueId:
+    def test_invalid_issue_id_returns_success(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "issue_id": "../evil"})
+        )
+        ctx = _make_tick_context(target)
+        result = finalize_session(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        saved = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert saved["active"] is False
+        assert saved["completed"] is True
+
+
+class TestRunCPrStatusInvalidFiledIssueId:
+    def test_invalid_filed_issue_id_idles(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7, "pr_state": "changes_requested",
+            "last_review_id": 400, "filed_issues": ["../evil"],
+            "pr_review_cycles": 1,
+        }))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
