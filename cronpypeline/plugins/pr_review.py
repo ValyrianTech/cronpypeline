@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.plugins.swe_plugin import (
-    _GhPostAccepted,
     _gh_api_post,
+    _GhPostAccepted,
     _load_github_token,
 )
 
