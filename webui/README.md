@@ -15,6 +15,11 @@ tick loop checks).
 - Summary cards (targets, complete, processing, stale, gave up)
 - Click any stage node for a detail panel (trigger/action type, timeouts,
   retries, processing marker JSON)
+- Live per-stage countdown: processing-stage nodes show a ticking countdown
+  badge of the time remaining before the stage's timeout (derived from its
+  configured `timeout_minutes`), turning amber near the deadline and red
+  (flashing) once passed; the detail panel also shows the processing age and
+  time-until-timeout
 - Mode badge, retry/rejection count badges, target-lock ACTIVE indicator
 - SWE plugin state badges per target (when a `.SWE/` directory exists):
   PR number + lifecycle state (open / approved / changes requested / merged /
