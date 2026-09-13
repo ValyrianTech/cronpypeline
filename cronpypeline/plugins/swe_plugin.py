@@ -3635,6 +3635,8 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     )
     if pr_data is None:
         return ActionResult(success=False, stderr="Failed to create PR")
+    if isinstance(pr_data, _GhPostAccepted):
+        pr_data = {}
 
     pr_number = pr_data.get("number")
     pr_url = pr_data.get("html_url", "")
