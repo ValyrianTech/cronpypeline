@@ -19,6 +19,44 @@ from typing import Any
 # ─── Frontmatter parsing/serialization ──────────────────────────────────────
 
 
+def _split_list_items(inner: str) -> list[str]:
+    """Split a list's inner text on commas, respecting quotes.
+
+    Single-quoted items may contain doubled single quotes (``''``) to
+    represent a literal single quote; such pairs are preserved in the
+    returned token so that :func:`_parse_value` can unescape them.
+
+    :param inner: The text between the enclosing ``[`` and ``]``.
+    :returns: List of raw (un-stripped) item strings.
+    """
+    items: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if quote is None:
+            if ch in ("'", '"'):
+                quote = ch
+                current.append(ch)
+            elif ch == ",":
+                items.append("".join(current))
+                current = []
+            else:
+                current.append(ch)
+        else:
+            current.append(ch)
+            if ch == quote:
+                if quote == "'" and i + 1 < len(inner) and inner[i + 1] == "'":
+                    current.append("'")
+                    i += 1
+                else:
+                    quote = None
+        i += 1
+    items.append("".join(current))
+    return items
+
+
 def _parse_value(raw: str) -> Any:
     """Parse a single YAML-like scalar value.
 
@@ -27,12 +65,15 @@ def _parse_value(raw: str) -> Any:
     """
     raw = raw.strip()
     if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
-        return raw[1:-1]
+        inner = raw[1:-1]
+        if raw[0] == "'":
+            inner = inner.replace("''", "'")
+        return inner
     if raw.startswith("[") and raw.endswith("]"):
         inner = raw[1:-1].strip()
         if not inner:
             return []
-        return [_parse_value(v.strip()) for v in inner.split(",")]
+        return [_parse_value(v.strip()) for v in _split_list_items(inner)]
     if raw.lower() in ("true", "yes"):
         return True
     if raw.lower() in ("false", "no"):
@@ -130,6 +171,25 @@ def _needs_quoting(value: str) -> bool:
     return False
 
 
+def _serialize_list_element(value: Any) -> str:
+    """Serialize a list element, quoting strings the parser would split.
+
+    String elements containing commas, brackets, quote characters, or
+    leading/trailing whitespace are single-quoted with embedded single
+    quotes doubled so that they survive a round-trip through
+    :func:`_parse_value`.
+
+    :param value: List element to serialize.
+    :returns: YAML-like string representation of the element.
+    """
+    s = _serialize_value(value)
+    if isinstance(value, str) and (
+        any(c in value for c in ",[]'\"") or value != value.strip()
+    ):
+        return "'" + value.replace("'", "''") + "'"
+    return s
+
+
 def _serialize_value(value: Any) -> str:
     """Serialize a value to YAML-like scalar format.
 
@@ -137,7 +197,7 @@ def _serialize_value(value: Any) -> str:
     :returns: YAML-like string representation.
     """
     if isinstance(value, list):
-        return "[" + ", ".join(_serialize_value(v) for v in value) + "]"
+        return "[" + ", ".join(_serialize_list_element(v) for v in value) + "]"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, float):
