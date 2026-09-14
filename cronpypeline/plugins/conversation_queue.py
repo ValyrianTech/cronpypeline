@@ -15,10 +15,10 @@ from cronpypeline.actions import (
     ActionHandler,
     ActionResult,
     TickContext,
+    build_template_variables,
     format_template,
 )
 from cronpypeline.config import ActionSpec
-from cronpypeline.template_safety import is_sensitive_key
 
 
 class ConversationQueueHandler(ActionHandler):
@@ -97,20 +97,7 @@ class ConversationQueueHandler(ActionHandler):
             is_template = False
 
         # Format prompt with context variables
-        variables = {
-            "target": context.target,
-            "target_dir": str(context.target_dir),
-            "workspace_dir": str(context.workspace_dir),
-        }
-        # Flatten target_config keys for direct template access (e.g. {test_cmd}).
-        # Secret-bearing keys are excluded as defense-in-depth (alongside the
-        # template grammar validation in format_template that rejects
-        # attribute/item access), so secrets never reach the prompt namespace.
-        for k, v in context.target_config.items():
-            if k == "target_config" or is_sensitive_key(str(k)):
-                continue
-            if k not in variables:
-                variables[k] = v
+        variables = build_template_variables(context)
         try:
             if is_template:
                 prompt = format_template(prompt, variables)

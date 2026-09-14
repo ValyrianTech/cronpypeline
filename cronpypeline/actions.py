@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.config import ActionSpec, ActionType
-from cronpypeline.template_safety import validate_template_fields
+from cronpypeline.template_safety import is_sensitive_key, validate_template_fields
 from cronpypeline.triggers import resolve_custom_callable
 
 
@@ -463,6 +463,36 @@ def format_template(template: str, variables: dict[str, Any]) -> str:
         raise ValueError(f"Template substitution failed for: {template!r}: {e}") from e
 
 
+def build_template_variables(context: TickContext) -> dict[str, Any]:
+    """Build the template variable namespace for a tick context.
+
+    Produces the base ``{target}``, ``{target_dir}``, and ``{workspace_dir}``
+    variables, then flattens ``context.target_config`` keys into the namespace
+    for direct template access (e.g. ``{test_cmd}``). The ``target_config`` key
+    itself and any secret-bearing keys are excluded as defense-in-depth
+    (alongside the template grammar validation in :func:`format_template` that
+    rejects attribute/item access), so secrets never reach the prompt namespace.
+
+    The sensitive-key filtering is centralized here so the protection is
+    consistent across every path that flattens ``target_config`` keys into
+    template variables, rather than being applied only in a single handler.
+
+    :param context: Tick context carrying the target and per-target config.
+    :returns: Mapping of template keys to substitution values.
+    """
+    variables: dict[str, Any] = {
+        "target": context.target,
+        "target_dir": str(context.target_dir),
+        "workspace_dir": str(context.workspace_dir),
+    }
+    for k, v in context.target_config.items():
+        if k == "target_config" or is_sensitive_key(str(k)):
+            continue
+        if k not in variables:
+            variables[k] = v
+    return variables
+
+
 def resolved_command(action: ActionSpec, context: TickContext) -> str:
     """Resolve an action's command/prompt/url/callable for logging.
 
@@ -476,14 +506,7 @@ def resolved_command(action: ActionSpec, context: TickContext) -> str:
     :returns: Resolved command string (empty for unknown action types).
     """
     params = action.params
-    variables = {
-        "target": context.target,
-        "target_dir": str(context.target_dir),
-        "workspace_dir": str(context.workspace_dir),
-    }
-    for k, v in context.target_config.items():
-        if k not in variables:
-            variables[k] = v
+    variables = build_template_variables(context)
 
     def _subst(template: str) -> str:
         """Substitute template variables, returning the raw template on failure.
