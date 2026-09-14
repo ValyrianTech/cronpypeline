@@ -37,9 +37,9 @@ def _format_template(template: str, context: dict[str, Any]) -> str:
     """
     if "{" not in template:
         return template
-    for field in iter_template_fields(template):
-        if "." in field or "[" in field or "]" in field:
-            raise ValueError(f"Unsupported/invalid template field: {field!r}")
+    for field_name in iter_template_fields(template):
+        if "." in field_name or "[" in field_name or "]" in field_name:
+            raise ValueError(f"Unsupported/invalid template field: {field_name!r}")
     return template.format(**context)
 
 
