@@ -9,6 +9,14 @@ substitution to simple ``{name}`` identifier fields only.
 import string
 
 # Substrings that indicate a config key is likely to carry a secret.
+#
+# NOTE: matching is deliberately substring-based, not whole-word. This
+# over-matches benign keys (e.g. "tokenizer" and "authentication" are flagged
+# because they contain "token" / "auth_"), which is an accepted, fail-closed
+# trade-off: a false positive merely drops a harmless key from the template
+# namespace, whereas a false negative could leak a real secret. Keeping the
+# matcher a simple substring check errs on the side of caution and should not
+# be "fixed" to whole-word matching.
 _SENSITIVE_SUBSTRINGS = (
     "token",
     "secret",
@@ -52,8 +60,12 @@ def validate_template_fields(template: str) -> list[str]:
 def is_sensitive_key(name: str) -> bool:
     """Return True if a config key name likely carries a secret.
 
-    Case-insensitive; matches whole-word/affix occurrences of: token, secret,
-    password, passwd, credential, api_key, apikey, access_key, private_key, auth.
+    Case-insensitive. Matching is deliberately substring-based (not whole-word),
+    so it intentionally over-matches benign keys such as "tokenizer" or
+    "authentication". This is a fail-closed trade-off: a false positive only
+    drops a harmless key from the template namespace, while a false negative
+    could leak a real secret. The simplicity of the substring check is kept on
+    purpose and should not be "fixed" to whole-word matching.
     """
     lowered = name.lower()
     if lowered == "auth":
