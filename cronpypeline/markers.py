@@ -15,23 +15,31 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from cronpypeline.template_safety import iter_template_fields
+
 
 def _format_template(template: str, context: dict[str, Any]) -> str:
     """Substitute {key} placeholders in template using context dict.
 
     If the template contains no ``{`` it is returned unchanged. Otherwise
-    ``str.format`` is applied and any substitution failure (missing key,
-    bad format spec, etc.) propagates to the caller so that configuration
-    typos fail loudly instead of silently producing a literal ``{key}`` path.
+    attribute/item access (``{a.b}``, ``{a[b]}``) is rejected with
+    :class:`ValueError`, then ``str.format`` is applied. Any other substitution
+    failure (missing key, bad format spec, etc.) propagates to the caller so
+    that configuration typos fail loudly instead of silently producing a
+    literal ``{key}`` path.
 
     :param template: Template string with ``{key}`` placeholders.
     :param context: Mapping of keys to substitution values.
     :returns: Formatted string, or the original template when it has no placeholders.
     :raises KeyError: If a placeholder key is missing from context.
+    :raises ValueError: If the template uses attribute/item access.
     :raises (IndexError, ValueError): If the template format is invalid.
     """
     if "{" not in template:
         return template
+    for field in iter_template_fields(template):
+        if "." in field or "[" in field or "]" in field:
+            raise ValueError(f"Unsupported/invalid template field: {field!r}")
     return template.format(**context)
 
 

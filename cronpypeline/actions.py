@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.config import ActionSpec, ActionType
+from cronpypeline.template_safety import validate_template_fields
 from cronpypeline.triggers import resolve_custom_callable
 
 
@@ -446,12 +447,17 @@ def _is_sensitive_header(name: str) -> bool:
 def format_template(template: str, variables: dict[str, Any]) -> str:
     """Format a template string with variable substitution.
 
+    Attribute/item access (``{obj.attr}``, ``{mapping[key]}``) and other
+    non-identifier fields are rejected before substitution so a template cannot
+    read secrets or object internals out of the variable mapping.
+
     :param template: Template string with ``{key}`` placeholders.
     :param variables: Mapping of keys to substitution values.
     :returns: Formatted string.
     :raises ValueError: If substitution fails (missing key, bad format, etc.).
     """
     try:
+        validate_template_fields(template)
         return template.format(**variables)
     except (KeyError, IndexError, ValueError) as e:
         raise ValueError(f"Template substitution failed for: {template!r}: {e}") from e
