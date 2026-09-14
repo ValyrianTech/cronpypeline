@@ -15,6 +15,7 @@ from cronpypeline.actions import (
     ActionHandler,
     ActionResult,
     TickContext,
+    build_template_variables,
     format_template,
 )
 from cronpypeline.config import ActionSpec
@@ -96,16 +97,7 @@ class ConversationQueueHandler(ActionHandler):
             is_template = False
 
         # Format prompt with context variables
-        variables = {
-            "target": context.target,
-            "target_dir": str(context.target_dir),
-            "workspace_dir": str(context.workspace_dir),
-            "target_config": context.target_config,
-        }
-        # Flatten target_config keys for direct template access (e.g. {test_cmd})
-        for k, v in context.target_config.items():
-            if k not in variables:
-                variables[k] = v
+        variables = build_template_variables(context)
         try:
             if is_template:
                 prompt = format_template(prompt, variables)

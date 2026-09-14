@@ -760,6 +760,67 @@ class TestConversationQueueRetryTemplate:
         entry = json.loads(Path(result.data["queue_file"]).read_text())
         assert entry["content"] == "Run pytest for my-repo"
 
+    def test_secret_target_config_not_included_in_prompt(self, tmp_path):
+        """Secret-bearing target_config keys must never reach the queued prompt."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "CoderAgent",
+                "prompt_template": "Run {test_cmd} for {target}",
+            },
+        )
+        ctx = TickContext(
+            target="my-repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={"github_token": "SECRET123", "test_cmd": "pytest"},
+        )
+        result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        raw = files[0].read_text()
+        entry = json.loads(raw)
+        assert entry["prompt"] == "Run pytest for my-repo"
+        assert "SECRET123" not in raw
+
+    def test_target_config_key_not_flattened(self, tmp_path):
+        """A literal 'target_config' key must not be flattened into variables."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "Agent",
+                "prompt_template": "Run {test_cmd} for {target}",
+            },
+        )
+        ctx = TickContext(
+            target="my-repo",
+            workspace_dir=tmp_path,
+            dry_run=False,
+            verbose=False,
+            target_config={
+                "target_config": {"nested_secret": "NESTED123"},
+                "test_cmd": "pytest",
+            },
+        )
+        result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        raw = files[0].read_text()
+        entry = json.loads(raw)
+        assert entry["prompt"] == "Run pytest for my-repo"
+        assert "NESTED123" not in raw
+        assert "nested_secret" not in raw
+
     def test_agent_settings_not_found(self, tmp_path):
         """When agent settings file doesn't exist, should proceed without error."""
         queue_dir = tmp_path / "queue"

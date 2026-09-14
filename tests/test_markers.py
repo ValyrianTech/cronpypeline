@@ -412,9 +412,9 @@ class TestFormatTemplate:
         with pytest.raises(KeyError):
             _format_template("hello {missing}", {"name": "world"})
 
-    def test_index_error_raises(self):
+    def test_non_identifier_field_raises_value_error(self):
         from cronpypeline.markers import _format_template
-        with pytest.raises((IndexError, KeyError)):
+        with pytest.raises(ValueError, match="Unsupported/invalid template field"):
             _format_template("item {0}", {})
 
     def test_value_error_raises(self):
@@ -422,6 +422,16 @@ class TestFormatTemplate:
         # Invalid format spec causes ValueError
         with pytest.raises(ValueError):
             _format_template("{name:bad}", {"name": "x"})
+
+    def test_attribute_access_raises_value_error(self):
+        from cronpypeline.markers import _format_template
+        with pytest.raises(ValueError):
+            _format_template("{a.b}", {"a": object()})
+
+    def test_item_access_raises_value_error(self):
+        from cronpypeline.markers import _format_template
+        with pytest.raises(ValueError):
+            _format_template("{a[b]}", {"a": {}})
 
 
 class TestPathTraversalProtection:

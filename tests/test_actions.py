@@ -25,6 +25,7 @@ from cronpypeline.actions import (
     _PinnedHTTPSHandler,
     _redact_url,
     _validate_ssrf,
+    build_template_variables,
     execute_action,
     format_template,
 )
@@ -77,6 +78,78 @@ class TestTickContext:
     def test_context_target_config_defaults_empty(self, tmp_path):
         ctx = TickContext(target="my-repo", workspace_dir=tmp_path)
         assert ctx.target_config == {}
+
+
+class TestBuildTemplateVariables:
+    """Tests for the build_template_variables helper."""
+
+    def test_base_variables_with_empty_target_config(self, tmp_path):
+        """Returns base target/target_dir/workspace_dir for an empty config."""
+        ctx = TickContext(target="repo1", workspace_dir=tmp_path, target_config={})
+        variables = build_template_variables(ctx)
+        assert variables["target"] == "repo1"
+        assert variables["target_dir"] == str(tmp_path / "repo1")
+        assert variables["workspace_dir"] == str(tmp_path)
+
+    def test_flattens_non_sensitive_key(self, tmp_path):
+        """A normal target_config key is flattened into the namespace."""
+        ctx = TickContext(
+            target="repo1",
+            workspace_dir=tmp_path,
+            target_config={"test_cmd": "pytest"},
+        )
+        variables = build_template_variables(ctx)
+        assert variables["test_cmd"] == "pytest"
+
+    def test_excludes_sensitive_key(self, tmp_path):
+        """A sensitive key is dropped, and its secret value is absent."""
+        ctx = TickContext(
+            target="repo1",
+            workspace_dir=tmp_path,
+            target_config={"github_token": "ghp_secret123", "db_password": "hunter2"},
+        )
+        variables = build_template_variables(ctx)
+        assert "github_token" not in variables
+        assert "db_password" not in variables
+        assert "ghp_secret123" not in variables.values()
+        assert "hunter2" not in variables.values()
+
+    def test_excludes_literal_target_config_key(self, tmp_path):
+        """A literal 'target_config' key is not flattened, even as a mapping."""
+        ctx = TickContext(
+            target="repo1",
+            workspace_dir=tmp_path,
+            target_config={"target_config": {"nested": "value"}},
+        )
+        variables = build_template_variables(ctx)
+        assert "target_config" not in variables
+
+    def test_does_not_overwrite_base_variables(self, tmp_path):
+        """target_config keys named like base variables cannot override them."""
+        ctx = TickContext(
+            target="repo1",
+            workspace_dir=tmp_path,
+            target_config={"target": "evil", "workspace_dir": "/tmp/evil"},
+        )
+        variables = build_template_variables(ctx)
+        assert variables["target"] == "repo1"
+        assert variables["workspace_dir"] == str(tmp_path)
+
+    def test_mixes_sensitive_and_non_sensitive_keys(self, tmp_path):
+        """Only non-sensitive keys are included when sensitive keys coexist."""
+        ctx = TickContext(
+            target="repo1",
+            workspace_dir=tmp_path,
+            target_config={
+                "test_cmd": "pytest",
+                "coverage_threshold": 90,
+                "github_token": "ghp_secret123",
+            },
+        )
+        variables = build_template_variables(ctx)
+        assert variables["test_cmd"] == "pytest"
+        assert variables["coverage_threshold"] == 90
+        assert "github_token" not in variables
 
 
 class TestFormatTemplate:
@@ -771,6 +844,21 @@ class TestFormatTemplateEdgeCases:
     def test_valueerror_raises(self):
         with pytest.raises(ValueError, match="Template substitution failed"):
             format_template("Hello {name!x}", {"name": "world"})
+
+    def test_item_access_on_target_config_rejected(self):
+        with pytest.raises(ValueError):
+            format_template(
+                "leak={target_config[github_token]}",
+                {"target_config": {"github_token": "SECRET123"}},
+            )
+
+    def test_attribute_access_rejected(self):
+        with pytest.raises(ValueError):
+            format_template("{target.__class__.__mro__}", {"target": "x"})
+
+    def test_item_access_rejected(self):
+        with pytest.raises(ValueError):
+            format_template("{a[b]}", {"a": {}})
 
 
 class TestActionHandlerBase:

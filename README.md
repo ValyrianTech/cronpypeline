@@ -24,7 +24,7 @@
 - **Conversation ID continuation**: On retry, the previous `entry_id` is reused as `conversation_id` so agents continue the same conversation instead of starting fresh.
 - **Serendipity-compatible queue format**: Configurable `prompt_field` (e.g. `content` instead of `prompt`), `default_fields` for static metadata (`sender`, `folder_name`, `model_name`, `runs_left`), and `flatten_agent_settings` for flat agent config merging.
 - **Dynamic marker naming**: Marker names and directories support `{target}`, `{slug}`, and any target config key via template substitution.
-- **Shell-safe command execution**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into commands are shell-quoted with `shlex.quote()`, and commands are executed via an argument list (`shell=False`) rather than a shell, preventing command injection.
+- **Shell-safe command execution**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into commands are shell-quoted with `shlex.quote()`, and commands are executed via an argument list (`shell=False`) rather than a shell, preventing command injection. Template fields are restricted to simple `{name}` identifiers (attribute/item access is rejected) to prevent secrets or object internals leaking into commands.
 - **HTTP requests**: Built-in `http_request` action handler with auth token resolution from config, env vars, or context.
 - **SWE pipeline plugins**: Issue store (YAML frontmatter), diagnostic report handlers with output parsers, prompt builders for fix/coder/review agents, GitHub session adapter.
 - **VNN pipeline plugins**: Story state sync, inconsistent state cleanup, global queue-empty gate, completed compilation checks, story discovery, rejection audit trail.
@@ -310,7 +310,7 @@ Processing markers can include a `queue_file` field (written automatically by `C
 
 ### Dynamic marker naming
 
-Marker names and directories support template substitution with context variables: `{target}`, `{target_dir}`, `{workspace_dir}`, and all flattened target config keys (e.g. `{slug}`). This enables per-target marker names like `queued_for_{slug}.marker`. An unknown or missing placeholder key (or an invalid format spec) now raises an error (`KeyError`/`ValueError`) instead of silently leaving the literal `{placeholder}` in the resolved path, so configuration typos fail loudly; templates with no placeholders are returned unchanged.
+Marker names and directories support template substitution with context variables: `{target}`, `{target_dir}`, `{workspace_dir}`, and all flattened target config keys (e.g. `{slug}`). This enables per-target marker names like `queued_for_{slug}.marker`. An unknown or missing placeholder key (or an invalid format spec) now raises an error (`KeyError`/`ValueError`) instead of silently leaving the literal `{placeholder}` in the resolved path, so configuration typos fail loudly; templates with no placeholders are returned unchanged. Marker name/directory templates likewise only allow simple `{name}` fields — attribute access (`{obj.attr}`) and item access (`{mapping[key]}`) are rejected with a `ValueError` before substitution.
 
 ### File-based state markers
 
@@ -418,6 +418,8 @@ For the ordering operators (`lt`, `lte`, `gt`, `gte`), if the JSON field value's
 - `{workspace_dir}` — full path to workspace
 - `{target_config}` — full per-target config dict
 - Any flattened target config key (e.g. `{slug}`, `{test_cmd}`, `{coverage_threshold}`) — available when using a registry target spec
+
+Only simple `{name}` placeholders are supported: attribute access (`{obj.attr}`) and item access (`{mapping[key]}`) are rejected (raising a `ValueError`) to prevent templates from reading secrets or object internals out of the variable mapping. Note that `{target_config}` is no longer provided to the conversation-queue prompt namespace, which also excludes flattened target-config keys whose name is sensitive (e.g. `token`, `secret`, `password`, `api_key`).
 
 Template variables substituted into commands (`command`-type actions) are shell-quoted with `shlex.quote()` before substitution, and commands are executed without a shell (via an argument list built with `shlex.split()`, i.e. `shell=False`), preventing command injection when a value (e.g. a target name or path) contains shell metacharacters. If template substitution fails (missing key, bad format, etc.), an error is raised rather than silently falling back to the unformatted template. The `cwd` parameter for `command` and `subprocess` actions must resolve within the workspace directory; a `cwd` that escapes the workspace (via `..` segments, absolute paths, or symlinks) is rejected with an `ACTION_FAILED` result (`success=False` with stderr `"cwd escapes workspace directory: {cwd}"`).
 
