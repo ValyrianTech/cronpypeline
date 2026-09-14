@@ -772,6 +772,21 @@ class TestFormatTemplateEdgeCases:
         with pytest.raises(ValueError, match="Template substitution failed"):
             format_template("Hello {name!x}", {"name": "world"})
 
+    def test_item_access_on_target_config_rejected(self):
+        with pytest.raises(ValueError):
+            format_template(
+                "leak={target_config[github_token]}",
+                {"target_config": {"github_token": "SECRET123"}},
+            )
+
+    def test_attribute_access_rejected(self):
+        with pytest.raises(ValueError):
+            format_template("{target.__class__.__mro__}", {"target": "x"})
+
+    def test_item_access_rejected(self):
+        with pytest.raises(ValueError):
+            format_template("{a[b]}", {"a": {}})
+
 
 class TestActionHandlerBase:
     """Tests for ActionHandler base class."""

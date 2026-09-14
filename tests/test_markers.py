@@ -423,6 +423,16 @@ class TestFormatTemplate:
         with pytest.raises(ValueError):
             _format_template("{name:bad}", {"name": "x"})
 
+    def test_attribute_access_raises_value_error(self):
+        from cronpypeline.markers import _format_template
+        with pytest.raises(ValueError):
+            _format_template("{a.b}", {"a": object()})
+
+    def test_item_access_raises_value_error(self):
+        from cronpypeline.markers import _format_template
+        with pytest.raises(ValueError):
+            _format_template("{a[b]}", {"a": {}})
+
 
 class TestPathTraversalProtection:
     """Tests for path traversal protection in MarkerSpec.resolve_path."""
