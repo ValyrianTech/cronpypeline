@@ -312,24 +312,43 @@ _SENSITIVE_CONFIG_KEYS = {
 _SENSITIVE_KEY_SUBSTRINGS = ("token", "secret", "password", "credential", "api_key")
 
 
+def _is_sensitive(key: str) -> bool:
+    """Return whether a config key should be treated as sensitive.
+
+    :param key: Config key name.
+    :returns: True if the lowercased key is an exact match for a known
+        sensitive key, or contains a sensitive substring.
+    """
+    lowered = key.lower()
+    return lowered in _SENSITIVE_CONFIG_KEYS or any(
+        sub in lowered for sub in _SENSITIVE_KEY_SUBSTRINGS
+    )
+
+
 def _public_target_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of a target config with sensitive keys removed.
 
-    Drops any key whose lowercased name is an exact match for a known sensitive
-    key, or which contains a sensitive substring in its lowercased name.
-    Non-sensitive keys and their values are kept unchanged.
+    Recurses into nested dicts and lists, dropping any key whose lowercased
+    name is an exact match for a known sensitive key, or which contains a
+    sensitive substring in its lowercased name. Non-sensitive keys and their
+    non-dict/list values are kept unchanged.
 
     :param cfg: Per-target config dict.
     :returns: Filtered, JSON-safe dict.
     """
-    return {
-        key: value
-        for key, value in cfg.items()
-        if not (
-            key.lower() in _SENSITIVE_CONFIG_KEYS
-            or any(sub in key.lower() for sub in _SENSITIVE_KEY_SUBSTRINGS)
-        )
-    }
+
+    def _scrub(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: _scrub(val)
+                for key, val in value.items()
+                if not _is_sensitive(key)
+            }
+        if isinstance(value, list):
+            return [_scrub(item) for item in value]
+        return value
+
+    return _scrub(cfg)
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:

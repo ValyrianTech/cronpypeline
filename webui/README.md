@@ -35,7 +35,9 @@ tick loop checks).
   Requires the pipeline config to set `log_file`.
 - The API strips sensitive per-target config keys (github/token/secret/password/etc.)
   from target configs before sending them to the browser, so per-repo secrets
-  are not leaked by the dashboard.
+  are not leaked by the dashboard. The redaction is recursive, so sensitive keys
+  nested inside dicts and lists within a target config are stripped too, not just
+  top-level keys.
 
 ## Setup
 
@@ -98,4 +100,6 @@ The module can be imported even when the web stack is unavailable or broken — 
   sensitive keys — exact matches `github_token`, `token`, `api_key`, `apikey`,
   `secret`, `password`, `credential`, and any key containing `token`, `secret`,
   `password`, `credential`, or `api_key` — so registry secrets are never
-  serialized to the client.
+  serialized to the client. The filtering recurses into nested dicts and lists,
+  so sensitive keys nested anywhere in a target config (not just at the top
+  level) are also redacted.
