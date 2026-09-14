@@ -932,3 +932,97 @@ class TestMainFile:
                    "--body-file", str(body_file)])
         assert rc == 0
         assert (tmp_path / ".SWE" / "issues" / "test-issue.md").exists()
+
+
+class TestListElementRoundTrip:
+    """Regression tests: list elements containing commas must round-trip."""
+
+    def test_parse_list_with_quoted_comma_element(self):
+        from cronpypeline.plugins.issue_store import _parse_value
+        assert _parse_value('[a, "b, c", d]') == ["a", "b, c", "d"]
+
+    def test_parse_list_with_single_quoted_comma_element(self):
+        from cronpypeline.plugins.issue_store import _parse_value
+        assert _parse_value("['needs, review', 'ok']") == ["needs, review", "ok"]
+
+    def test_serialize_list_quotes_comma_element(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value(["a", "b, c", "d"]) == "[a, 'b, c', d]"
+
+    def test_roundtrip_list_with_comma_element(self):
+        from cronpypeline.plugins.issue_store import _parse_value, _serialize_value
+        original = ["a", "b, c", "d"]
+        assert _parse_value(_serialize_value(original)) == original
+
+    def test_roundtrip_list_with_tricky_elements(self):
+        from cronpypeline.plugins.issue_store import _parse_value, _serialize_value
+        original = ["has, comma", "it's fine", "[bracketed]", " spaced "]
+        assert _parse_value(_serialize_value(original)) == original
+
+    def test_roundtrip_list_with_single_quote(self):
+        from cronpypeline.plugins.issue_store import _parse_value, _serialize_value
+        original = ["it's fine"]
+        assert _parse_value(_serialize_value(original)) == original
+
+    def test_roundtrip_list_with_brackets(self):
+        from cronpypeline.plugins.issue_store import _parse_value, _serialize_value
+        original = ["[bracketed]"]
+        assert _parse_value(_serialize_value(original)) == original
+
+    def test_roundtrip_list_with_surrounding_spaces(self):
+        from cronpypeline.plugins.issue_store import _parse_value, _serialize_value
+        original = [" spaced "]
+        assert _parse_value(_serialize_value(original)) == original
+
+    def test_roundtrip_labels_with_comma_through_frontmatter(self):
+        fm = {"labels": ["needs, review", "bug"]}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+        assert parsed["labels"] == ["needs, review", "bug"]
+
+    def test_labels_with_comma_persist_through_load(self, tmp_path):
+        issues_dir = tmp_path / ".SWE" / "issues"
+        _write_issue_file(issues_dir, "issue-1", {"id": 1, "labels": ["needs, review"]})
+        issue = load_issues(tmp_path)[0]
+        assert issue.labels == ["needs, review"]
+
+    def test_labels_with_comma_survive_write_read_cycle(self, tmp_path):
+        create_issue(tmp_path, {"id": 1, "labels": ["needs, review", "ok"]})
+        loaded = get_issue(tmp_path, 1)
+        assert loaded is not None
+        assert loaded.labels == ["needs, review", "ok"]
+
+    def test_fix_versions_extra_field_roundtrip(self):
+        fm = {"labels": [], "fix_versions": ["a, b", "c"]}
+        text = serialize_frontmatter(fm)
+        parsed, _ = parse_frontmatter(f"---\n{text}---\nbody")
+        assert parsed == fm
+
+    def test_split_list_items_respects_single_quotes(self):
+        from cronpypeline.plugins.issue_store import _split_list_items
+        assert _split_list_items("'a, b', c") == ["'a, b'", " c"]
+
+    def test_split_list_items_escaped_single_quote(self):
+        from cronpypeline.plugins.issue_store import _split_list_items
+        assert _split_list_items("'it''s, ok', c") == ["'it''s, ok'", " c"]
+
+    def test_split_list_items_no_commas(self):
+        from cronpypeline.plugins.issue_store import _split_list_items
+        assert _split_list_items("abc") == ["abc"]
+
+    def test_split_list_items_double_quotes(self):
+        from cronpypeline.plugins.issue_store import _split_list_items
+        assert _split_list_items('"a, b", c') == ['"a, b"', " c"]
+
+    def test_serialize_list_element_escapes_single_quote(self):
+        from cronpypeline.plugins.issue_store import _serialize_list_element
+        assert _serialize_list_element("it's, ok") == "'it''s, ok'"
+
+    def test_serialize_list_element_plain(self):
+        from cronpypeline.plugins.issue_store import _serialize_list_element
+        assert _serialize_list_element("plain") == "plain"
+
+    def test_parse_escaped_single_quote_scalar(self):
+        from cronpypeline.plugins.issue_store import _parse_value
+        assert _parse_value("'it''s fine'") == "it's fine"
