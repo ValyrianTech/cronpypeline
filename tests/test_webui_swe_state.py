@@ -841,6 +841,43 @@ class TestPublicTargetConfig:
         result = app._public_target_config({"GitHub_Token": "tok", "slug": "repo"})
         assert result == {"slug": "repo"}
 
+    def test_nested_sensitive_keys_removed(self):
+        result = app._public_target_config({
+            "auth": {"github_token": "secret"},
+            "github_token": "x",
+            "name": "y",
+        })
+        assert result == {"auth": {}, "name": "y"}
+
+    def test_list_of_dicts_scrubbed_elementwise(self):
+        result = app._public_target_config({
+            "repos": [
+                {"name": "ok", "token": "t"},
+                {"name": "b", "api_key": "k"},
+            ],
+        })
+        assert result == {"repos": [{"name": "ok"}, {"name": "b"}]}
+
+    def test_non_dict_values_unchanged_and_deeply_nested_scrubbed(self):
+        result = app._public_target_config({
+            "count": 1,
+            "label": "hello",
+            "active": True,
+            "ratio": 3.14,
+            "nothing": None,
+            "tags": [1, "two", True],
+            "outer": {"inner": {"deep": {"secret": "deep"}}, "keep": "yes"},
+        })
+        assert result == {
+            "count": 1,
+            "label": "hello",
+            "active": True,
+            "ratio": 3.14,
+            "nothing": None,
+            "tags": [1, "two", True],
+            "outer": {"inner": {"deep": {}}, "keep": "yes"},
+        }
+
 
 class TestBuildApp:
     """Tests for _build_app with mocked fastapi/pydantic modules."""
