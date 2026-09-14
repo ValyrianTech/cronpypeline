@@ -412,9 +412,9 @@ class TestFormatTemplate:
         with pytest.raises(KeyError):
             _format_template("hello {missing}", {"name": "world"})
 
-    def test_index_error_raises(self):
+    def test_non_identifier_field_raises_value_error(self):
         from cronpypeline.markers import _format_template
-        with pytest.raises((IndexError, KeyError)):
+        with pytest.raises(ValueError, match="Unsupported/invalid template field"):
             _format_template("item {0}", {})
 
     def test_value_error_raises(self):

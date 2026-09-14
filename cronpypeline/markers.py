@@ -15,31 +15,29 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from cronpypeline.template_safety import iter_template_fields
+from cronpypeline.template_safety import validate_template_fields
 
 
 def _format_template(template: str, context: dict[str, Any]) -> str:
     """Substitute {key} placeholders in template using context dict.
 
     If the template contains no ``{`` it is returned unchanged. Otherwise
-    attribute/item access (``{a.b}``, ``{a[b]}``) is rejected with
-    :class:`ValueError`, then ``str.format`` is applied. Any other substitution
-    failure (missing key, bad format spec, etc.) propagates to the caller so
-    that configuration typos fail loudly instead of silently producing a
-    literal ``{key}`` path.
+    attribute/item access (``{a.b}``, ``{a[b]}``) and non-identifier fields
+    (e.g. ``{0}``) are rejected with :class:`ValueError`, then ``str.format``
+    is applied. Any other substitution failure (missing key, bad format spec,
+    etc.) propagates to the caller so that configuration typos fail loudly
+    instead of silently producing a literal ``{key}`` path.
 
     :param template: Template string with ``{key}`` placeholders.
     :param context: Mapping of keys to substitution values.
     :returns: Formatted string, or the original template when it has no placeholders.
     :raises KeyError: If a placeholder key is missing from context.
-    :raises ValueError: If the template uses attribute/item access.
-    :raises (IndexError, ValueError): If the template format is invalid.
+    :raises ValueError: If the template uses attribute/item access, a
+        non-identifier field, or an invalid format spec.
     """
     if "{" not in template:
         return template
-    for field_name in iter_template_fields(template):
-        if "." in field_name or "[" in field_name or "]" in field_name:
-            raise ValueError(f"Unsupported/invalid template field: {field_name!r}")
+    validate_template_fields(template)
     return template.format(**context)
 
 
