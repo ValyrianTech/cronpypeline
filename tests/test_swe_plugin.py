@@ -22,6 +22,7 @@ from cronpypeline.plugins.swe_plugin import (
     _GH_POST_ACCEPTED,
     INTEGRATION_BRANCH,
     PR_POLL_COOLDOWN_SECONDS,
+    PR_POLL_MAX_COOLDOWN_SECONDS,
     _a1_is_pass,
     _a7_coverage_pct,
     _batch_fixed_count,
@@ -3038,6 +3039,62 @@ class TestDetectCPrStatus:
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
         assert detect_c_pr_status(ctx) is True
 
+    def test_backoff_extends_cooldown_after_failures(self, tmp_path, monkeypatch):
+        """A failed attempt grows the effective cooldown via backoff."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        # Base cooldown elapsed, but with one recorded failure the effective
+        # cooldown doubles and the trigger must stay quiet.
+        ago = PR_POLL_COOLDOWN_SECONDS + 60
+        recent = (datetime.now(timezone.utc) - timedelta(seconds=ago)).isoformat()
+        pr_data = {
+            "pr_number": 1, "pr_state": "open",
+            "last_polled_at": recent, "pr_poll_failures": 1,
+        }
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps(pr_data))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is False
+
+    def test_backoff_capped_at_max_cooldown(self, tmp_path, monkeypatch):
+        """Backoff is capped so a corrupt counter cannot wedge the trigger."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ago = PR_POLL_MAX_COOLDOWN_SECONDS + 60
+        old = (datetime.now(timezone.utc) - timedelta(seconds=ago)).isoformat()
+        pr_data = {
+            "pr_number": 1, "pr_state": "open",
+            "last_polled_at": old, "pr_poll_failures": 50,
+        }
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps(pr_data))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is True
+
+    def test_malformed_failure_counter_treated_as_zero(self, tmp_path, monkeypatch):
+        """A non-integer failure counter is treated as zero (base cooldown)."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        old = (datetime.now(timezone.utc) - timedelta(seconds=PR_POLL_COOLDOWN_SECONDS + 60)).isoformat()
+        pr_data = {
+            "pr_number": 1, "pr_state": "open",
+            "last_polled_at": old, "pr_poll_failures": "oops",
+        }
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps(pr_data))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is True
+
+    def test_negative_failure_counter_treated_as_zero(self, tmp_path, monkeypatch):
+        """A negative failure counter is clamped to zero (base cooldown)."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        old = (datetime.now(timezone.utc) - timedelta(seconds=PR_POLL_COOLDOWN_SECONDS + 60)).isoformat()
+        pr_data = {
+            "pr_number": 1, "pr_state": "open",
+            "last_polled_at": old, "pr_poll_failures": -3,
+        }
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps(pr_data))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_c_pr_status(ctx) is True
+
 
 # ─── run_c_pr_status ────────────────────────────────────────────────────────
 
@@ -4703,6 +4760,111 @@ class TestRunCPrStatusPrFetchError:
         with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=URLError("fail")):
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
+
+
+class TestRunCPrStatusPollCooldownOnFailure:
+    """A failed fetch must still advance the cooldown (no retry storm)."""
+
+    def test_pr_fetch_error_advances_poll_time_and_counter(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        from urllib.error import URLError
+        with patch(
+            "cronpypeline.plugins.swe_plugin._GH_OPENER.open",
+            side_effect=URLError("fail"),
+        ):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        saved = json.loads(
+            (target / ".SWE" / "pr_published.json").read_text())
+        assert saved["last_polled_at"]
+        assert saved["pr_poll_failures"] == 1
+
+        # A second failed tick keeps escalating the counter.
+        with patch(
+            "cronpypeline.plugins.swe_plugin._GH_OPENER.open",
+            side_effect=URLError("fail"),
+        ):
+            run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        saved = json.loads(
+            (target / ".SWE" / "pr_published.json").read_text())
+        assert saved["pr_poll_failures"] == 2
+
+    def test_pr_fetch_error_with_malformed_counter(self, tmp_path, monkeypatch):
+        """A malformed counter is reset to zero before incrementing."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7, "pr_poll_failures": "oops"}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        from urllib.error import URLError
+        with patch(
+            "cronpypeline.plugins.swe_plugin._GH_OPENER.open",
+            side_effect=URLError("fail"),
+        ):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        saved = json.loads(
+            (target / ".SWE" / "pr_published.json").read_text())
+        assert saved["pr_poll_failures"] == 1
+
+    def test_reviews_fetch_error_advances_counter(self, tmp_path, monkeypatch):
+        """A failed reviews fetch also advances the failure counter."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "state": "open", "merged": False,
+            "html_url": "https://github.com/owner/repo/pull/7",
+        }).encode()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        from urllib.error import URLError
+        with patch(
+            "cronpypeline.plugins.swe_plugin._GH_OPENER.open",
+            side_effect=[mock_resp, URLError("fail")],
+        ):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "Failed to fetch PR reviews" in result.stderr
+        saved = json.loads(
+            (target / ".SWE" / "pr_published.json").read_text())
+        assert saved["pr_poll_failures"] == 1
+
+    def test_successful_fetch_resets_counter(self, tmp_path, monkeypatch):
+        """A successful poll clears accumulated backoff failures."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7, "pr_poll_failures": 4}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "state": "open", "merged": False,
+            "html_url": "https://github.com/owner/repo/pull/7",
+        }).encode()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        empty_reviews = MagicMock()
+        empty_reviews.read.return_value = json.dumps([]).encode()
+        empty_reviews.__enter__ = MagicMock(return_value=empty_reviews)
+        empty_reviews.__exit__ = MagicMock(return_value=False)
+        with patch(
+            "cronpypeline.plugins.swe_plugin._GH_OPENER.open",
+            side_effect=[mock_resp, empty_reviews],
+        ):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        saved = json.loads(
+            (target / ".SWE" / "pr_published.json").read_text())
+        assert saved["pr_poll_failures"] == 0
+        assert saved["last_polled_at"]
 
 
 class TestDetectCCoverageIssuePrNotReviewed:
