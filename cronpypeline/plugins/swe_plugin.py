@@ -12,7 +12,7 @@ import shutil
 import subprocess  # nosec B404 - subprocess is used by design to run git commands for pipeline state detection
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -40,6 +40,7 @@ PHASE_A_GIT_AUTHOR_EMAIL = "swe-pipeline@valyrian.tech"
 
 GITHUB_RECHECK_SECONDS = 10 * 60
 PR_POLL_COOLDOWN_SECONDS = 15 * 60
+PR_POLL_MAX_COOLDOWN_SECONDS = 60 * 60
 SWE_SUBDIR = ".SWE"
 GITHUB_SESSION_FILE = f"{SWE_SUBDIR}/github_session.json"
 
@@ -2110,13 +2111,15 @@ def detect_c_pr_status(context: dict[str, Any]) -> bool:
         if not (session is not None and session.get("active") and session.get("gh_close_pending")):
             return False
 
-    # Cooldown: don't poll more often than the configured interval
+    # Cooldown: don't poll more often than the effective interval.  The
+    # effective interval grows with consecutive failures so an unreachable
+    # API is backed off instead of hammered on every tick.
     last_polled = pr_data.get("last_polled_at", "")
     if last_polled:
         last = _parse_utc_datetime(last_polled)
         if last is not None:
             ago = (datetime.now(timezone.utc) - last).total_seconds()
-            if ago < PR_POLL_COOLDOWN_SECONDS:
+            if ago < _effective_poll_cooldown(pr_data):
                 return False
 
     token = _load_github_token(target_config)
@@ -2192,6 +2195,26 @@ def _retry_pending_github_close(
     )
 
 
+def _effective_poll_cooldown(pr_data: dict[str, Any]) -> float:
+    """Return the cooldown (seconds) before the next PR poll is allowed.
+
+    The base cooldown is ``PR_POLL_COOLDOWN_SECONDS``.  When previous poll
+    attempts have failed (``pr_poll_failures`` counter in the PR marker) the
+    cooldown grows exponentially -- ``base * 2**failures`` -- capped at
+    ``PR_POLL_MAX_COOLDOWN_SECONDS`` so a sustained GitHub outage does not
+    translate into a per-tick retry storm.  A malformed counter is treated as
+    zero so a corrupt marker can never wedge the trigger permanently.
+
+    :param pr_data: Parsed ``pr_published.json`` contents.
+    :returns: Effective cooldown in seconds.
+    """
+    failures = pr_data.get("pr_poll_failures", 0)
+    if not isinstance(failures, int) or failures < 0:
+        failures = 0
+    cooldown = PR_POLL_COOLDOWN_SECONDS * (2 ** failures)
+    return min(cooldown, PR_POLL_MAX_COOLDOWN_SECONDS)
+
+
 def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     """Poll GitHub PR for merge/reject/changes-requested.
 
@@ -2229,18 +2252,39 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+    def _record_poll_failure() -> None:
+        """Persist the poll attempt time and bump the failure counter.
+
+        Advancing ``last_polled_at`` (and growing ``pr_poll_failures``) on a
+        *failed* attempt ensures a GitHub outage is rate-limited rather than
+        retried on every pipeline tick.
+        """
+        failures = pr_data.get("pr_poll_failures", 0)
+        if not isinstance(failures, int) or failures < 0:
+            failures = 0
+        pr_data["pr_poll_failures"] = failures + 1
+        pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
+
+    # Advance the poll time on the *attempt* so that a failing API is also
+    # rate-limited by the cooldown instead of being retried on every tick.
+    pr_data["last_polled_at"] = datetime.now(timezone.utc).isoformat()
+    pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
+
     try:
         req = Request(url, headers=headers, method="GET")
         with _GH_OPENER.open(req, timeout=30) as resp:  # nosec B310 - HTTPS GitHub API
             pr_info = json.loads(resp.read().decode("utf-8"))
     except (HTTPError, URLError, OSError):
+        _record_poll_failure()
         return ActionResult(success=False, stderr="Failed to fetch PR info")
 
     gh_state = pr_info.get("state", "open")
     merged = pr_info.get("merged", False)
 
-    # Record poll time immediately after a successful API call
-    pr_data["last_polled_at"] = datetime.now(timezone.utc).isoformat()
+    # Successful fetch — clear any accumulated backoff so the next poll uses
+    # the base cooldown again.
+    pr_data["pr_poll_failures"] = 0
     pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
 
     def _update_marker(new_state: str, **kwargs: Any) -> None:
@@ -2310,6 +2354,9 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         with _GH_OPENER.open(req2, timeout=30) as resp2:  # nosec B310 - HTTPS GitHub API
             reviews = json.loads(resp2.read().decode("utf-8"))
     except (HTTPError, URLError, OSError) as e:
+        # Refreshed attempt time + failure counter so the reviews outage is
+        # backed off just like the PR-info fetch above.
+        _record_poll_failure()
         return ActionResult(
             success=False,
             stderr=f"Failed to fetch PR reviews: {e}",
