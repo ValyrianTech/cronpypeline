@@ -33,8 +33,20 @@ _SENSITIVE_SUBSTRINGS = (
 
 
 def iter_template_fields(template: str) -> list[str]:
-    """Return the field names referenced by a ``str.format`` template."""
-    return [field for _, field, _, _ in string.Formatter().parse(template) if field is not None]
+    """Return the field names referenced by a ``str.format`` template.
+
+    ``str.format`` also substitutes nested replacement fields inside a format
+    spec (e.g. ``{x:{y.w}}`` performs ``y.w`` attribute access), so this recurses
+    into the ``format_spec`` element of each parsed tuple to surface those fields
+    too.
+    """
+    fields: list[str] = []
+    for _, field, format_spec, _ in string.Formatter().parse(template):
+        if field is not None:
+            fields.append(field)
+        if format_spec:
+            fields.extend(iter_template_fields(format_spec))
+    return fields
 
 
 def validate_template_fields(template: str) -> list[str]:
