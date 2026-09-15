@@ -27,6 +27,12 @@ class TestIterTemplateFields:
     def test_item_field_preserved_verbatim(self):
         assert iter_template_fields("{a[b]}") == ["a[b]"]
 
+    def test_nested_simple_field(self):
+        assert iter_template_fields("{x:{y}}") == ["x", "y"]
+
+    def test_nested_attribute_field_preserved_verbatim(self):
+        assert iter_template_fields("{x:{y.w}}") == ["x", "y.w"]
+
 
 class TestValidateTemplateFields:
     """Tests for validate_template_fields."""
@@ -52,6 +58,28 @@ class TestValidateTemplateFields:
     def test_rejects_unbalanced_brace(self):
         with pytest.raises(ValueError):
             validate_template_fields("{")
+
+    def test_rejects_nested_attribute_access(self):
+        with pytest.raises(ValueError):
+            validate_template_fields("{x:{y.w}}")
+
+    def test_rejects_nested_item_access(self):
+        with pytest.raises(ValueError):
+            validate_template_fields("{x:{cfg[password]}}")
+
+    def test_accepts_nested_simple_field(self):
+        assert validate_template_fields("{x:{width}}") == ["x", "width"]
+
+    def test_rejects_deeply_nested_attribute_access(self):
+        with pytest.raises(ValueError):
+            validate_template_fields("{x:{y:{z.w}}}")
+
+    def test_accepts_multiple_nested_simple_fields(self):
+        assert validate_template_fields("{value:{width}.{precision}f}") == [
+            "value",
+            "width",
+            "precision",
+        ]
 
 
 class TestIsSensitiveKey:
