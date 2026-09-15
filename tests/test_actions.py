@@ -461,6 +461,89 @@ class TestSubprocessActionHandler:
         assert "Template substitution failed" in result.stderr
 
 
+class TestSubprocessActionHandlerScriptValidation:
+    """Tests for subprocess handler script path validation."""
+
+    def test_absolute_script_outside_workspace_is_rejected(self, tmp_path):
+        """An absolute script path outside the workspace is rejected and not executed."""
+        outside = tmp_path.parent / "evil.py"
+        outside.write_text("print('evil')\n")
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": str(outside), "args": []},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        with patch("subprocess.run") as mock_run:
+            result = handler.execute(action, ctx)
+        assert result.success is False
+        assert "script escapes workspace directory" in result.stderr
+        mock_run.assert_not_called()
+
+    def test_relative_script_with_dotdot_escaping_workspace_is_rejected(self, tmp_path):
+        """A relative script path with ``..`` escaping the workspace is rejected."""
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": "../evil.py", "args": []},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        with patch("subprocess.run") as mock_run:
+            result = handler.execute(action, ctx)
+        assert result.success is False
+        assert "script escapes workspace directory" in result.stderr
+        mock_run.assert_not_called()
+
+    def test_bare_command_name_is_allowed(self, tmp_path):
+        """A bare command name (no separator) is resolved via PATH and allowed."""
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": "echo", "args": ["hello"]},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            result = handler.execute(action, ctx)
+        assert result.success is True
+        mock_run.assert_called_once()
+        assert mock_run.call_args[0][0][0] == "echo"
+
+    def test_absolute_script_inside_workspace_works(self, tmp_path):
+        """An absolute script path inside the workspace reaches subprocess.run."""
+        script = tmp_path / "test_script.py"
+        script.write_text("print('hi')\n")
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": str(script), "args": []},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            result = handler.execute(action, ctx)
+        assert result.success is True
+        mock_run.assert_called_once()
+
+    def test_relative_script_with_separator_inside_workspace_works(self, tmp_path):
+        """A relative script path with a separator inside the workspace reaches subprocess.run."""
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        script = subdir / "test_script.py"
+        script.write_text("print('hi')\n")
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": "subdir/test_script.py", "args": []},
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler = SubprocessActionHandler()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            result = handler.execute(action, ctx)
+        assert result.success is True
+        mock_run.assert_called_once()
+
+
 class TestCustomActionHandler:
     """Tests for custom action handler."""
 
@@ -959,6 +1042,59 @@ class TestActionHandlerValidateCwd:
         result = handler._validate_cwd(outside, tmp_path)
         assert result is not None
         assert result.success is False
+
+
+class TestActionHandlerValidateScript:
+    """Tests for ActionHandler._validate_script."""
+
+    def test_empty_script_returns_none(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        assert handler._validate_script("", tmp_path) is None
+
+    def test_bare_command_returns_none(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        assert handler._validate_script("make", tmp_path) is None
+
+    def test_absolute_path_outside_workspace_returns_failure(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        outside = str(tmp_path.parent / "evil.py")
+        result = handler._validate_script(outside, tmp_path)
+        assert result is not None
+        assert result.success is False
+        assert result.stderr == f"script escapes workspace directory: {outside}"
+
+    def test_absolute_path_inside_workspace_returns_none(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        assert handler._validate_script(str(tmp_path / "subdir" / "script.py"), tmp_path) is None
+
+    def test_relative_path_with_separator_inside_workspace_returns_none(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        assert handler._validate_script("subdir/script.py", tmp_path) is None
+
+    def test_relative_path_with_dotdot_escaping_returns_failure(self, tmp_path):
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        result = handler._validate_script("../evil.py", tmp_path)
+        assert result is not None
+        assert result.success is False
+        assert "script escapes workspace directory" in result.stderr
+
+    def test_symlink_script_escaping_workspace_is_rejected(self, tmp_path):
+        """A symlink inside the workspace pointing outside is rejected."""
+        from cronpypeline.actions import ActionHandler
+        handler = ActionHandler()
+        outside_file = tmp_path.parent / "outside_script.py"
+        outside_file.write_text("print('evil')\n")
+        (tmp_path / "link.py").symlink_to(outside_file)
+        result = handler._validate_script(str(tmp_path / "link.py"), tmp_path)
+        assert result is not None
+        assert result.success is False
+        assert "script escapes workspace directory" in result.stderr
 
 
 class TestSubprocessActionHandlerEdgeCases:

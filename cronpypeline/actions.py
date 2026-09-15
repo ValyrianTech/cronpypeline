@@ -562,6 +562,35 @@ class ActionHandler:
             )
         return None
 
+    def _validate_script(self, script: str, workspace_dir: Path) -> ActionResult | None:
+        """Validate that an explicit script path stays inside workspace_dir.
+
+        Bare command names (no path separator) are resolved via PATH and are
+        therefore allowed through unchanged. Only explicit paths are checked:
+        an absolute path is resolved as-is, while a relative path containing a
+        separator is resolved against workspace_dir.
+
+        :param script: The script path or command name to validate.
+        :param workspace_dir: The workspace root directory.
+        :returns: An error ActionResult if the script escapes the workspace,
+            else None.
+        """
+        if not script:
+            return None
+        if not (Path(script).is_absolute() or os.sep in script or "/" in script):
+            return None
+        script_path = Path(script)
+        if not script_path.is_absolute():
+            script_path = workspace_dir / script_path
+        script_path = script_path.resolve()
+        workspace_resolved = workspace_dir.resolve()
+        if not script_path.is_relative_to(workspace_resolved):
+            return ActionResult(
+                success=False,
+                stderr=f"script escapes workspace directory: {script}",
+            )
+        return None
+
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
         """Execute the action.
 
@@ -696,6 +725,11 @@ class SubprocessActionHandler(ActionHandler):
             result.command = command_str
             return result
 
+        result = self._validate_script(script, context.workspace_dir)
+        if result is not None:
+            result.command = command_str
+            return result
+
         timeout = action.timeout_seconds or 300  # Default to 5 minutes
 
         if script.endswith(".py"):
@@ -706,7 +740,7 @@ class SubprocessActionHandler(ActionHandler):
         Path(cwd).mkdir(parents=True, exist_ok=True)
 
         try:
-            proc = subprocess.run(  # nosec B603 - runs an explicit executable/script without a shell; args are passed as a list
+            proc = subprocess.run(  # nosec B603 - script is validated to stay inside the workspace and args are passed as a list without a shell
                 cmd,
                 cwd=cwd,
                 capture_output=True,

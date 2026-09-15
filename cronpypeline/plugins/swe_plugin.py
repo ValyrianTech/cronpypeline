@@ -12,7 +12,7 @@ import shutil
 import subprocess  # nosec B404 - subprocess is used by design to run git commands for pipeline state detection
 import sys
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
