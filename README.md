@@ -685,6 +685,7 @@ register_handler(ActionType.QUEUE_AGENT, handler)
 - Agent name sanitization: agent names are sanitized (non-alphanumeric/underscore/dot/hyphen characters replaced with `_`) before use in queue filenames, and the resolved queue file path is validated with `is_relative_to()` — queue files escaping the queue directory raise a `ValueError` (prevents path traversal)
 - Queue directory validation: when wired from the pipeline's `action_handler` config, `Pipeline.__init__` validates that the handler's `queue_dir` resolves within the pipeline's `workspace_dir`. A `queue_dir` that escapes the workspace (via `..` segments, absolute paths, or symlinks) raises a `ValueError` (`"queue_dir escapes workspace: {queue_dir}"`), preventing the conversation queue from writing agent entries outside the workspace.
 - Optional params: `model`, `temperature`, `max_tokens`
+- **Sensitive key filtering for extra params**: Any extra (non-standard) action params are copied into the queue entry, but sensitive-looking keys (matched by `is_sensitive_key` — e.g. `token`, `secret`, `password`, `api_key`, `auth_token`) are skipped, so secrets never reach the queue file
 
 **Default queue entry format** (backward compatible):
 ```json
