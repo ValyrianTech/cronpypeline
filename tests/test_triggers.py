@@ -138,7 +138,7 @@ class TestMarkerStateTrigger:
         )
         assert evaluate_trigger(trigger, tmp_path) is False
 
-    def test_fires_when_field_missing_in_json(self, tmp_path):
+    def test_does_not_fire_when_field_missing_in_json(self, tmp_path):
         data = {"other_field": "value"}
         (tmp_path / "task.json").write_text(json.dumps(data))
         trigger = TriggerCondition(
@@ -148,7 +148,55 @@ class TestMarkerStateTrigger:
             op="lt",
             value=3,
         )
-        # Missing field should be treated as 0/default for numeric comparisons
+        # Missing field must fail closed, never treated as 0/default
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_does_not_fire_when_field_missing_gt(self, tmp_path):
+        data = {"other_field": "value"}
+        (tmp_path / "task.json").write_text(json.dumps(data))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="retry_count",
+            op="gt",
+            value=3,
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_does_not_fire_when_field_missing_eq(self, tmp_path):
+        data = {"other_field": "value"}
+        (tmp_path / "task.json").write_text(json.dumps(data))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="status",
+            op="eq",
+            value="open",
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_does_not_fire_when_field_missing_ne(self, tmp_path):
+        data = {"other_field": "value"}
+        (tmp_path / "task.json").write_text(json.dumps(data))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="status",
+            op="ne",
+            value="open",
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_fires_when_field_present_and_zero_lt(self, tmp_path):
+        data = {"coverage": 0}
+        (tmp_path / "task.json").write_text(json.dumps(data))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="coverage",
+            op="lt",
+            value=80,
+        )
         assert evaluate_trigger(trigger, tmp_path) is True
 
 
@@ -516,6 +564,54 @@ class TestMarkerStateEdgeCases:
             field="status",
             op="gte",
             value=3,
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_lt_non_numeric_expected_returns_false(self, tmp_path):
+        """Numeric field vs string expected with 'lt' should return False, not raise TypeError."""
+        (tmp_path / "task.json").write_text(json.dumps({"count": 5}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="count",
+            op="lt",
+            value="x",
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_lte_non_numeric_expected_returns_false(self, tmp_path):
+        """Numeric field vs string expected with 'lte' should return False, not raise TypeError."""
+        (tmp_path / "task.json").write_text(json.dumps({"count": 5}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="count",
+            op="lte",
+            value="x",
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_gt_non_numeric_expected_returns_false(self, tmp_path):
+        """Numeric field vs string expected with 'gt' should return False, not raise TypeError."""
+        (tmp_path / "task.json").write_text(json.dumps({"count": 5}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="count",
+            op="gt",
+            value="x",
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_gte_non_numeric_expected_returns_false(self, tmp_path):
+        """Numeric field vs string expected with 'gte' should return False, not raise TypeError."""
+        (tmp_path / "task.json").write_text(json.dumps({"count": 5}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="count",
+            op="gte",
+            value="x",
         )
         assert evaluate_trigger(trigger, tmp_path) is False
 
