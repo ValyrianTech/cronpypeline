@@ -91,6 +91,10 @@ def _eval_file_older_than(trigger: TriggerCondition, base_dir: Path) -> bool:
 def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
     """Evaluate a JSON marker field against an expected value.
 
+    Fails closed (returns False) when the field is missing from the marker
+    JSON or when the field/expected value are not type-comparable for the
+    ordered comparison operators (lt/lte/gt/gte).
+
     :raises ValueError: If the operator is not one of eq, ne, lt, lte, gt, gte.
     """
     path = _validate_trigger_path(base_dir, trigger.path or "")
@@ -101,7 +105,9 @@ def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
     except (json.JSONDecodeError, OSError):
         return False
 
-    field_value = data.get(trigger.field, 0)
+    if trigger.field not in data:
+        return False
+    field_value = data[trigger.field]
     op = trigger.op
     expected = trigger.value
 
@@ -110,17 +116,16 @@ def _eval_marker_state(trigger: TriggerCondition, base_dir: Path) -> bool:
     elif op == "ne":
         return field_value != expected
     elif op in ("lt", "lte", "gt", "gte"):
-        try:
-            if op == "lt":
-                return field_value < expected
-            elif op == "lte":
-                return field_value <= expected
-            elif op == "gt":
-                return field_value > expected
-            else:
-                return field_value >= expected
-        except TypeError:
+        if not isinstance(field_value, (int, float)) or not isinstance(expected, (int, float)):
             return False
+        if op == "lt":
+            return field_value < expected
+        elif op == "lte":
+            return field_value <= expected
+        elif op == "gt":
+            return field_value > expected
+        else:
+            return field_value >= expected
     else:
         raise ValueError(f"Unknown operator: {op}")
 
