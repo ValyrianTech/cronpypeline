@@ -577,6 +577,61 @@ class TestStageStateProcessingQueueFile:
         assert state.is_processing is True
         assert state.is_stale is False
 
+    def test_processing_with_existing_queue_file_and_expired_age_is_stale(self, tmp_path):
+        """Processing marker with an existing queue_file but expired age should be stale."""
+        stage = Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            timeout_minutes=30,
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+        queue_file = tmp_path / "queue" / "entry.json"
+        queue_file.parent.mkdir()
+        queue_file.touch()
+
+        import json
+        proc_path = tmp_path / ".processing"
+        proc_path.write_text(json.dumps({"queue_file": str(queue_file)}))
+        # Set processing marker mtime to 60 minutes ago
+        old_time = time.time() - 3600
+        os.utime(proc_path, (old_time, old_time))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is True
+
+    def test_processing_with_existing_queue_file_and_fresh_age_not_stale(self, tmp_path):
+        """Processing marker with an existing queue_file and fresh age should not be stale."""
+        stage = Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            timeout_minutes=30,
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+        queue_file = tmp_path / "queue" / "entry.json"
+        queue_file.parent.mkdir()
+        queue_file.touch()
+
+        import json
+        proc_path = tmp_path / ".processing"
+        proc_path.write_text(json.dumps({"queue_file": str(queue_file)}))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is False
+
     def test_processing_with_gone_queue_file_and_reminder_not_stale(self, tmp_path):
         """Queue file gone but reminder file exists → agent restarted, not stale."""
         stage = Stage(

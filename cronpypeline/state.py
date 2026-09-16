@@ -53,6 +53,8 @@ class StageState:
         :param base_dir: Target directory to check markers in.
         :param context: Optional context dict for marker template substitution.
         """
+        from pathlib import Path as _P
+
         markers = self.stage.markers
         ctx = context or {}
 
@@ -90,26 +92,20 @@ class StageState:
                 age = marker_age_seconds(markers["processing"], base_dir, context=ctx)
                 self.processing_age_seconds = age
 
+                # Age-based timeout always applies, even when queue_file is present.
+                if age is not None:
+                    self.is_stale = age >= self.stage.timeout_minutes * 60
                 # Queue-file-based staleness: if queue_file is gone, agent finished
                 # but didn't produce completion → immediately stale.
-                # Exception: if reminder files exist in the queue directory, the
-                # agent was cut off (e.g. tool-call limit) and is being restarted
-                # by the reminder system — not stale.
-                if data and "queue_file" in data:
-                    from pathlib import Path as _P
-                    if not _P(data["queue_file"]).exists():
-                        queue_dir = _P(data["queue_file"]).parent
-                        has_reminder = (
-                            queue_dir.exists()
-                            and any("_reminder_" in f.name for f in queue_dir.iterdir())
-                        )
-                        self.is_stale = not has_reminder
-                    else:
-                        self.is_stale = False
-                else:
-                    # Time-based staleness (fallback)
-                    if age is not None:
-                        self.is_stale = age >= self.stage.timeout_minutes * 60
+                # Exception: reminder files in the queue directory mean the agent
+                # was cut off and is being restarted by the reminder system.
+                if data and "queue_file" in data and not _P(data["queue_file"]).exists():
+                    queue_dir = _P(data["queue_file"]).parent
+                    has_reminder = (
+                        queue_dir.exists()
+                        and any("_reminder_" in f.name for f in queue_dir.iterdir())
+                    )
+                    self.is_stale = self.is_stale or not has_reminder
             else:
                 self.processing_age_seconds = None
 
