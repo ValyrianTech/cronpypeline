@@ -3,6 +3,7 @@
 import pytest
 
 from cronpypeline.template_safety import (
+    flatten_target_config,
     is_sensitive_key,
     iter_template_fields,
     validate_template_fields,
@@ -126,3 +127,41 @@ class TestIsSensitiveKey:
 
     def test_not_sensitive_coverage_threshold(self):
         assert is_sensitive_key("coverage_threshold") is False
+
+
+class TestFlattenTargetConfig:
+    """Tests for flatten_target_config."""
+
+    def test_sensitive_keys_excluded(self):
+        ctx: dict = {"target": "repo"}
+        result = flatten_target_config(
+            ctx,
+            {"api_token": "SECRET", "client_secret": "SECRET", "db_password": "SECRET"},
+        )
+        assert result is ctx
+        assert "api_token" not in ctx
+        assert "client_secret" not in ctx
+        assert "db_password" not in ctx
+        assert ctx["target"] == "repo"
+
+    def test_literal_target_config_key_excluded(self):
+        ctx: dict = {}
+        flatten_target_config(ctx, {"target_config": {"nested": "value"}})
+        assert "target_config" not in ctx
+
+    def test_non_sensitive_keys_flattened(self):
+        ctx: dict = {}
+        flatten_target_config(ctx, {"slug": "x", "test_cmd": "pytest"})
+        assert ctx["slug"] == "x"
+        assert ctx["test_cmd"] == "pytest"
+
+    def test_existing_key_not_overwritten(self):
+        ctx: dict = {"slug": "base"}
+        flatten_target_config(ctx, {"slug": "from-config"})
+        assert ctx["slug"] == "base"
+
+    def test_none_target_config(self):
+        ctx: dict = {"target": "repo"}
+        result = flatten_target_config(ctx, None)
+        assert result is ctx
+        assert ctx == {"target": "repo"}

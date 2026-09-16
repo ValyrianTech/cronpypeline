@@ -935,3 +935,26 @@ class TestPipelineStateFlattenConfig:
         state.derive(["repo1"], target_configs={"repo1": {"test_cmd": "pytest", "threshold": 90}})
         # The target state should exist
         assert "repo1" in state.target_states
+
+    def test_sensitive_target_config_keys_excluded_from_context(self, tmp_path):
+        """Sensitive target_config keys should not be flattened into the context."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "t").mkdir()
+
+        stages = [
+            Stage(
+                id="A0",
+                name="Step 1",
+                trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+                action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo a"}),
+                markers={"completion": MarkerSpec(name="a.md", type=MarkerType.FILE)},
+            ),
+        ]
+        state = PipelineState(workspace_dir=workspace, stages=stages)
+        state.derive(["t"], target_configs={"t": {"api_token": "SECRET", "slug": "x"}})
+        ctx = state.target_states["t"].context
+        assert ctx is not None
+        assert "api_token" not in ctx
+        assert ctx["slug"] == "x"
+        assert ctx["target_config"] == {"api_token": "SECRET", "slug": "x"}
