@@ -189,6 +189,30 @@ class TestConversationQueueHandler:
         assert entry["temperature"] == 0.7
         assert entry["max_tokens"] == 4096
 
+    def test_non_standard_params_skip_sensitive_keys(self, tmp_path):
+        """Non-standard params are copied, but sensitive-looking keys are dropped."""
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "TestAgent",
+                "prompt": "Test",
+                "auth_token": "secret-value",
+                "api_key": "secret-key",
+                "repo_name": "myrepo",
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler.execute(action, ctx)
+
+        files = list(queue_dir.glob("*.json"))
+        entry = json.loads(files[0].read_text())
+        assert entry["repo_name"] == "myrepo"
+        assert "auth_token" not in entry
+        assert "api_key" not in entry
+
     def test_check_complete_when_queue_empty(self, tmp_path):
         queue_dir = tmp_path / "queue"
         queue_dir.mkdir()
