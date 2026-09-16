@@ -38,6 +38,7 @@ from cronpypeline.markers import (
 )
 from cronpypeline.state import PipelineState, StageState, TargetState
 from cronpypeline.targets import load_targets, load_targets_with_config
+from cronpypeline.template_safety import flatten_target_config
 from cronpypeline.triggers import evaluate_trigger, resolve_custom_callable
 
 
@@ -140,6 +141,11 @@ def _build_marker_context(target: str, target_dir: Path, workspace_dir: Path, ta
 
     Flattens target_config keys into the top-level context so they can be
     used directly in templates (e.g. {slug} instead of {target_config[slug]}).
+    The ``target_config`` key and any secret-bearing keys (as determined by
+    :func:`cronpypeline.template_safety.is_sensitive_key`) are excluded from
+    the flattened namespace so secrets never reach marker filenames,
+    directories, or logs. The raw ``target_config`` dict remains available
+    under the ``target_config`` key for backward compatibility.
 
     :param target: Target name.
     :param target_dir: Full path to target directory.
@@ -153,10 +159,7 @@ def _build_marker_context(target: str, target_dir: Path, workspace_dir: Path, ta
         "workspace_dir": str(workspace_dir),
         "target_config": target_config,
     }
-    # Flatten target_config keys (non-conflicting ones only)
-    for k, v in target_config.items():
-        if k not in ctx:
-            ctx[k] = v
+    flatten_target_config(ctx, target_config)
     return ctx
 
 

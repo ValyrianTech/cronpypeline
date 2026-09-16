@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.config import ActionSpec, ActionType
-from cronpypeline.template_safety import is_sensitive_key, validate_template_fields
+from cronpypeline.template_safety import flatten_target_config, validate_template_fields
 from cronpypeline.triggers import resolve_custom_callable
 
 
@@ -485,11 +485,7 @@ def build_template_variables(context: TickContext) -> dict[str, Any]:
         "target_dir": str(context.target_dir),
         "workspace_dir": str(context.workspace_dir),
     }
-    for k, v in context.target_config.items():
-        if k == "target_config" or is_sensitive_key(str(k)):
-            continue
-        if k not in variables:
-            variables[k] = v
+    flatten_target_config(variables, context.target_config)
     return variables
 
 
