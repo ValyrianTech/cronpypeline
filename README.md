@@ -368,7 +368,7 @@ The filesystem is the source of truth — no database, no in-memory state:
 | `file_missing` | Fire if file doesn't exist | `path` |
 | `file_exists` | Fire if file exists | `path` |
 | `file_older_than` | Fire if file is older than N minutes | `path`, `minutes` |
-| `marker_state` | Fire based on JSON marker field value (ordering ops return false on type mismatch) | `path`, `field`, `op`, `value` |
+| `marker_state` | Fire based on JSON marker field value (fails closed: missing field or ordered-op type mismatch returns false) | `path`, `field`, `op`, `value` |
 | `queue_empty` | Fire if action queue directory is empty | `queue_dir` |
 | `custom` | User-provided Python callable | `callable` |
 | `and` | All conditions must be true | `conditions` (array of triggers) |
@@ -381,6 +381,8 @@ The `queue_dir` value for the `queue_empty` trigger is validated the same way vi
 **Operators for `marker_state`:** `eq`, `ne`, `lt`, `lte`, `gt`, `gte`
 
 For the ordering operators (`lt`, `lte`, `gt`, `gte`), if the JSON field value's type does not match the expected value's type (e.g. comparing a string field against an integer value), the trigger returns `False` rather than raising an error.
+
+The `marker_state` trigger fails closed: if the referenced field is missing from the marker JSON, the trigger returns `False` for every operator instead of treating the field as `0`. The ordered operators (`lt`, `lte`, `gt`, `gte`) additionally require both the field value and the expected value to be numeric.
 
 **Example:**
 
