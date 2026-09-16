@@ -68,6 +68,7 @@
 - `ActionHandlerConfig.from_dict` now treats an empty `params: {}` dict as present (not missing), so other top-level keys are no longer incorrectly merged into `params`.
 - `ActionHandlerConfig.from_dict` now raises a `ValueError` with a clear message when the required `type` field is missing, instead of an unhandled `KeyError`.
 - `TickResult.__str__` now includes stderr output, so captured tracebacks are shown to the user.
+- Processing-stage staleness now always applies the `timeout_minutes` age threshold, even when the processing marker's `queue_file` field is present and the queue file still exists. Previously a stage was exempt from timeout staleness whenever its queue file existed, so an agent that hung while its queue file was still present would be treated as processing indefinitely; now such a stage is marked stale once its age reaches `timeout_minutes`. Queue-file disappearance remains an immediate additional staleness signal (with the existing reminder-file exception).
 - `tick()` exception handler now reports the actual failing target instead of `*`.
 - `tick_all()` now continues processing remaining targets even if one raises an exception, and captures the traceback in the returned TickResult's stderr field.
 - `MarkerSpec.resolve_path` now rejects path traversal (`..` segments) and absolute paths that escape the workspace.

@@ -306,7 +306,7 @@ A rejection marker only blocks a stage from being actionable when rejection trac
 
 ### Queue-file staleness
 
-Processing markers can include a `queue_file` field (written automatically by `ConversationQueueHandler`). When the queue file no longer exists, the stage is immediately marked stale — no waiting for `timeout_minutes` to elapse. This detects the case where an agent finished but didn't produce a completion marker. Falls back to time-based staleness when no `queue_file` field is present.
+Processing markers can include a `queue_file` field (written automatically by `ConversationQueueHandler`). The `timeout_minutes` age threshold always applies to processing stages — even when a `queue_file` is present and still exists — so a hung agent is marked stale once its age reaches the timeout. On top of that, when the queue file no longer exists, the stage is immediately marked stale (no waiting for the timeout), detecting the case where an agent finished but didn't produce a completion marker. The exception: reminder files in the queue directory mean the agent was cut off (e.g. by a tool-call limit) and is being restarted, so the stage is not marked stale by the queue-file check.
 
 ### Dynamic marker naming
 
@@ -484,7 +484,7 @@ Custom actions and `queue_agent` actions are re-queued when stale, subject to `m
 
 In dry-run mode, the pipeline reports what it would do — a stale sync action reports "Would give up on stale stage {id} (sync action with processing marker)", while a stale async action reports "Would re-queue stale stage X" or "Would give up on stale stage X (retry N >= max M)" — without actually deleting the processing marker or re-queueing. When a re-queued (async) action fails, the pipeline returns `ACTION_FAILED` (instead of `ACTION_EXECUTED`), runs the stage's `on_fail` action if configured, and reports the failure message.
 
-**Queue-file-based staleness**: If the processing marker contains a `queue_file` field, staleness is detected immediately when the queue file is gone (agent finished without producing completion) — no waiting for the timeout.
+**Queue-file-based staleness**: If the processing marker contains a `queue_file` field, staleness is detected immediately when the queue file is gone (agent finished without producing completion) — no waiting for the timeout. This is an additional signal on top of the age-based `timeout_minutes` threshold, which always applies (even when the queue file still exists). The exception: reminder files in the queue directory mean the agent was cut off and is being restarted, so the stage is not marked stale by the queue-file check.
 
 ### Retries and give-up
 
