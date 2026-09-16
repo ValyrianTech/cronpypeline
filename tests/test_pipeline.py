@@ -21,6 +21,7 @@ from cronpypeline.pipeline import (
     Pipeline,
     TickResult,
     TickResultStatus,
+    _build_marker_context,
     _validate_target_name,
 )
 
@@ -183,6 +184,19 @@ class TestValidateTargetName:
         pipeline = Pipeline(config)
         with pytest.raises(ValueError):
             pipeline.status()
+
+
+class TestBuildMarkerContext:
+    """Tests for _build_marker_context sensitive-key filtering."""
+
+    def test_sensitive_keys_excluded(self, tmp_path):
+        target_config = {"api_token": "SECRET", "slug": "x"}
+        ctx = _build_marker_context(
+            "repo", tmp_path / "repo", tmp_path / "workspace", target_config
+        )
+        assert "api_token" not in ctx
+        assert ctx["slug"] == "x"
+        assert ctx["target_config"] == target_config
 
 
 class TestTickResultStr:

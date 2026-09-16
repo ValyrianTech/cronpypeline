@@ -16,6 +16,7 @@ from cronpypeline.markers import (
     marker_exists,
     read_marker,
 )
+from cronpypeline.template_safety import flatten_target_config
 from cronpypeline.triggers import evaluate_trigger
 
 
@@ -263,10 +264,7 @@ class PipelineState:
                 "workspace_dir": str(self.workspace_dir),
                 "target_config": target_config,
             }
-            # Flatten target_config keys
-            for k, v in target_config.items():
-                if k not in ctx:
-                    ctx[k] = v
+            flatten_target_config(ctx, target_config)
             target_state = TargetState(target=target, stages=self.stages, target_lock=self.target_lock)
             target_state.derive(target_dir, context=ctx)
             self.target_states[target] = target_state

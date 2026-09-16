@@ -7,6 +7,7 @@ substitution to simple ``{name}`` identifier fields only.
 """
 
 import string
+from typing import Any
 
 # Substrings that indicate a config key is likely to carry a secret.
 #
@@ -83,3 +84,25 @@ def is_sensitive_key(name: str) -> bool:
     if lowered == "auth":
         return True
     return any(sub in lowered for sub in _SENSITIVE_SUBSTRINGS)
+
+
+def flatten_target_config(ctx: dict[str, Any], target_config: dict[str, Any] | None) -> dict[str, Any]:
+    """Flatten ``target_config`` keys into ``ctx``, excluding sensitive keys.
+
+    Iterates ``target_config`` (treated as empty when ``None``), skipping the
+    literal ``"target_config"`` key and any key for which
+    :func:`is_sensitive_key` returns True (so secrets never reach marker
+    filenames, directories, or logs). Only non-conflicting keys are set:
+    ``ctx[k] = v`` is performed only when ``k`` is not already present in
+    ``ctx``, preserving any pre-existing base variables.
+
+    :param ctx: Base context dict to flatten into (mutated in place).
+    :param target_config: Per-target configuration dict, or ``None``.
+    :returns: The ``ctx`` dict, for convenience.
+    """
+    for k, v in (target_config or {}).items():
+        if k == "target_config" or is_sensitive_key(str(k)):
+            continue
+        if k not in ctx:
+            ctx[k] = v
+    return ctx
