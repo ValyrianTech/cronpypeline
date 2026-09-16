@@ -19,6 +19,7 @@ from cronpypeline.actions import (
     format_template,
 )
 from cronpypeline.config import ActionSpec
+from cronpypeline.template_safety import is_sensitive_key
 
 
 class ConversationQueueHandler(ActionHandler):
@@ -137,10 +138,12 @@ class ConversationQueueHandler(ActionHandler):
             if val is not None:
                 entry[opt_key] = val
 
-        # Copy any non-standard action params into the entry (override defaults)
+        # Copy any non-standard action params into the entry (override defaults),
+        # skipping sensitive-looking keys so secrets never reach the queue file.
         for pk, pv in params.items():
-            if pk not in _standard_params and pv is not None:
-                entry[pk] = pv
+            if pk in _standard_params or pv is None or is_sensitive_key(pk):
+                continue
+            entry[pk] = pv
 
         # Load agent settings if configured
         if self.agent_settings_dir:
