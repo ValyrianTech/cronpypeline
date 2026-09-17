@@ -25,7 +25,6 @@ from typing import Any
 
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.template_safety import (
-    CREDENTIAL_WORDS,
     flatten_target_config,
     matches_credential_key,
     validate_template_fields,
@@ -420,7 +419,6 @@ _HTTP_OPENER = urllib.request.build_opener(
 )
 _MAX_REDIRECTS = 5
 _SENSITIVE_HEADERS = {"authorization", "cookie", "proxy-authorization"}
-_SENSITIVE_HEADER_KEYWORDS = CREDENTIAL_WORDS
 
 
 def _is_sensitive_header(name: str) -> bool:
