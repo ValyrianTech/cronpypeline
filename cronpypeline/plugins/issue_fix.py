@@ -1200,11 +1200,12 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
     if issue_type != "coverage" and coverage_cmd:
         checkout = _git(repo_dir, "checkout", INTEGRATION_BRANCH, check=False)
         if checkout.returncode != 0:
-            print(f"  WARNING: failed to checkout {INTEGRATION_BRANCH} for baseline "
-                  f"coverage measurement: {checkout.stderr or checkout.stdout}")
-        _, base_out, base_err = _run(coverage_cmd, repo_dir, timeout=900)
-        base_counts = _parse_coverage_output(base_out + "\n" + base_err)
-        baseline_pct = base_counts.get("coverage_pct", 0.0)
+            print(f"  ERROR: cannot measure baseline coverage; refusing "
+                  f"checkout {INTEGRATION_BRANCH}: {checkout.stderr or checkout.stdout}")
+            baseline_pct = None  # fall back to absolute threshold, never self-compare
+        else:
+            _, base_out, base_err = _run(coverage_cmd, repo_dir, timeout=900)
+            baseline_pct = _parse_coverage_output(base_out + "\n" + base_err).get("coverage_pct")
 
     # Verify on the task branch
     checkout = _git(repo_dir, "checkout", branch, check=False)
