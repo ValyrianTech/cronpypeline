@@ -10,7 +10,6 @@ import fnmatch
 import http.client
 import ipaddress
 import os
-import re
 import shlex
 import socket
 import ssl
@@ -25,7 +24,11 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.config import ActionSpec, ActionType
-from cronpypeline.template_safety import flatten_target_config, validate_template_fields
+from cronpypeline.template_safety import (
+    flatten_target_config,
+    matches_credential_key,
+    validate_template_fields,
+)
 from cronpypeline.triggers import resolve_custom_callable
 
 
@@ -416,7 +419,6 @@ _HTTP_OPENER = urllib.request.build_opener(
 )
 _MAX_REDIRECTS = 5
 _SENSITIVE_HEADERS = {"authorization", "cookie", "proxy-authorization"}
-_SENSITIVE_HEADER_KEYWORDS = ("auth", "token", "key", "secret", "credential", "password")
 
 
 def _is_sensitive_header(name: str) -> bool:
@@ -435,13 +437,7 @@ def _is_sensitive_header(name: str) -> bool:
     :param name: Header name to inspect.
     :returns: ``True`` if the header may carry credentials, else ``False``.
     """
-    lowered = name.lower()
-    if lowered in _SENSITIVE_HEADERS:
-        return True
-    return any(
-        re.search(r"\b" + re.escape(keyword) + r"\b", lowered)
-        for keyword in _SENSITIVE_HEADER_KEYWORDS
-    )
+    return name.lower() in _SENSITIVE_HEADERS or matches_credential_key(name, whole_word=True)
 
 
 def format_template(template: str, variables: dict[str, Any]) -> str:

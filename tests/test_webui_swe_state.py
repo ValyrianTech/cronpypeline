@@ -827,6 +827,17 @@ class TestPublicTargetConfig:
         result = app._public_target_config({"my_secret_thing": "xyz", "slug": "repo"})
         assert result == {"slug": "repo"}
 
+    def test_drops_access_key_and_private_key(self):
+        """The shared substring policy redacts access_key / private_key."""
+        result = app._public_target_config({
+            "access_key": "AKIA...",
+            "private_key": "-----BEGIN RSA PRIVATE KEY-----",
+            "slug": "repo",
+        })
+        assert result == {"slug": "repo"}
+        assert app._is_sensitive("access_key") is True
+        assert app._is_sensitive("private_key") is True
+
     def test_benign_keys_survive(self):
         cfg = {
             "slug": "repo",
