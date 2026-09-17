@@ -6,6 +6,7 @@ from cronpypeline.template_safety import (
     flatten_target_config,
     is_sensitive_key,
     iter_template_fields,
+    matches_credential_key,
     validate_template_fields,
 )
 
@@ -127,6 +128,37 @@ class TestIsSensitiveKey:
 
     def test_not_sensitive_coverage_threshold(self):
         assert is_sensitive_key("coverage_threshold") is False
+
+
+class TestMatchesCredentialKey:
+    """Tests for matches_credential_key (shared credential-key policy)."""
+
+    def test_substring_mode_default(self):
+        assert matches_credential_key("github_token") is True
+        assert matches_credential_key("api_key") is True
+        assert matches_credential_key("apikey") is True
+        assert matches_credential_key("private_key") is True
+        assert matches_credential_key("access_key") is True
+
+    def test_substring_mode_exact_auth_true(self):
+        assert matches_credential_key("auth", exact_auth=True) is True
+        assert matches_credential_key("auth_header", exact_auth=True) is True
+
+    def test_substring_mode_exact_auth_false(self):
+        assert matches_credential_key("auth") is False
+        assert matches_credential_key("auth", exact_auth=False) is False
+
+    def test_whole_word_mode(self):
+        assert matches_credential_key("key", whole_word=True) is True
+        assert matches_credential_key("key-holder", whole_word=True) is True
+        assert matches_credential_key("x-api-key", whole_word=True) is True
+        assert matches_credential_key("monkey", whole_word=True) is False
+        assert matches_credential_key("keyless", whole_word=True) is False
+
+    def test_case_insensitivity(self):
+        assert matches_credential_key("DB_PASSWORD") is True
+        assert matches_credential_key("X-API-Key", whole_word=True) is True
+        assert matches_credential_key("X-Monkey", whole_word=True) is False
 
 
 class TestFlattenTargetConfig:

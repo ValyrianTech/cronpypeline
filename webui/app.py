@@ -22,6 +22,7 @@ from typing import Any
 from cronpypeline.config import PipelineConfig
 from cronpypeline.state import PipelineState
 from cronpypeline.targets import load_targets_with_config
+from cronpypeline.template_safety import matches_credential_key
 
 HERE = Path(__file__).resolve().parent
 CONFIGS_DIR = Path(os.environ.get("CRONPYPELINE_CONFIGS_DIR", HERE.parent / "configs")).resolve()
@@ -299,30 +300,20 @@ def _serialize_stage(stage: Any) -> dict[str, Any]:
     }
 
 
-_SENSITIVE_CONFIG_KEYS = {
-    "github_token",
-    "token",
-    "api_key",
-    "apikey",
-    "secret",
-    "password",
-    "credential",
-}
-
-_SENSITIVE_KEY_SUBSTRINGS = ("token", "secret", "password", "credential", "api_key")
-
-
 def _is_sensitive(key: str) -> bool:
     """Return whether a config key should be treated as sensitive.
 
+    Uses the shared substring policy from
+    :func:`cronpypeline.template_safety.matches_credential_key` (without the
+    exact-``auth`` rule, so the plain key ``"auth"`` is kept while its nested
+    values are still scrubbed). Any key containing a credential fragment such
+    as ``token``, ``secret``, ``password``, ``api_key``, ``access_key``, or
+    ``private_key`` is redacted.
+
     :param key: Config key name.
-    :returns: True if the lowercased key is an exact match for a known
-        sensitive key, or contains a sensitive substring.
+    :returns: True if the key likely carries a secret.
     """
-    lowered = key.lower()
-    return lowered in _SENSITIVE_CONFIG_KEYS or any(
-        sub in lowered for sub in _SENSITIVE_KEY_SUBSTRINGS
-    )
+    return matches_credential_key(key)
 
 
 def _public_target_config(cfg: dict[str, Any]) -> dict[str, Any]:
