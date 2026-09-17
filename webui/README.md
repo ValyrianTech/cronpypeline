@@ -97,9 +97,11 @@ The module can be imported even when the web stack is unavailable or broken — 
 - If the workspace or registry paths in a config don't exist on this machine,
   the UI shows an error banner instead of data.
 - `/api/pipeline` (and any endpoint exposing target configs) filters out
-  sensitive keys — exact matches `github_token`, `token`, `api_key`, `apikey`,
-  `secret`, `password`, `credential`, and any key containing `token`, `secret`,
-  `password`, `credential`, or `api_key` — so registry secrets are never
-  serialized to the client. The filtering recurses into nested dicts and lists,
-  so sensitive keys nested anywhere in a target config (not just at the top
-  level) are also redacted.
+  sensitive keys using the shared `matches_credential_key()` helper from
+  `cronpypeline.template_safety` (substring mode), so any key containing a
+  credential fragment such as `token`, `secret`, `password`, `passwd`,
+  `credential`, `api_key`, `apikey`, `access_key`, `private_key`, `_auth`, or
+  `auth_` is redacted, while a plain key named exactly `auth` is kept — so
+  registry secrets are never serialized to the client. The filtering recurses
+  into nested dicts and lists, so sensitive keys nested anywhere in a target
+  config (not just at the top level) are also redacted.
