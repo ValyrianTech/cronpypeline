@@ -1662,7 +1662,10 @@ class TestRunGate:
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git), \
              patch("cronpypeline.plugins.issue_fix._run", return_value=(0, cov, "")):
             assert run_gate(t, td, "repo", verbose=True) is True
-        assert "ERROR" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "ERROR" in out
+        assert "baseline checkout of" in out
+        assert f"{INTEGRATION_BRANCH} failed" in out
 
     def test_baseline_checkout_fail_soft_passes_non_coverage_fix(self, tmp_path):
         t = self._setup_git_with_branch(tmp_path)
