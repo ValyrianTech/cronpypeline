@@ -12,7 +12,8 @@ from typing import Any
 
 # Canonical lowercase credential fragments used for substring matching. These
 # are the single source of truth for the "what looks like a secret" policy and
-# are shared by actions.py (via CREDENTIAL_WORDS for header matching) and
+# are shared by actions.py (via matches_credential_key(whole_word=True) for
+# header matching; CREDENTIAL_WORDS is applied internally by that helper) and
 # webui/app.py (via matches_credential_key for config-key redaction).
 #
 # NOTE: substring matching is deliberately over-broad, not whole-word. This
