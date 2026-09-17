@@ -1221,7 +1221,8 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
             print(f"  ERROR: baseline checkout of {INTEGRATION_BRANCH} failed; "
                   f"cannot measure baseline coverage, so coverage will NOT "
                   f"block the fix (soft-pass, no baseline to compare against)")
-            baseline_pct = None
+            # baseline_pct remains None (its initialized value), so the
+            # soft-pass branch below is taken.
             coverage_unmeasured = True
         else:
             _, base_out, base_err = _run(coverage_cmd, repo_dir, timeout=900)
