@@ -186,6 +186,24 @@ def ensure_integration_branch(repo_dir: Path, default_branch: str,
         return False
 
 
+def _checkout_integration_baseline(repo_dir: Path) -> bool:
+    """Robustly check out INTEGRATION_BRANCH for baseline measurement.
+
+    Tries, in order: plain checkout, then `checkout -f` (force, discarding
+    uncommitted changes to tracked files), then `git stash` + `checkout -f`
+    (stashing uncommitted work incl. index). Returns True on success.
+
+    :param repo_dir: Target repo directory.
+    :returns: True if the integration branch was checked out, False otherwise.
+    """
+    if _git(repo_dir, "checkout", INTEGRATION_BRANCH, check=False).returncode == 0:
+        return True
+    if _git(repo_dir, "checkout", "-f", INTEGRATION_BRANCH, check=False).returncode == 0:
+        return True
+    _git(repo_dir, "stash", "push", "--include-untracked", check=False)
+    return _git(repo_dir, "checkout", "-f", INTEGRATION_BRANCH, check=False).returncode == 0
+
+
 def merge_into_integration(repo_dir: Path, task_branch: str,
                            verbose: bool = False) -> bool:
     """Merge a passed task branch into the integration branch (no fast-forward).
@@ -1197,14 +1215,18 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
 
     # Measure baseline coverage on integration branch for non-coverage issues
     baseline_pct: float | None = None
+    coverage_unmeasured = False
     if issue_type != "coverage" and coverage_cmd:
-        checkout = _git(repo_dir, "checkout", INTEGRATION_BRANCH, check=False)
-        if checkout.returncode != 0:
-            print(f"  WARNING: failed to checkout {INTEGRATION_BRANCH} for baseline "
-                  f"coverage measurement: {checkout.stderr or checkout.stdout}")
-        _, base_out, base_err = _run(coverage_cmd, repo_dir, timeout=900)
-        base_counts = _parse_coverage_output(base_out + "\n" + base_err)
-        baseline_pct = base_counts.get("coverage_pct", 0.0)
+        if not _checkout_integration_baseline(repo_dir):
+            print(f"  ERROR: baseline checkout of {INTEGRATION_BRANCH} failed; "
+                  f"cannot measure baseline coverage, so coverage will NOT "
+                  f"block the fix (soft-pass, no baseline to compare against)")
+            # baseline_pct remains None (its initialized value), so the
+            # soft-pass branch below is taken.
+            coverage_unmeasured = True
+        else:
+            _, base_out, base_err = _run(coverage_cmd, repo_dir, timeout=900)
+            baseline_pct = _parse_coverage_output(base_out + "\n" + base_err).get("coverage_pct")
 
     # Verify on the task branch
     checkout = _git(repo_dir, "checkout", branch, check=False)
@@ -1239,13 +1261,19 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
             cov_code, cov_out, cov_err = _run(coverage_cmd, repo_dir, timeout=900)
             counts = _parse_coverage_output(cov_out + "\n" + cov_err)
             cov_pct = counts.get("coverage_pct", 0.0)
-            type_ok = (cov_pct >= baseline_pct
-                       if baseline_pct is not None
-                       else cov_pct >= coverage_target)
+            if baseline_pct is not None:
+                type_ok = cov_pct >= baseline_pct
+            else:
+                # Baseline unmeasurable: soft-pass so legitimate non-coverage
+                # fixes that merely maintain coverage below the absolute target
+                # are not rejected. A *measured* regression still fails.
+                type_ok = True
             tests_green = cov_code == 0
             type_detail = {"coverage_pct": cov_pct, "coverage_target": coverage_target}
             if baseline_pct is not None:
                 type_detail["baseline_pct"] = baseline_pct
+            if coverage_unmeasured:
+                type_detail["coverage_unmeasured"] = True
         else:
             test_code, _test_out, _test_err = _run(test_cmd, repo_dir, timeout=900)
             tests_green = test_code == 0

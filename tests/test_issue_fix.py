@@ -26,6 +26,7 @@ from cronpypeline.plugins.issue_fix import (
     _build_coverage_prompt,
     _build_review_prompt,
     _capture_diff,
+    _checkout_integration_baseline,
     _cleanup_orphaned_task_dirs,
     _cleanup_stale_task,
     _closing_loop_instructions,
@@ -1653,7 +1654,7 @@ class TestRunGate:
         original_git = __import__("cronpypeline.plugins.swe_plugin", fromlist=["_git"])._git
 
         def fake_git(repo, *args, check=True):
-            if args[0] == "checkout" and len(args) > 1 and args[1] == INTEGRATION_BRANCH and not check:
+            if args[0] == "checkout" and INTEGRATION_BRANCH in args and not check:
                 return subprocess.CompletedProcess(["git"], 1, "", "checkout failed")
             return original_git(repo, *args, check=check)
 
@@ -1661,7 +1662,99 @@ class TestRunGate:
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git), \
              patch("cronpypeline.plugins.issue_fix._run", return_value=(0, cov, "")):
             assert run_gate(t, td, "repo", verbose=True) is True
-        assert "WARNING" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "ERROR" in out
+        assert "baseline checkout of" in out
+        assert f"{INTEGRATION_BRANCH} failed" in out
+
+    def test_baseline_checkout_fail_soft_passes_non_coverage_fix(self, tmp_path):
+        t = self._setup_git_with_branch(tmp_path)
+        (t / "fix.txt").write_text("f")
+        subprocess.run(["git", "-C", str(t), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(t), "commit", "-m", "f"], capture_output=True, check=True)
+        td = tmp_path / "t"; self._make_task(tmp_path, td, coverage_cmd="cov", coverage_target=90.0)
+        original_git = __import__("cronpypeline.plugins.swe_plugin", fromlist=["_git"])._git
+
+        def fake_git(repo, *args, check=True):
+            if args[0] == "checkout" and INTEGRATION_BRANCH in args and not check:
+                return subprocess.CompletedProcess(["git"], 1, "", "checkout failed")
+            return original_git(repo, *args, check=check)
+
+        cov = "TOTAL 100 20 80%\n5 passed"
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git), \
+             patch("cronpypeline.plugins.issue_fix._run", return_value=(0, cov, "")):
+            assert run_gate(t, td, "repo", verbose=True) is True
+        gate = json.loads((td / GATE_RESULT_FILE).read_text())
+        assert gate["passed"] is True and gate["coverage_pct"] == 80.0
+        assert gate["coverage_unmeasured"] is True
+        assert "baseline_pct" not in gate
+
+    def test_baseline_measured_regression_rejected(self, tmp_path):
+        t = self._setup_git_with_branch(tmp_path)
+        (t / "fix.txt").write_text("f")
+        subprocess.run(["git", "-C", str(t), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(t), "commit", "-m", "f"], capture_output=True, check=True)
+        td = tmp_path / "t"; self._make_task(tmp_path, td, coverage_cmd="cov", coverage_target=90.0)
+        baseline = "TOTAL 100 10 90%\n5 passed"
+        task_cov = "TOTAL 100 20 80%\n5 passed"
+        with patch("cronpypeline.plugins.issue_fix._run",
+                   side_effect=[(0, baseline, ""), (0, task_cov, "")]):
+            assert run_gate(t, td, "repo", verbose=True) is False
+        gate = json.loads((td / GATE_RESULT_FILE).read_text())
+        assert gate["passed"] is False and gate["coverage_pct"] == 80.0
+        assert gate["baseline_pct"] == 90.0
+        assert "coverage_unmeasured" not in gate
+
+    def test_baseline_checkout_force_retry_succeeds(self, tmp_path):
+        t = self._setup_git_with_branch(tmp_path)
+        (t / "fix.txt").write_text("f")
+        subprocess.run(["git", "-C", str(t), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(t), "commit", "-m", "f"], capture_output=True, check=True)
+        td = tmp_path / "t"; self._make_task(tmp_path, td, coverage_cmd="cov")
+        original_git = __import__("cronpypeline.plugins.swe_plugin", fromlist=["_git"])._git
+
+        def fake_git(repo, *args, check=True):
+            if args[0] == "checkout" and len(args) > 1 and args[1] == INTEGRATION_BRANCH and not check:
+                return subprocess.CompletedProcess(["git"], 1, "", "checkout failed")
+            return original_git(repo, *args, check=check)
+
+        baseline = "TOTAL 100 10 90%\n5 passed"
+        task_cov = "TOTAL 100 0 100%\n5 passed"
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git), \
+             patch("cronpypeline.plugins.issue_fix._run",
+                   side_effect=[(0, baseline, ""), (0, task_cov, "")]):
+            assert run_gate(t, td, "repo", verbose=True) is True
+        gate = json.loads((td / GATE_RESULT_FILE).read_text())
+        assert gate["passed"] is True and gate["baseline_pct"] == 90.0
+        assert "coverage_unmeasured" not in gate
+
+    def test_baseline_checkout_stash_fallback_succeeds(self, tmp_path):
+        t = self._setup_git_with_branch(tmp_path)
+        (t / "fix.txt").write_text("f")
+        subprocess.run(["git", "-C", str(t), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(t), "commit", "-m", "f"], capture_output=True, check=True)
+        td = tmp_path / "t"; self._make_task(tmp_path, td, coverage_cmd="cov")
+        original_git = __import__("cronpypeline.plugins.swe_plugin", fromlist=["_git"])._git
+        attempts = {"n": 0}
+
+        def fake_git(repo, *args, check=True):
+            if args[0] == "checkout" and INTEGRATION_BRANCH in args and not check:
+                attempts["n"] += 1
+                if attempts["n"] >= 3:
+                    return original_git(repo, *args, check=check)
+                return subprocess.CompletedProcess(["git"], 1, "", "checkout failed")
+            return original_git(repo, *args, check=check)
+
+        baseline = "TOTAL 100 10 90%\n5 passed"
+        task_cov = "TOTAL 100 0 100%\n5 passed"
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git), \
+             patch("cronpypeline.plugins.issue_fix._run",
+                   side_effect=[(0, baseline, ""), (0, task_cov, "")]):
+            assert run_gate(t, td, "repo", verbose=True) is True
+        gate = json.loads((td / GATE_RESULT_FILE).read_text())
+        assert gate["passed"] is True and gate["baseline_pct"] == 90.0
+        assert attempts["n"] == 3
+        assert "coverage_unmeasured" not in gate
 
     def test_verify_checkout_task_branch_fails(self, tmp_path, capsys):
         t = self._setup_git_with_branch(tmp_path)
@@ -1710,6 +1803,27 @@ class TestRunGate:
         assert _batch_fixed_count(t) == 1
         marker = json.loads((t / ".SWE" / "markers" / "issues_fixed_batch.json").read_text())
         assert marker["fixed_count"] == 1
+
+
+# ─── _checkout_integration_baseline ───────────────────────────────────────────
+
+
+class TestCheckoutIntegrationBaseline:
+    def test_plain_checkout_succeeds(self, tmp_path):
+        def fake_git(repo, *args, check=True):
+            return subprocess.CompletedProcess(["git"], 0, "", "")
+
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
+            assert _checkout_integration_baseline(tmp_path) is True
+
+    def test_all_checkout_attempts_fail(self, tmp_path):
+        def fake_git(repo, *args, check=True):
+            if args[0] == "checkout":
+                return subprocess.CompletedProcess(["git"], 1, "", "checkout failed")
+            return subprocess.CompletedProcess(["git"], 0, "", "")
+
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
+            assert _checkout_integration_baseline(tmp_path) is False
 
 
 # ─── _has_uncommitted_work ────────────────────────────────────────────────────
