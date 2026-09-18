@@ -40,6 +40,7 @@ from cronpypeline.plugins.swe_plugin import (
     _find_active_task,
     _find_issue_by_id,
     _find_previous_review_sha,
+    _gh_api_get_all_pages,
     _gh_api_get_list,
     _gh_api_patch,
     _gh_api_post,
@@ -1022,6 +1023,83 @@ class TestGhApiGetList:
         assert "state=open" in url
 
 
+# ─── _gh_api_get_all_pages ──────────────────────────────────────────────────
+
+
+class TestGhApiGetAllPages:
+    def test_aggregates_multiple_pages_when_first_page_full(self):
+        page1 = [{"id": i} for i in range(100)]
+        page2 = [{"id": i} for i in range(100, 150)]
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_list",
+            side_effect=[page1, page2],
+        ) as mock_get:
+            result = _gh_api_get_all_pages("owner", "repo", "issues", "token")
+        assert result == page1 + page2
+        assert mock_get.call_count == 2
+        calls = mock_get.call_args_list
+        assert calls[0].args[0] == "owner"
+        assert calls[0].args[1] == "repo"
+        assert calls[0].args[2] == "issues"
+        assert calls[0].kwargs["params"]["per_page"] == "100"
+        assert calls[0].kwargs["params"]["page"] == "1"
+        assert calls[1].kwargs["params"]["page"] == "2"
+        assert calls[1].kwargs["params"]["per_page"] == "100"
+
+    def test_stops_when_page_returns_fewer_than_100(self):
+        short_page = [{"id": i} for i in range(3)]
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_list",
+            return_value=short_page,
+        ) as mock_get:
+            result = _gh_api_get_all_pages("owner", "repo", "issues", "token")
+        assert result == short_page
+        assert mock_get.call_count == 1
+
+    def test_stops_when_empty_list(self):
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_list",
+            return_value=[],
+        ) as mock_get:
+            result = _gh_api_get_all_pages("owner", "repo", "issues", "token")
+        assert result == []
+        assert mock_get.call_count == 1
+
+    def test_stops_when_none_returned(self):
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_list",
+            return_value=None,
+        ) as mock_get:
+            result = _gh_api_get_all_pages("owner", "repo", "issues", "token")
+        assert result == []
+        assert mock_get.call_count == 1
+
+    def test_respects_max_pages_cap(self):
+        full_page = [{"id": i} for i in range(100)]
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_list",
+            return_value=full_page,
+        ) as mock_get:
+            result = _gh_api_get_all_pages("owner", "repo", "issues", "token", max_pages=2)
+        assert len(result) == 200
+        assert mock_get.call_count == 2
+
+    def test_merges_base_params(self):
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_list",
+            return_value=[],
+        ) as mock_get:
+            _gh_api_get_all_pages(
+                "owner", "repo", "issues", "token",
+                params={"state": "open", "labels": "bug"},
+            )
+        params = mock_get.call_args.kwargs["params"]
+        assert params["state"] == "open"
+        assert params["labels"] == "bug"
+        assert params["per_page"] == "100"
+        assert params["page"] == "1"
+
+
 # ─── _gh_api_post ───────────────────────────────────────────────────────────
 
 
@@ -1468,19 +1546,20 @@ class TestRunB1IssueGathering:
         result = run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
 
-    def test_api_failure_returns_failure(self, tmp_path, monkeypatch):
+    def test_api_failure_yields_no_issues(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = _make_tick_context(target, slug="owner/repo")
-        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_list", return_value=None):
+        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_all_pages", return_value=[]):
             result = run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
-        assert result.success is False
+        assert result.success is True
+        assert result.data["issues_found"] == 0
 
     def test_no_issues_writes_idle_session(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = _make_tick_context(target, slug="owner/repo")
-        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_list", return_value=[]):
+        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_all_pages", return_value=[]):
             result = run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["issues_found"] == 0
@@ -1500,7 +1579,7 @@ class TestRunB1IssueGathering:
             "created_at": "2025-01-01T00:00:00Z",
             "labels": [{"name": "bug"}],
         }
-        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_list", return_value=[gh_issue]):
+        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_all_pages", return_value=[gh_issue]):
             result = run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["issue_id"] == "github-42"
@@ -1510,6 +1589,62 @@ class TestRunB1IssueGathering:
         assert session["issue_id"] == "github-42"
         issue_file = target / ".SWE" / "issues" / "github-42.md"
         assert issue_file.exists()
+
+    def test_pulls_are_filtered_out(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = _make_tick_context(target, slug="owner/repo", issue_label="swe-pipeline")
+        pull = {
+            "number": 7,
+            "title": "A pull request",
+            "body": "",
+            "html_url": "https://github.com/owner/repo/pull/7",
+            "created_at": "2020-01-01T00:00:00Z",
+            "labels": [],
+            "pull_request": {"url": "https://api.github.com/repos/owner/repo/pulls/7"},
+        }
+        gh_issue = {
+            "number": 42,
+            "title": "Bug found",
+            "body": "Something is broken",
+            "html_url": "https://github.com/owner/repo/issues/42",
+            "created_at": "2025-01-01T00:00:00Z",
+            "labels": [{"name": "bug"}],
+        }
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_all_pages",
+            return_value=[pull, gh_issue],
+        ):
+            result = run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["issue_id"] == "github-42"
+        assert result.data["gh_number"] == 42
+
+    def test_uses_get_all_pages(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = _make_tick_context(target, slug="owner/repo", issue_label="swe-pipeline")
+        gh_issue = {
+            "number": 42,
+            "title": "Bug found",
+            "body": "Something is broken",
+            "html_url": "https://github.com/owner/repo/issues/42",
+            "created_at": "2025-01-01T00:00:00Z",
+            "labels": [{"name": "bug"}],
+        }
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_all_pages",
+            return_value=[gh_issue],
+        ) as mock_all_pages:
+            run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        mock_all_pages.assert_called_once()
+        assert mock_all_pages.call_args.args[0] == "owner"
+        assert mock_all_pages.call_args.args[1] == "repo"
+        assert mock_all_pages.call_args.args[2] == "issues"
+        assert mock_all_pages.call_args.kwargs["params"] == {
+            "state": "open",
+            "labels": "swe-pipeline",
+        }
 
     def test_already_ingested_creates_session(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
@@ -1526,7 +1661,7 @@ class TestRunB1IssueGathering:
             "created_at": "2025-01-01T00:00:00Z",
             "labels": [],
         }
-        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_list", return_value=[gh_issue]):
+        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_all_pages", return_value=[gh_issue]):
             result = run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["already_ingested"] is True
@@ -1536,7 +1671,7 @@ class TestRunB1IssueGathering:
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = _make_tick_context(target, slug="owner/repo")
         gh_issue = {"number": None, "title": "Bug", "created_at": "2025-01-01T00:00:00Z", "labels": []}
-        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_list", return_value=[gh_issue]):
+        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_all_pages", return_value=[gh_issue]):
             result = run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
 
