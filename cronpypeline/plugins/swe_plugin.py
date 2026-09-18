@@ -888,6 +888,40 @@ def _gh_api_get_list(
         return None
 
 
+def _gh_api_get_all_pages(
+    owner: str, gh_repo: str, endpoint: str, token: str,
+    params: dict[str, str] | None = None,
+    max_pages: int = 10,
+) -> list[dict[str, Any]]:
+    """GET all pages from a paginated GitHub REST API list endpoint.
+
+    Follows pagination by requesting ``per_page=100`` and incrementing ``page``
+    until the endpoint is exhausted (a page returns fewer than 100 items or an
+    empty/None chunk) or ``max_pages`` is reached.
+
+    :param owner: Repo owner.
+    :param gh_repo: Repo name.
+    :param endpoint: API endpoint (e.g. "issues").
+    :param token: GitHub auth token.
+    :param params: Optional base query parameters.
+    :param max_pages: Safety cap on the number of pages fetched.
+    :returns: Aggregated list of dicts across all fetched pages.
+    """
+    results: list[dict[str, Any]] = []
+    page = 1
+    while page <= max_pages:
+        p = dict(params or {})
+        p.update({"per_page": "100", "page": str(page)})
+        chunk = _gh_api_get_list(owner, gh_repo, endpoint, token, params=p)
+        if not chunk:
+            break
+        results.extend(chunk)
+        if len(chunk) < 100:
+            break
+        page += 1
+    return results
+
+
 def _gh_api_post(
     owner: str, gh_repo: str, endpoint: str, payload: dict, token: str,
     expected_statuses: tuple[int, ...] = (201,),
@@ -1097,12 +1131,11 @@ def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionRe
     issue_label = (target_config.get("issue_label") or "swe-pipeline").strip()
     repo_name = context.target
 
-    issues = _gh_api_get_list(
+    issues = _gh_api_get_all_pages(
         owner, gh_repo_name, "issues", token,
         params={"state": "open", "labels": issue_label},
     )
-    if issues is None:
-        return ActionResult(success=False, stderr="GitHub API request failed")
+    issues = [i for i in issues if "pull_request" not in i]
 
     session_path = target_dir / GITHUB_SESSION_FILE
     session_path.parent.mkdir(parents=True, exist_ok=True)
