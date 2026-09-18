@@ -1021,15 +1021,17 @@ def execute_action(
 ) -> ActionResult:
     """Execute an action using the appropriate handler.
 
-    Resolution order for the handler registry is: the explicit ``handlers``
-    argument, then ``context.handlers``, then the module-global ``_HANDLERS``.
-    Within the chosen registry, if the action type is missing, resolution
-    falls back to the module-global ``_HANDLERS`` (which supplies the built-in
-    action types and any :func:`register_handler` overrides). This means a
-    Pipeline uses only its explicitly-configured per-instance handlers, while
-    built-in action types (COMMAND, SUBPROCESS, CUSTOM, HTTP_REQUEST) resolve
-    through ``_HANDLERS`` — so ``register_handler`` still overrides built-ins
-    for any Pipeline that has not explicitly configured that action type.
+    The handler registry is selected from the explicit ``handlers`` argument
+    and ``context.handlers`` mutually exclusively: if ``handlers`` is provided
+    (even an empty dict), it is used and ``context.handlers`` is completely
+    ignored; otherwise ``context.handlers`` is used. Within whichever registry
+    is selected, a missing action type falls back to the module-global
+    ``_HANDLERS`` (which supplies the built-in action types and any
+    :func:`register_handler` overrides). This means a Pipeline uses only its
+    explicitly-configured per-instance handlers, while built-in action types
+    (COMMAND, SUBPROCESS, CUSTOM, HTTP_REQUEST) resolve through ``_HANDLERS``
+    — so ``register_handler`` still overrides built-ins for any Pipeline that
+    has not explicitly configured that action type.
 
     :param action: Action specification to execute.
     :param context: Tick context for the action.
