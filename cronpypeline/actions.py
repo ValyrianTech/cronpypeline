@@ -5,6 +5,8 @@ command, subprocess, and custom actions. The conversation_queue handler
 lives in the plugins package.
 """
 
+from __future__ import annotations
+
 import errno
 import fnmatch
 import http.client
@@ -46,6 +48,7 @@ class TickContext:
     :ivar target_config: Per-target configuration dict.
     :ivar retry_count: Number of retries so far (0 for first attempt).
     :ivar retry_data: Data from the previous processing marker (for continuation).
+    :ivar handlers: Optional per-tick action-handler registry override.
     """
 
     target: str
@@ -58,6 +61,7 @@ class TickContext:
     target_config: dict[str, Any] = dc_field(default_factory=dict)
     retry_count: int = 0
     retry_data: dict[str, Any] | None = None
+    handlers: dict[ActionType, ActionHandler] | None = None
 
     @property
     def target_dir(self) -> Path:
@@ -964,16 +968,30 @@ class HttpRequestActionHandler(ActionHandler):
 
 # ─── Registry ───────────────────────────────────────────────────────────────
 
-_HANDLERS: dict[ActionType, ActionHandler] = {
-    ActionType.COMMAND: CommandActionHandler(),
-    ActionType.SUBPROCESS: SubprocessActionHandler(),
-    ActionType.CUSTOM: CustomActionHandler(),
-    ActionType.HTTP_REQUEST: HttpRequestActionHandler(),
-}
+
+def _build_default_handlers() -> dict[ActionType, ActionHandler]:
+    """Build a fresh mapping of default action handlers."""
+    return {
+        ActionType.COMMAND: CommandActionHandler(),
+        ActionType.SUBPROCESS: SubprocessActionHandler(),
+        ActionType.CUSTOM: CustomActionHandler(),
+        ActionType.HTTP_REQUEST: HttpRequestActionHandler(),
+    }
+
+
+_HANDLERS: dict[ActionType, ActionHandler] = _build_default_handlers()
 
 
 def register_handler(action_type: ActionType, handler: ActionHandler) -> None:
     """Register a custom action handler.
+
+    .. warning::
+        This mutates **process-global** state: the module-level ``_HANDLERS``
+        dict is shared across every :class:`~cronpypeline.pipeline.Pipeline`
+        instance (and therefore across tests running in the same process).
+        Prefer configuring a per-pipeline handler via
+        ``PipelineConfig.action_handler`` (stored on the Pipeline instance),
+        which does not leak across pipelines.
 
     :param action_type: The action type to register the handler for.
     :param handler: The handler instance to register.
@@ -981,15 +999,40 @@ def register_handler(action_type: ActionType, handler: ActionHandler) -> None:
     _HANDLERS[action_type] = handler
 
 
-def execute_action(action: ActionSpec, context: TickContext) -> ActionResult:
+def get_default_handlers() -> dict[ActionType, ActionHandler]:
+    """Return a fresh dict of the built-in default action handlers.
+
+    Each Pipeline gets its own copy of this mapping so that configuring a
+    per-pipeline handler never clobbers the handler used by other Pipeline
+    instances.
+    """
+    return _build_default_handlers()
+
+
+def execute_action(
+    action: ActionSpec,
+    context: TickContext,
+    handlers: dict[ActionType, ActionHandler] | None = None,
+) -> ActionResult:
     """Execute an action using the appropriate handler.
+
+    Resolution order for the handler registry is: the explicit ``handlers``
+    argument, then ``context.handlers``, then the module-global ``_HANDLERS``.
+    Within a registry, if the action type is missing, the module-global
+    ``_HANDLERS`` is used as a fallback. This lets a Pipeline use its own
+    per-instance handlers while remaining backwards compatible with
+    ``register_handler``.
 
     :param action: Action specification to execute.
     :param context: Tick context for the action.
+    :param handlers: Optional explicit handler registry override.
     :returns: Result of the action execution.
     :raises ValueError: If no handler is registered for the action type.
     """
-    handler = _HANDLERS.get(action.type)
+    registry = handlers if handlers is not None else context.handlers
+    handler = registry.get(action.type) if registry else None
+    if handler is None:
+        handler = _HANDLERS.get(action.type)
     if handler is None:
         raise ValueError(f"No handler registered for action type: {action.type}")
     return handler.execute(action, context)

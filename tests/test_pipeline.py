@@ -2212,10 +2212,9 @@ class TestActionHandlerWiring:
         })
         pipeline = Pipeline(config)
 
-        # The handler should be registered for QUEUE_AGENT
-        from cronpypeline.actions import _HANDLERS
+        # The handler should be stored on this pipeline instance only
         from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
-        handler = _HANDLERS.get(ActionType.QUEUE_AGENT)
+        handler = pipeline._handlers.get(ActionType.QUEUE_AGENT)
         assert isinstance(handler, ConversationQueueHandler)
         assert handler.queue_dir == queue_dir
 
@@ -2247,11 +2246,10 @@ class TestActionHandlerWiring:
             },
             "stages": [],
         })
-        Pipeline(config)
+        pipeline = Pipeline(config)
 
-        from cronpypeline.actions import _HANDLERS
         from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
-        handler = _HANDLERS.get(ActionType.QUEUE_AGENT)
+        handler = pipeline._handlers.get(ActionType.QUEUE_AGENT)
         assert isinstance(handler, ConversationQueueHandler)
         assert handler.agent_settings_dir == agent_settings_dir
 
@@ -2270,11 +2268,10 @@ class TestActionHandlerWiring:
             },
             "stages": [],
         })
-        Pipeline(config)
+        pipeline = Pipeline(config)
 
-        from cronpypeline.actions import _HANDLERS
         from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
-        handler = _HANDLERS.get(ActionType.QUEUE_AGENT)
+        handler = pipeline._handlers.get(ActionType.QUEUE_AGENT)
         assert isinstance(handler, ConversationQueueHandler)
         assert handler.queue_dir == queue_dir
 
@@ -2333,8 +2330,9 @@ class TestActionHandlerWiring:
             "workspace_dir": str(tmp_path),
             "stages": [],
         })
-        Pipeline(config)
+        pipeline = Pipeline(config)
         assert _HANDLERS[ActionType.QUEUE_AGENT] is original
+        assert pipeline._handlers.get(ActionType.QUEUE_AGENT) is not original
 
         # Exercise the mock handler's execute/check_complete branches directly
         assert original.execute(None, None).success is True
@@ -2353,6 +2351,224 @@ class TestActionHandlerWiring:
         })
         with pytest.raises(ValueError, match="Unknown action handler type"):
             Pipeline(config)
+
+
+class TestPerInstanceHandlerRegistry:
+    """Tests for the per-pipeline action-handler registry."""
+
+    @staticmethod
+    def _queue_agent_config(workspace, queue_dir=None):
+        """Build a minimal PipelineConfig with an optional action_handler."""
+        data = {
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Agent Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "TestAgent", "prompt": "Do stuff"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "a.md"},
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                    },
+                },
+            ],
+        }
+        if queue_dir is not None:
+            data["action_handler"] = {
+                "type": "conversation_queue",
+                "params": {"queue_dir": str(queue_dir)},
+            }
+        return PipelineConfig.from_dict(data)
+
+    def test_two_pipelines_do_not_clobber_each_other(self, tmp_path):
+        from cronpypeline.actions import _HANDLERS
+
+        workspace1 = tmp_path / "workspace1"
+        workspace1.mkdir()
+        (workspace1 / "my-repo").mkdir()
+        queue_dir_1 = workspace1 / "queue1"
+
+        workspace2 = tmp_path / "workspace2"
+        workspace2.mkdir()
+        (workspace2 / "my-repo").mkdir()
+        queue_dir_2 = workspace2 / "queue2"
+
+        pipeline1 = Pipeline(self._queue_agent_config(workspace1, queue_dir_1))
+        pipeline2 = Pipeline(self._queue_agent_config(workspace2, queue_dir_2))
+
+        result1 = pipeline1.tick(target="my-repo")
+        result2 = pipeline2.tick(target="my-repo")
+
+        assert result1.status == TickResultStatus.ACTION_EXECUTED
+        assert result2.status == TickResultStatus.ACTION_EXECUTED
+
+        # Each pipeline kept its own handler.
+        assert pipeline1._handlers[ActionType.QUEUE_AGENT].queue_dir == queue_dir_1
+        assert pipeline2._handlers[ActionType.QUEUE_AGENT].queue_dir == queue_dir_2
+
+        # Each tick wrote exactly one file into its own queue dir.
+        files1 = list(queue_dir_1.glob("*.json"))
+        files2 = list(queue_dir_2.glob("*.json"))
+        assert len(files1) == 1
+        assert len(files2) == 1
+
+        # The module-global registry was not mutated.
+        global_handler = _HANDLERS.get(ActionType.QUEUE_AGENT)
+        assert global_handler is not pipeline1._handlers[ActionType.QUEUE_AGENT]
+        assert global_handler is not pipeline2._handlers[ActionType.QUEUE_AGENT]
+
+    def test_register_handler_still_affects_pipelines_without_config(self, tmp_path):
+        from cronpypeline.actions import (
+            _HANDLERS,
+            ActionHandler,
+            ActionResult,
+            register_handler,
+        )
+
+        class MockQueueHandler(ActionHandler):
+            def __init__(self):
+                self.executed = False
+
+            def execute(self, action, context):
+                self.executed = True
+                return ActionResult(success=True, stdout="queued")
+
+        mock = MockQueueHandler()
+        previous = _HANDLERS.get(ActionType.QUEUE_AGENT)
+        register_handler(ActionType.QUEUE_AGENT, mock)
+        try:
+            workspace = tmp_path / "workspace"
+            workspace.mkdir()
+            (workspace / "my-repo").mkdir()
+
+            pipeline = Pipeline(self._queue_agent_config(workspace))
+            result = pipeline.tick(target="my-repo")
+
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert mock.executed is True
+        finally:
+            _HANDLERS[ActionType.QUEUE_AGENT] = previous
+
+    def test_pipeline_config_handler_takes_precedence_over_global(self, tmp_path):
+        from cronpypeline.actions import (
+            _HANDLERS,
+            ActionHandler,
+            ActionResult,
+            register_handler,
+        )
+
+        class MockQueueHandler(ActionHandler):
+            def __init__(self):
+                self.executed = False
+
+            def execute(self, action, context):
+                self.executed = True
+                return ActionResult(success=True, stdout="queued")
+
+        mock = MockQueueHandler()
+        previous = _HANDLERS.get(ActionType.QUEUE_AGENT)
+        register_handler(ActionType.QUEUE_AGENT, mock)
+        try:
+            workspace = tmp_path / "workspace"
+            workspace.mkdir()
+            (workspace / "my-repo").mkdir()
+            queue_dir = workspace / "queue"
+
+            pipeline = Pipeline(self._queue_agent_config(workspace, queue_dir))
+            result = pipeline.tick(target="my-repo")
+
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            # The configured conversation_queue handler must win over the global.
+            assert mock.executed is False
+            # The mock is never used for dispatch, but exercise it directly so its
+            # body is covered (it is only registered as a global that loses).
+            assert mock.execute(None, None).success is True
+            assert mock.executed is True
+            files = list(queue_dir.glob("*.json"))
+            assert len(files) == 1
+        finally:
+            _HANDLERS[ActionType.QUEUE_AGENT] = previous
+
+    def test_execute_action_explicit_handlers_argument(self, tmp_path):
+        from cronpypeline.actions import (
+            ActionHandler,
+            ActionResult,
+            TickContext,
+            execute_action,
+        )
+
+        class CustomHandler(ActionHandler):
+            def execute(self, action, context):
+                return ActionResult(success=True, stdout="custom ran")
+
+        custom = CustomHandler()
+        ctx = TickContext(target="t", workspace_dir=tmp_path)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"callable": "x"})
+        result = execute_action(action, ctx, handlers={ActionType.CUSTOM: custom})
+        assert result.success is True
+        assert result.stdout == "custom ran"
+
+        # Empty registry falls through to the global for a COMMAND action.
+        cmd_ctx = TickContext(target="t", workspace_dir=tmp_path)
+        cmd_action = ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"})
+        cmd_result = execute_action(cmd_action, cmd_ctx, handlers={})
+        assert cmd_result.success is True
+
+    def test_get_default_handlers_returns_fresh_dict(self):
+        from cronpypeline.actions import get_default_handlers
+
+        d1 = get_default_handlers()
+        d2 = get_default_handlers()
+        assert d1 is not d2
+
+        expected = {
+            ActionType.COMMAND,
+            ActionType.SUBPROCESS,
+            ActionType.CUSTOM,
+            ActionType.HTTP_REQUEST,
+        }
+        assert set(d1.keys()) == expected
+        assert set(d2.keys()) == expected
+
+        d1.pop(ActionType.COMMAND)
+        assert ActionType.COMMAND not in d1
+        assert ActionType.COMMAND in d2
+
+    def test_tick_context_handlers_default_none(self, tmp_path):
+        from cronpypeline.actions import TickContext
+
+        ctx = TickContext(target="t", workspace_dir=tmp_path)
+        assert ctx.handlers is None
+
+    def test_execute_action_uses_context_handlers(self, tmp_path):
+        from cronpypeline.actions import (
+            ActionHandler,
+            ActionResult,
+            TickContext,
+            execute_action,
+        )
+
+        class MockCommandHandler(ActionHandler):
+            def __init__(self):
+                self.executed = False
+
+            def execute(self, action, context):
+                self.executed = True
+                return ActionResult(success=True, stdout="context handler ran")
+
+        mock = MockCommandHandler()
+        ctx = TickContext(
+            target="t",
+            workspace_dir=tmp_path,
+            handlers={ActionType.COMMAND: mock},
+        )
+        action = ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"})
+        result = execute_action(action, ctx)
+        assert result.success is True
+        assert mock.executed is True
+        assert result.stdout == "context handler ran"
 
 
 class TestRejectionCounter:
