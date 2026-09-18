@@ -145,18 +145,25 @@ class ConversationQueueHandler(ActionHandler):
                 continue
             entry[pk] = pv
 
-        # Load agent settings if configured
+        # Load agent settings if configured. Malformed or unreadable settings
+        # files fail open (skipped) rather than aborting the whole pipeline tick.
         if self.agent_settings_dir:
             agent_config_path = self.agent_settings_dir / f"{agent}.json"
             if agent_config_path.exists():
-                agent_config = json.loads(agent_config_path.read_text())
-                if self.flatten_agent_settings:
-                    # Merge flat — agent settings override defaults but not action params
-                    for ak, av in agent_config.items():
-                        if ak not in entry or entry[ak] == self.default_fields.get(ak):
-                            entry[ak] = av
-                else:
-                    entry["agent_config"] = agent_config
+                try:
+                    agent_config = json.loads(
+                        agent_config_path.read_text(encoding="utf-8")
+                    )
+                except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                    agent_config = None
+                if isinstance(agent_config, dict):
+                    if self.flatten_agent_settings:
+                        # Merge flat — agent settings override defaults but not action params
+                        for ak, av in agent_config.items():
+                            if ak not in entry or entry[ak] == self.default_fields.get(ak):
+                                entry[ak] = av
+                    else:
+                        entry["agent_config"] = agent_config
 
         # Remove None values
         entry = {k: v for k, v in entry.items() if v is not None}
