@@ -1099,3 +1099,188 @@ class TestSyncSessionMode:
 
         mode_data = json.loads(mode_file.read_text())
         assert mode_data["mode"] == "default"
+
+
+class TestConversationQueueMalformedAgentSettings:
+    """Tests for fail-open handling of malformed/unreadable agent settings files."""
+
+    def test_malformed_json_skips_agent_config(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+        (agent_settings_dir / "CoderAgent.json").write_text("{not valid json")
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "CoderAgent", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        entry = json.loads(files[0].read_text())
+        assert "agent_config" not in entry
+
+    def test_malformed_json_flatten_mode_skips_agent_settings(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+        (agent_settings_dir / "CoderAgent.json").write_text("{not valid json")
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+            flatten_agent_settings=True,
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "CoderAgent", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        entry = json.loads(files[0].read_text())
+        assert "agent_config" not in entry
+
+    def test_non_dict_json_skips_agent_config(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+        (agent_settings_dir / "CoderAgent.json").write_text(json.dumps([1, 2, 3]))
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "CoderAgent", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        entry = json.loads(files[0].read_text())
+        assert "agent_config" not in entry
+
+    def test_non_dict_json_flatten_mode(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+        (agent_settings_dir / "CoderAgent.json").write_text(json.dumps([1, 2, 3]))
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+            flatten_agent_settings=True,
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "CoderAgent", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        entry = json.loads(files[0].read_text())
+        assert "agent_config" not in entry
+
+    def test_unreadable_file_skips_agent_config(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+        (agent_settings_dir / "CoderAgent.json").write_text(json.dumps({
+            "system_prompt": "You are a coder",
+        }))
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "CoderAgent", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        with patch("pathlib.Path.read_text", side_effect=OSError("boom")):
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        entry = json.loads(files[0].read_text())
+        assert "agent_config" not in entry
+
+    def test_unicode_decode_error_skips_agent_config(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+        (agent_settings_dir / "CoderAgent.json").write_text(json.dumps({
+            "system_prompt": "You are a coder",
+        }))
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "CoderAgent", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        with patch(
+            "pathlib.Path.read_text",
+            side_effect=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad"),
+        ):
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        entry = json.loads(files[0].read_text())
+        assert "agent_config" not in entry
+
+    def test_valid_settings_still_loaded_with_utf8(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+        (agent_settings_dir / "CoderAgent.json").write_text(json.dumps({
+            "system_prompt": "You are a coder",
+        }))
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "CoderAgent", "prompt": "Fix issue"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        entry = json.loads(files[0].read_text())
+        assert entry["agent_config"]["system_prompt"] == "You are a coder"
