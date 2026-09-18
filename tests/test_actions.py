@@ -2866,3 +2866,28 @@ class TestIsSensitiveHeader:
         assert _is_sensitive_header("key") is True
         assert _is_sensitive_header("api-key") is True
         assert _is_sensitive_header("key-holder") is True
+
+
+class TestGetDefaultHandlersExport:
+    """Tests for the top-level ``get_default_handlers`` public export."""
+
+    def test_importable_from_package(self):
+        from cronpypeline import get_default_handlers
+
+        assert get_default_handlers is not None
+
+    def test_listed_in_all(self):
+        import cronpypeline
+
+        assert "get_default_handlers" in cronpypeline.__all__
+
+    def test_returns_builtin_action_types(self):
+        from cronpypeline import get_default_handlers
+
+        handlers = get_default_handlers()
+        assert set(handlers) == {
+            ActionType.COMMAND,
+            ActionType.SUBPROCESS,
+            ActionType.CUSTOM,
+            ActionType.HTTP_REQUEST,
+        }
