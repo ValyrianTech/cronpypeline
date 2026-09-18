@@ -25,7 +25,6 @@ from cronpypeline.actions import (
     ActionHandler,
     TickContext,
     execute_action,
-    get_default_handlers,
 )
 from cronpypeline.config import ActionType, PipelineConfig, Stage
 from cronpypeline.lock import FileLock
@@ -199,9 +198,11 @@ class Pipeline:
         self.config = config
         self.workspace_dir = Path(config.workspace_dir)
 
-        # Per-pipeline action handler registry. Each Pipeline gets its own copy
-        # so configuring a handler on one instance never affects another.
-        self._handlers: dict[ActionType, ActionHandler] = get_default_handlers()
+        # Per-pipeline action handler registry. This holds only per-instance
+        # overrides (the config-wired action_handler); unset action types fall
+        # back to the module-global registry, which supplies the built-ins and
+        # any register_handler() overrides.
+        self._handlers: dict[ActionType, ActionHandler] = {}
 
         self.lock = FileLock(
             self.workspace_dir / config.lock_file,
