@@ -13,7 +13,6 @@ from cronpypeline.actions import (
     ActionHandler,
     ActionResult,
     TickContext,
-    register_handler,
 )
 from cronpypeline.config import ActionSpec, ActionType, PipelineConfig
 from cronpypeline.pipeline import Pipeline, TickResultStatus
@@ -66,10 +65,14 @@ class MockAgentHandler(ActionHandler):
         return False
 
 
-def _make_mock_handler(queue_dir: Path):
-    """Register a MockAgentHandler for QUEUE_AGENT actions."""
+def _make_mock_handler(pipeline: Pipeline, queue_dir: Path):
+    """Install a MockAgentHandler for QUEUE_AGENT on the pipeline instance.
+
+    Registers on the per-pipeline registry (not the module-global one) so the
+    mock dispatches agent work for this pipeline only.
+    """
     handler = MockAgentHandler(queue_dir)
-    register_handler(ActionType.QUEUE_AGENT, handler)
+    pipeline._handlers[ActionType.QUEUE_AGENT] = handler
     return handler
 
 
@@ -267,7 +270,7 @@ class TestVNNMultiTickSimulation:
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
-        _make_mock_handler(queue_dir)
+        _make_mock_handler(pipeline, queue_dir)
 
         # Tick 1: research stage fires (research.md missing)
         r1 = pipeline.tick(target="story-1")
@@ -317,7 +320,7 @@ class TestVNNMultiTickSimulation:
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
-        _make_mock_handler(queue_dir)
+        _make_mock_handler(pipeline, queue_dir)
 
         # Pre-seed: research already done
         (story_dir / "research.md").write_text("# Research")
@@ -384,7 +387,7 @@ class TestVNNMultiTickSimulation:
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
-        _make_mock_handler(queue_dir)
+        _make_mock_handler(pipeline, queue_dir)
 
         # Pre-seed: research and article done
         (story_dir / "research.md").write_text("# Research")
@@ -409,7 +412,7 @@ class TestVNNMultiTickSimulation:
 
         config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
-        _make_mock_handler(queue_dir)
+        _make_mock_handler(pipeline, queue_dir)
 
         # Tick: research stage queues an agent
         r = pipeline.tick(target="story-1")
@@ -528,7 +531,7 @@ class TestVNNDryRunValidation:
 
         (tmp_path / "story-1").mkdir()
         pipeline = Pipeline(config)
-        _make_mock_handler(tmp_path / "queue")
+        _make_mock_handler(pipeline, tmp_path / "queue")
 
         # Dry run should not create any files
         r = pipeline.tick(target="story-1", dry_run=True)
