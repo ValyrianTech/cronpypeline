@@ -646,6 +646,8 @@ def _recover_orphaned_triaged(repo_dir: Path, repo_name: str,
             created = datetime.fromisoformat(created_str)
         except ValueError:
             continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
         age = (datetime.now(timezone.utc) - created).total_seconds() / 60
         if age <= TASK_TIMEOUT_MINUTES:
             continue

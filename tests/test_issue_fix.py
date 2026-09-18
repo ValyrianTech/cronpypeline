@@ -1325,6 +1325,14 @@ class TestRecoverOrphanedTriaged:
         _recover_orphaned_triaged(target, "repo")
         assert "triaged" in (target / ".SWE" / "issues" / "1.md").read_text()
 
+    def test_naive_created_at_treated_as_utc(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        naive = (datetime.now(timezone.utc) - timedelta(minutes=TASK_TIMEOUT_MINUTES + 10)).replace(tzinfo=None).isoformat()
+        _write_issue(target / ".SWE" / "issues", "1", status="triaged", created_at=naive)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        _recover_orphaned_triaged(target, "repo")
+        assert "triaged" not in (target / ".SWE" / "issues" / "1.md").read_text()
+
 
 # ─── _ensure_task_branch ─────────────────────────────────────────────────────
 
