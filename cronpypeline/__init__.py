@@ -7,6 +7,7 @@ from cronpypeline.actions import (
     ActionResult,
     TickContext,
     execute_action,
+    get_default_handlers,
     register_handler,
 )
 from cronpypeline.config import (
@@ -61,6 +62,7 @@ __all__ = [
     "delete_marker",
     "evaluate_trigger",
     "execute_action",
+    "get_default_handlers",
     "load_targets",
     "load_targets_with_config",
     "marker_exists",

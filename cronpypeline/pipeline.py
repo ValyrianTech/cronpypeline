@@ -25,7 +25,6 @@ from cronpypeline.actions import (
     ActionHandler,
     TickContext,
     execute_action,
-    register_handler,
 )
 from cronpypeline.config import ActionType, PipelineConfig, Stage
 from cronpypeline.lock import FileLock
@@ -198,6 +197,13 @@ class Pipeline:
         """
         self.config = config
         self.workspace_dir = Path(config.workspace_dir)
+
+        # Per-pipeline action handler registry. This holds only per-instance
+        # overrides (the config-wired action_handler); unset action types fall
+        # back to the module-global registry, which supplies the built-ins and
+        # any register_handler() overrides.
+        self._handlers: dict[ActionType, ActionHandler] = {}
+
         self.lock = FileLock(
             self.workspace_dir / config.lock_file,
             dry_run=False,
@@ -211,7 +217,10 @@ class Pipeline:
         if self.config_file and not self.config_file.is_absolute():
             self.config_file = self.workspace_dir / self.config_file
 
-        # Wire action handler from config if present
+        # Wire action handler from config if present. The handler is stored on
+        # this Pipeline instance only -- it must NOT mutate the module-global
+        # registry, otherwise constructing a second Pipeline would clobber the
+        # handler used by the first one (and leak across webui configs/tests).
         if config.action_handler:
             handler = _instantiate_action_handler(
                 config.action_handler.type,
@@ -224,7 +233,7 @@ class Pipeline:
                     raise ValueError(f"queue_dir is required: {handler.queue_dir}")
                 if ".." in qd.parts:
                     raise ValueError(f"queue_dir contains path traversal: {handler.queue_dir}")
-            register_handler(ActionType.QUEUE_AGENT, handler)
+            self._handlers[ActionType.QUEUE_AGENT] = handler
 
         # Execution log setup
         self.log_file_path: Path | None = None
@@ -834,6 +843,7 @@ class Pipeline:
             verbose=verbose,
             target_config=target_config,
             pipeline=self,
+            handlers=self._handlers,
         )
         start_time = time.monotonic()
         action_result = execute_action(stage.action, ctx)
@@ -872,6 +882,7 @@ class Pipeline:
                     verbose=verbose,
                     target_config=target_config,
                     pipeline=self,
+                    handlers=self._handlers,
                 )
                 execute_action(stage.on_fail, fail_ctx)
             result_tick = TickResult(
@@ -1041,6 +1052,7 @@ class Pipeline:
                 verbose=verbose,
                 target_config=target_config,
                 pipeline=self,
+                handlers=self._handlers,
             )
             start_time = time.monotonic()
             result = execute_action(next_stage.action, ctx)
@@ -1059,6 +1071,7 @@ class Pipeline:
                         verbose=verbose,
                         target_config=target_config,
                         pipeline=self,
+                        handlers=self._handlers,
                     )
                     fail_result = execute_action(next_stage.on_fail, fail_ctx)
                     if not fail_result.success:
@@ -1219,6 +1232,7 @@ class Pipeline:
             retry_count=retry_count + 1,
             retry_data=stage_state.processing_data,
             pipeline=self,
+            handlers=self._handlers,
         )
         start_time = time.monotonic()
         action_result = execute_action(stage.action, ctx)
@@ -1248,6 +1262,7 @@ class Pipeline:
                     verbose=verbose,
                     target_config=target_config,
                     pipeline=self,
+                    handlers=self._handlers,
                 )
                 execute_action(stage.on_fail, fail_ctx)
             return TickResult(
