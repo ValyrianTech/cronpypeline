@@ -993,6 +993,11 @@ def register_handler(action_type: ActionType, handler: ActionHandler) -> None:
         ``PipelineConfig.action_handler`` (stored on the Pipeline instance),
         which does not leak across pipelines.
 
+    Because built-in action types (COMMAND, SUBPROCESS, CUSTOM, HTTP_REQUEST)
+    resolve through the module-global ``_HANDLERS``, registering a handler for
+    one of these types overrides the built-in for every Pipeline that has not
+    explicitly configured that action type per-instance.
+
     :param action_type: The action type to register the handler for.
     :param handler: The handler instance to register.
     """
@@ -1018,10 +1023,13 @@ def execute_action(
 
     Resolution order for the handler registry is: the explicit ``handlers``
     argument, then ``context.handlers``, then the module-global ``_HANDLERS``.
-    Within a registry, if the action type is missing, the module-global
-    ``_HANDLERS`` is used as a fallback. This lets a Pipeline use its own
-    per-instance handlers while remaining backwards compatible with
-    ``register_handler``.
+    Within the chosen registry, if the action type is missing, resolution
+    falls back to the module-global ``_HANDLERS`` (which supplies the built-in
+    action types and any :func:`register_handler` overrides). This means a
+    Pipeline uses only its explicitly-configured per-instance handlers, while
+    built-in action types (COMMAND, SUBPROCESS, CUSTOM, HTTP_REQUEST) resolve
+    through ``_HANDLERS`` — so ``register_handler`` still overrides built-ins
+    for any Pipeline that has not explicitly configured that action type.
 
     :param action: Action specification to execute.
     :param context: Tick context for the action.

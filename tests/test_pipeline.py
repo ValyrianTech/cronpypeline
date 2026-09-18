@@ -2491,6 +2491,102 @@ class TestPerInstanceHandlerRegistry:
         finally:
             _HANDLERS[ActionType.QUEUE_AGENT] = previous
 
+    def test_register_handler_overrides_builtin_command(self, tmp_path):
+        from cronpypeline.actions import (
+            _HANDLERS,
+            ActionHandler,
+            ActionResult,
+            register_handler,
+        )
+
+        class MockCommandHandler(ActionHandler):
+            def __init__(self):
+                self.executed = False
+
+            def execute(self, action, context):
+                self.executed = True
+                return ActionResult(success=True, stdout="mock command ran")
+
+        mock = MockCommandHandler()
+        previous = _HANDLERS.get(ActionType.COMMAND)
+        register_handler(ActionType.COMMAND, mock)
+        try:
+            workspace = tmp_path / "workspace"
+            workspace.mkdir()
+            (workspace / "my-repo").mkdir()
+
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Command Step",
+                        "trigger": {"type": "file_missing", "path": "done.md"},
+                        "action": {"type": "command", "params": {"command": "echo REAL_COMMAND_RAN"}},
+                        "markers": {"completion": {"type": "file", "name": "done.md"}},
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert mock.executed is True
+            assert result.stdout == "mock command ran"
+            assert "REAL_COMMAND_RAN" not in result.stdout
+        finally:
+            _HANDLERS[ActionType.COMMAND] = previous
+
+    def test_register_handler_overrides_builtin_subprocess(self, tmp_path):
+        from cronpypeline.actions import (
+            _HANDLERS,
+            ActionHandler,
+            ActionResult,
+            register_handler,
+        )
+
+        class MockSubprocessHandler(ActionHandler):
+            def __init__(self):
+                self.executed = False
+
+            def execute(self, action, context):
+                self.executed = True
+                return ActionResult(success=True, stdout="mock subprocess ran")
+
+        mock = MockSubprocessHandler()
+        previous = _HANDLERS.get(ActionType.SUBPROCESS)
+        register_handler(ActionType.SUBPROCESS, mock)
+        try:
+            workspace = tmp_path / "workspace"
+            workspace.mkdir()
+            (workspace / "my-repo").mkdir()
+            script = workspace / "script.py"
+            script.write_text("print('REAL_SUBPROCESS_RAN')\n")
+
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Subprocess Step",
+                        "trigger": {"type": "file_missing", "path": "done.md"},
+                        "action": {"type": "subprocess", "params": {"script": str(script)}},
+                        "markers": {"completion": {"type": "file", "name": "done.md"}},
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+            result = pipeline.tick(target="my-repo")
+
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert mock.executed is True
+            assert result.stdout == "mock subprocess ran"
+            assert "REAL_SUBPROCESS_RAN" not in result.stdout
+        finally:
+            _HANDLERS[ActionType.SUBPROCESS] = previous
+
     def test_execute_action_explicit_handlers_argument(self, tmp_path):
         from cronpypeline.actions import (
             ActionHandler,

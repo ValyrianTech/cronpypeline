@@ -608,7 +608,7 @@ class MyHandler(ActionHandler):
 register_handler(ActionType.QUEUE_AGENT, MyHandler())
 ```
 
-`register_handler()` mutates process-global state shared across **all** `Pipeline` instances in the process (and across tests in the same process). Prefer wiring a per-pipeline handler via the pipeline JSON `action_handler` field instead: that handler is stored on the `Pipeline` instance only and does not leak across pipelines, which is the recommended approach when multiple pipelines run in one process (e.g. the webui dashboard loading several configs, or a test suite). Each `Pipeline` builds its own handler registry from `get_default_handlers()`, and `execute_action(..., handlers=...)` resolves handlers from that per-instance registry (with the process-global registry as a fallback) rather than from the shared global.
+`register_handler()` mutates process-global state shared across **all** `Pipeline` instances in the process (and across tests in the same process). Prefer wiring a per-pipeline handler via the pipeline JSON `action_handler` field instead: that handler is stored on the `Pipeline` instance only and does not leak across pipelines, which is the recommended approach when multiple pipelines run in one process (e.g. the webui dashboard loading several configs, or a test suite). Each `Pipeline` stores only its explicitly-configured handler on the instance; built-in action types (`COMMAND`, `SUBPROCESS`, `CUSTOM`, `HTTP_REQUEST`) resolve through the module-global registry, so `register_handler()` still overrides built-ins for any `Pipeline` that has not explicitly configured that action type, while the per-pipeline `action_handler` config still takes precedence for that `Pipeline` and does not leak across pipelines.
 
 ### Trigger conditions
 
