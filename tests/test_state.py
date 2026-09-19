@@ -924,6 +924,32 @@ class TestTargetStateOrphanedProcessingCleanup:
         # Second call is a no-op and must not raise.
         ts.cleanup_orphans()
 
+    def test_cleanup_orphans_noop_when_target_dir_none(self, tmp_path):
+        """cleanup_orphans() on a TargetState that has not been derived
+        (target_dir is None) returns early without raising and without
+        setting _orphan_cleanup_done."""
+        stage1 = Stage(
+            id="A0",
+            name="Async step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "test", "prompt": "do"}),
+            markers={
+                "completion": MarkerSpec(name="a.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing_a", type=MarkerType.JSON, content={}),
+            },
+            timeout_minutes=30,
+        )
+
+        ts = TargetState(target="repo", stages=[stage1], target_lock=True)
+        # No derive() call, so target_dir is None.
+        assert ts.target_dir is None
+        assert ts._orphan_cleanup_done is False
+
+        ts.cleanup_orphans()
+
+        # The target_dir is None branch returns before the flag is set.
+        assert ts._orphan_cleanup_done is False
+
     def test_pipeline_state_derive_cleanup_orphans_false(self, tmp_path):
         """PipelineState.derive(cleanup_orphans=False) must not delete orphaned
         markers, while the default True does."""
