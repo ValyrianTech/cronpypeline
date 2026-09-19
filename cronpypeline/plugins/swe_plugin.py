@@ -25,7 +25,7 @@ from cronpypeline.actions import (
     NoRedirectHandler,
     TickContext,
 )
-from cronpypeline.io_utils import write_json_atomic
+from cronpypeline.io_utils import write_json_atomic, write_text_atomic
 from cronpypeline.plugins.issue_store import (
     create_issue,
     issue_filename,
@@ -700,8 +700,7 @@ def run_lint_autofix(action: ActionSpec, context: TickContext) -> ActionResult:
         commit_phase_a_change(target_dir, f"style: apply ruff safe auto-fixes ({fixed_count})")
 
     marker = autofix_dir / f"applied_for_{report_path.stem}.marker"
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(f"autofix applied at {started_at} -> {report_name}\n", encoding="utf-8")
+    write_text_atomic(marker, f"autofix applied at {started_at} -> {report_name}\n")
 
     if fixed_count > 0:
         a2_latest = target_dir / ".SWE" / "reports" / "lint" / "latest.md"
