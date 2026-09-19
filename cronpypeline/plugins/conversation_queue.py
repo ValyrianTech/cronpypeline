@@ -19,6 +19,7 @@ from cronpypeline.actions import (
     format_template,
 )
 from cronpypeline.config import ActionSpec
+from cronpypeline.io_utils import write_json_atomic
 from cronpypeline.template_safety import is_sensitive_key
 
 
@@ -177,7 +178,7 @@ class ConversationQueueHandler(ActionHandler):
         queue_file = (self.queue_dir / queue_filename).resolve()
         if not queue_file.is_relative_to(self.queue_dir.resolve()):
             raise ValueError(f"Queue file escapes queue directory: {queue_filename}")
-        queue_file.write_text(json.dumps(entry, indent=2))
+        write_json_atomic(queue_file, entry)
 
         return ActionResult(
             success=True,
