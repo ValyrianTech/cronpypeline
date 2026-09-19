@@ -81,7 +81,9 @@ The module can be imported even when the web stack is unavailable or broken — 
 ## Notes
 
 - The dashboard never executes pipeline actions and never acquires the pipeline
-  lock — it only derives state from markers, exactly like `--status`.
+  lock — it only derives state from markers, exactly like `--status`. Its state
+  derivation is strictly read-only (it passes `cleanup_orphans=False`), so it
+  never deletes or modifies processing markers.
 - Stages without markers (custom plugin-managed stages) are shown with a dashed
   "stateless" node.
 - If a pipeline defines no `config_file`, the enable/disable toggle is hidden.

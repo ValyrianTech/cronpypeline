@@ -872,6 +872,116 @@ class TestTargetStateOrphanedProcessingCleanup:
         target = state.get_target_with_work(["repo1", "repo2"])
         assert target == "repo1"
 
+    def test_derive_cleanup_orphans_false_leaves_orphan(self, tmp_path):
+        """derive(cleanup_orphans=False) must not delete the orphaned processing
+        marker and must leave is_processing True."""
+        stage1 = Stage(
+            id="A0",
+            name="Async step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "test", "prompt": "do"}),
+            markers={
+                "completion": MarkerSpec(name="a.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing_a", type=MarkerType.JSON, content={}),
+            },
+            timeout_minutes=30,
+        )
+        (tmp_path / "a.md").touch()
+        create_marker(stage1.markers["processing"], tmp_path)
+
+        ts = TargetState(target="repo", stages=[stage1], target_lock=True)
+        ts.derive(tmp_path, cleanup_orphans=False)
+        assert ts.stage_states["A0"].is_complete is True
+        assert ts.stage_states["A0"].is_processing is True
+        assert (tmp_path / ".processing_a").exists()
+
+    def test_cleanup_orphans_explicit_deletes_and_idempotent(self, tmp_path):
+        """cleanup_orphans() deletes the orphaned marker, clears is_processing,
+        and is a no-op on the second call (_orphan_cleanup_done guard)."""
+        stage1 = Stage(
+            id="A0",
+            name="Async step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "test", "prompt": "do"}),
+            markers={
+                "completion": MarkerSpec(name="a.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing_a", type=MarkerType.JSON, content={}),
+            },
+            timeout_minutes=30,
+        )
+        (tmp_path / "a.md").touch()
+        create_marker(stage1.markers["processing"], tmp_path)
+
+        ts = TargetState(target="repo", stages=[stage1], target_lock=True)
+        ts.derive(tmp_path, cleanup_orphans=False)
+        assert ts._orphan_cleanup_done is False
+
+        ts.cleanup_orphans()
+        assert ts._orphan_cleanup_done is True
+        assert ts.stage_states["A0"].is_processing is False
+        assert not (tmp_path / ".processing_a").exists()
+
+        # Second call is a no-op and must not raise.
+        ts.cleanup_orphans()
+
+    def test_cleanup_orphans_noop_when_target_dir_none(self, tmp_path):
+        """cleanup_orphans() on a TargetState that has not been derived
+        (target_dir is None) returns early without raising and without
+        setting _orphan_cleanup_done."""
+        stage1 = Stage(
+            id="A0",
+            name="Async step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "test", "prompt": "do"}),
+            markers={
+                "completion": MarkerSpec(name="a.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing_a", type=MarkerType.JSON, content={}),
+            },
+            timeout_minutes=30,
+        )
+
+        ts = TargetState(target="repo", stages=[stage1], target_lock=True)
+        # No derive() call, so target_dir is None.
+        assert ts.target_dir is None
+        assert ts._orphan_cleanup_done is False
+
+        ts.cleanup_orphans()
+
+        # The target_dir is None branch returns before the flag is set.
+        assert ts._orphan_cleanup_done is False
+
+    def test_pipeline_state_derive_cleanup_orphans_false(self, tmp_path):
+        """PipelineState.derive(cleanup_orphans=False) must not delete orphaned
+        markers, while the default True does."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+
+        stage1 = Stage(
+            id="A0",
+            name="Async step",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="a.md"),
+            action=ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "test", "prompt": "do"}),
+            markers={
+                "completion": MarkerSpec(name="a.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing_a", type=MarkerType.JSON, content={}),
+            },
+            timeout_minutes=30,
+        )
+        # Orphaned marker in repo1
+        (workspace / "repo1" / "a.md").touch()
+        create_marker(stage1.markers["processing"], workspace / "repo1")
+
+        state = PipelineState(workspace_dir=workspace, stages=[stage1], target_lock=True)
+        state.derive(["repo1"], cleanup_orphans=False)
+        assert (workspace / "repo1" / ".processing_a").exists()
+        assert state.target_states["repo1"].stage_states["A0"].is_processing is True
+
+        # Default True cleans it up
+        state.derive(["repo1"])
+        assert not (workspace / "repo1" / ".processing_a").exists()
+        assert state.target_states["repo1"].stage_states["A0"].is_processing is False
+
 
 class TestPipelineStateFlattenConfig:
     """Tests for PipelineState flattening target_config into context."""
