@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from cronpypeline.io_utils import write_text_atomic
+
 
 def generate_timestamp() -> str:
     """Generate a timestamp string in YYYYMMDD_HHMMSS format.
@@ -83,7 +85,7 @@ def write_report(
         raise ValueError(f"Invalid report filename: {filename}")
 
     report_path = directory / fname
-    report_path.write_text(content)
+    write_text_atomic(report_path, content)
     return report_path
 
 

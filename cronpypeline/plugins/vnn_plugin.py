@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.actions import ActionResult
+from cronpypeline.io_utils import write_json_atomic
 
 
 def log_rejection(context: dict[str, Any], result: ActionResult) -> None:
@@ -67,7 +68,7 @@ def log_rejection(context: dict[str, Any], result: ActionResult) -> None:
             existing_log = []
 
     existing_log.append(log_entry)
-    log_file.write_text(json.dumps(existing_log, indent=2))
+    write_json_atomic(log_file, existing_log)
 
 
 def queue_empty_global(context: dict[str, Any]) -> bool:
@@ -132,7 +133,7 @@ def sync_story_states(context: dict[str, Any]) -> bool:
 
     # Update ranking with current state
     existing[target] = story_state
-    ranking_file.write_text(json.dumps(existing, indent=2))
+    write_json_atomic(ranking_file, existing)
 
     return True
 
@@ -196,7 +197,7 @@ def check_completed_compilations(context: dict[str, Any]) -> bool:
         "timestamp": comp_data.get("timestamp", time.time()),
         "output": comp_data.get("output", ""),
     }
-    state_file.write_text(json.dumps(state, indent=2))
+    write_json_atomic(state_file, state)
 
     return True
 
@@ -256,7 +257,7 @@ def discover_stories(context: dict[str, Any]) -> bool:
     # Write registry
     reg_path = Path(registry_file)
     reg_path.parent.mkdir(parents=True, exist_ok=True)
-    reg_path.write_text(json.dumps({"stories": stories}, indent=2))
+    write_json_atomic(reg_path, {"stories": stories})
 
     return True
 

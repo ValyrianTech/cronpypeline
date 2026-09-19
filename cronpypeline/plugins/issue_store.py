@@ -16,6 +16,8 @@ from dataclasses import field as dc_field
 from pathlib import Path
 from typing import Any
 
+from cronpypeline.io_utils import write_text_atomic
+
 # ─── Frontmatter parsing/serialization ──────────────────────────────────────
 
 
@@ -355,7 +357,7 @@ def _write_issue_file(path: Path, issue: Issue) -> None:
     fm = issue.to_dict()
     body = fm.pop("body", "")
     fm_text = serialize_frontmatter(fm)
-    path.write_text(f"---\n{fm_text}---\n{body}")
+    write_text_atomic(path, f"---\n{fm_text}---\n{body}")
 
 
 def load_issues(target_dir: Path | str | None = None) -> list[Issue]:

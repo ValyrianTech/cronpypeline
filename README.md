@@ -28,7 +28,7 @@
 - **HTTP requests**: Built-in `http_request` action handler with auth token resolution from config, env vars, or context.
 - **SWE pipeline plugins**: Issue store (YAML frontmatter), diagnostic report handlers with output parsers, prompt builders for fix/coder/review agents, GitHub session adapter.
 - **VNN pipeline plugins**: Story state sync, inconsistent state cleanup, global queue-empty gate, completed compilation checks, story discovery, rejection audit trail.
-- **Crash-safe**: If a process is killed mid-tick, the next tick re-derives state from whatever markers were already written.
+- **Crash-safe**: If a process is killed mid-tick, the next tick re-derives state from whatever markers were already written. State, marker, report, and session files are written atomically (temp file + fsync + atomic `os.replace` via `cronpypeline/io_utils.py`), so a crash mid-write cannot leave a partially-written or corrupt state file.
 - **Execution log**: Optional structured JSONL log (via the `log_file` config option) records every tick and stage evaluation — tick IDs, durations, stage results, and resolved action commands — with automatic rotation.
 - **Minimal dependencies**: Pure Python stdlib. No heavy framework. Python 3.10+.
 
@@ -234,7 +234,7 @@ cron fires → script starts → acquire lock → derive state from filesystem �
   walk detector chain → first match executes one action → release lock → exit
 ```
 
-The pipeline takes **one action per tick** and exits. State is derived fresh from the filesystem on every tick — there is no in-memory state between invocations. This makes the pipeline fully crash-safe.
+The pipeline takes **one action per tick** and exits. State is derived fresh from the filesystem on every tick — there is no in-memory state between invocations. This makes the pipeline fully crash-safe. State, marker, report, and session files are written atomically (to a temp file, fsync-ed, then atomically `os.replace`-d into place via `cronpypeline/io_utils.py`), so a crash mid-write leaves either the old or the new complete file, never a truncated or corrupt one.
 
 ### Execution log
 

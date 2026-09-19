@@ -23,6 +23,7 @@ from typing import Any
 
 from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
+from cronpypeline.io_utils import write_json_atomic, write_text_atomic
 from cronpypeline.plugins.issue_store import (
     Issue,
     _write_issue_file,
@@ -1120,7 +1121,7 @@ def run_select(repo_dir: Path, repo_name: str, target_config: dict[str, Any],
         "issues_per_pr": target_config.get("issues_per_pr", 1),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    (task_dir / TASK_FILE).write_text(json.dumps(task, indent=2), encoding="utf-8")
+    write_json_atomic(task_dir / TASK_FILE, task)
 
     queued = _queue_agent(
         agent_name, prompt, repo_name, repo_dir, task_dir, task_id,
@@ -1159,7 +1160,7 @@ def _gate_review(repo_dir: Path, task_dir: Path, task: dict[str, Any],
         "new_issues_open": new_open,
         "passed": True,
     }
-    (task_dir / GATE_RESULT_FILE).write_text(json.dumps(gate, indent=2), encoding="utf-8")
+    write_json_atomic(task_dir / GATE_RESULT_FILE, gate)
     if source_issue_id:
         set_issue_status(repo_dir, source_issue_id, "done")
     print(f"  review complete ({new_open} new issue(s) filed).")
@@ -1193,9 +1194,10 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
     if marker_text.lstrip().upper().startswith("UNFIXABLE"):
         print(f"  agent reported task '{task['task_id']}' UNFIXABLE.")
         if not dry_run:
-            (task_dir / GATE_RESULT_FILE).write_text(
-                json.dumps({"task_id": task["task_id"], "passed": False,
-                            "unfixable": True}, indent=2), encoding="utf-8")
+            write_json_atomic(
+                task_dir / GATE_RESULT_FILE,
+                {"task_id": task["task_id"], "passed": False, "unfixable": True},
+            )
             if source_issue_id:
                 set_issue_status(repo_dir, source_issue_id, "discarded")
         return True
@@ -1236,13 +1238,13 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
         print(f"  ERROR: failed to checkout task branch {branch} for verification: "
               f"{checkout.stderr or checkout.stdout}")
         # Write a failed gate result
-        (task_dir / GATE_RESULT_FILE).write_text(json.dumps({
+        write_json_atomic(task_dir / GATE_RESULT_FILE, {
             "task_id": task["task_id"],
             "gated_at": datetime.now(timezone.utc).isoformat(),
             "issue_type": issue_type,
             "passed": False,
             "error": f"Failed to checkout task branch {branch}",
-        }, indent=2), encoding="utf-8")
+        })
         if source_issue_id:
             for i in load_issues(repo_dir):
                 if str(i.id) == source_issue_id:
@@ -1282,8 +1284,8 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
             type_ok = True
 
     diff, files = _capture_diff(repo_dir, INTEGRATION_BRANCH)
-    (task_dir / DIFF_FILE).write_text(diff, encoding="utf-8")
-    (task_dir / FILES_CHANGED_FILE).write_text(json.dumps(files, indent=2), encoding="utf-8")
+    write_text_atomic(task_dir / DIFF_FILE, diff)
+    write_json_atomic(task_dir / FILES_CHANGED_FILE, files)
 
     has_diff = bool(diff.strip())
     has_uncommitted = _has_uncommitted_work(repo_dir)
@@ -1318,7 +1320,7 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
         "resolved_out_of_tree": resolved_out_of_tree,
         **type_detail,
     }
-    (task_dir / GATE_RESULT_FILE).write_text(json.dumps(gate, indent=2), encoding="utf-8")
+    write_json_atomic(task_dir / GATE_RESULT_FILE, gate)
 
     print(f"    type_ok={type_ok}  tests_green={tests_green}  merged={merged}  "
           f"files_changed={len(files)}")
