@@ -140,7 +140,12 @@ class TargetState:
     context: dict[str, Any] | None = None
     _orphan_cleanup_done: bool = dc_field(default=False, repr=False)
 
-    def derive(self, base_dir: Path, context: dict[str, Any] | None = None) -> None:
+    def derive(
+        self,
+        base_dir: Path,
+        context: dict[str, Any] | None = None,
+        cleanup_orphans: bool = True,
+    ) -> None:
         """Derive state for all stages.
 
         Updates existing StageState objects in-place when they already exist so
@@ -149,6 +154,11 @@ class TargetState:
 
         :param base_dir: Target directory to check markers in.
         :param context: Optional context dict for marker template substitution.
+        :param cleanup_orphans: If True (default), orphaned processing markers
+            are cleaned up after derivation. Read-only callers (e.g. the webui
+            ``/api/status`` endpoint or ``Pipeline.status()``) must pass
+            ``cleanup_orphans=False`` so derivation never mutates the
+            filesystem.
         """
         self.target_dir = base_dir
         self.context = context
@@ -161,23 +171,34 @@ class TargetState:
                 self.stage_states[stage.id] = ss
             ss.derive(base_dir, context=context)
 
-        # Clean up orphaned processing markers for completed stages.
-        # When a queue_agent action completes externally (the agent creates
-        # the completion marker), the pipeline-created processing marker is
-        # left behind.  This orphans the target when target_lock is enabled
-        # (has_processing stays True forever).  Delete the stale processing
-        # marker so downstream stages can proceed.
-        #
-        # Only run once per TargetState instance — re-derivations (e.g. after
-        # invalidation) must not trigger cleanup, because a processing marker
-        # created by the current tick's action could belong to a different
-        # stage that shares the same marker name.
-        if not self._orphan_cleanup_done:
-            for ss in self.stage_states.values():
-                if ss.is_complete and ss.is_processing and "processing" in ss.stage.markers:
-                    delete_marker(ss.stage.markers["processing"], base_dir, context=context)
-                    ss.is_processing = False
-            self._orphan_cleanup_done = True
+        if cleanup_orphans:
+            self.cleanup_orphans()
+
+    def cleanup_orphans(self) -> None:
+        """Delete orphaned processing markers for completed stages.
+
+        When a queue_agent action completes externally (the agent creates the
+        completion marker), the pipeline-created processing marker is left
+        behind. This orphans the target when target_lock is enabled
+        (has_processing stays True forever). Delete the stale processing
+        marker so downstream stages can proceed.
+
+        This is an explicit mutation intended for the pipeline tick path only.
+        Read-only callers must not invoke it, since it deletes processing
+        markers from the filesystem.
+
+        Only run once per TargetState instance — re-derivations (e.g. after
+        invalidation) must not trigger cleanup, because a processing marker
+        created by the current tick's action could belong to a different stage
+        that shares the same marker name.
+        """
+        if self._orphan_cleanup_done:
+            return
+        for ss in self.stage_states.values():
+            if ss.is_complete and ss.is_processing and "processing" in ss.stage.markers:
+                delete_marker(ss.stage.markers["processing"], self.target_dir, context=self.context)
+                ss.is_processing = False
+        self._orphan_cleanup_done = True
 
     @property
     def has_processing(self) -> bool:
@@ -247,11 +268,21 @@ class PipelineState:
     target_states: dict[str, TargetState] = dc_field(default_factory=dict)
     target_lock: bool = False
 
-    def derive(self, targets: list[str], target_configs: dict[str, dict[str, Any]] | None = None) -> None:
+    def derive(
+        self,
+        targets: list[str],
+        target_configs: dict[str, dict[str, Any]] | None = None,
+        cleanup_orphans: bool = True,
+    ) -> None:
         """Derive state for all targets.
 
         :param targets: List of target names.
         :param target_configs: Optional mapping of target name to per-target config dict.
+        :param cleanup_orphans: If True (default), orphaned processing markers
+            are cleaned up after derivation. Read-only callers (e.g. the webui
+            ``/api/status`` endpoint or ``Pipeline.status()``) must pass
+            ``cleanup_orphans=False`` so derivation never mutates the
+            filesystem.
         """
         self.target_states = {}
         target_configs = target_configs or {}
@@ -266,7 +297,7 @@ class PipelineState:
             }
             flatten_target_config(ctx, target_config)
             target_state = TargetState(target=target, stages=self.stages, target_lock=self.target_lock)
-            target_state.derive(target_dir, context=ctx)
+            target_state.derive(target_dir, context=ctx, cleanup_orphans=cleanup_orphans)
             self.target_states[target] = target_state
 
     def get_target_with_work(self, targets: list[str]) -> str | None:

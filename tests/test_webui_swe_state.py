@@ -1265,6 +1265,41 @@ class TestBuildApp:
         assert stage_state["timeout_seconds"] == 1800
         assert abs(stage_state["seconds_until_timeout"] - 1740) < 10
 
+    def test_pipeline_status_status_does_not_delete_processing_marker(self, tmp_path):
+        """GET /api/status must not delete an orphaned processing marker
+        (read-only guarantee) for a stage that is both complete and processing."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        (workspace / "repo1").mkdir(parents=True)
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["repo1"]},
+            "stages": [
+                {"id": "A0", "name": "Step", "trigger": {"type": "file_missing", "path": "a.md"},
+                 "action": {"type": "command", "params": {"command": "echo a"}},
+                 "markers": {
+                     "completion": {"type": "file", "name": "done.md"},
+                     "processing": {"type": "json", "name": ".processing"},
+                 }},
+            ],
+        })
+        # Stage is complete AND has a leftover processing marker on disk.
+        (workspace / "repo1" / "done.md").touch()
+        (workspace / "repo1" / ".processing").write_text(json.dumps({"agent": "test"}))
+
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/status"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        assert result["error"] is None
+        stage_state = result["targets"]["repo1"]["stages"]["A0"]
+        assert stage_state["complete"] is True
+        assert stage_state["processing"] is True
+        # The processing marker must still exist (read-only guarantee).
+        assert (workspace / "repo1" / ".processing").exists()
+
     def test_pipeline_status_non_processing_countdown_fields(self, tmp_path):
         """Non-processing tracked stage should have null countdown fields but a timeout_seconds value."""
         configs_dir = tmp_path / "configs"
