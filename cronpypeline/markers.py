@@ -15,6 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from cronpypeline.io_utils import write_json_atomic
 from cronpypeline.template_safety import validate_template_fields
 
 
@@ -168,7 +169,7 @@ def create_marker(spec: MarkerSpec, base_dir: Path, context: dict[str, Any] | No
             path.unlink()
         content = dict(spec.content)
         content["timestamp"] = time.time()
-        path.write_text(json.dumps(content, indent=2))
+        write_json_atomic(path, content)
 
     elif spec.type == MarkerType.SYMLINK:
         target = spec.resolve_target(context)

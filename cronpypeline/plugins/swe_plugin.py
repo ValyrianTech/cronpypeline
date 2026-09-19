@@ -25,6 +25,7 @@ from cronpypeline.actions import (
     NoRedirectHandler,
     TickContext,
 )
+from cronpypeline.io_utils import write_json_atomic
 from cronpypeline.plugins.issue_store import (
     create_issue,
     issue_filename,
@@ -389,7 +390,7 @@ def finalize_session(action: ActionSpec, context: TickContext) -> ActionResult:
         session["completed_at"] = datetime.now(timezone.utc).isoformat()
     else:
         session["gh_close_pending"] = True
-    session_file.write_text(json.dumps(session, indent=2), encoding="utf-8")
+    write_json_atomic(session_file, session)
     return ActionResult(success=True, data={"gh_number": gh_number})
 
 
@@ -1141,10 +1142,10 @@ def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionRe
     session_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not issues:
-        session_path.write_text(json.dumps({
+        write_json_atomic(session_path, {
             "active": False,
             "checked_at": datetime.now(timezone.utc).isoformat(),
-        }, indent=2), encoding="utf-8")
+        })
         return ActionResult(success=True, data={"issues_found": 0})
 
     oldest = min(issues, key=lambda i: i.get("created_at", ""))
@@ -1153,12 +1154,12 @@ def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionRe
         return ActionResult(success=False, stderr="No issue number in GitHub response")
 
     if _git_issue_already_ingested(target_dir, gh_number):
-        session_path.write_text(json.dumps({
+        write_json_atomic(session_path, {
             "active": True,
             "github_number": gh_number,
             "issue_id": f"github-{gh_number}",
             "started_at": datetime.now(timezone.utc).isoformat(),
-        }, indent=2), encoding="utf-8")
+        })
         return ActionResult(success=True, data={"issue_id": f"github-{gh_number}", "already_ingested": True})
 
     issue_id = f"github-{gh_number}"
@@ -1183,12 +1184,12 @@ def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionRe
         body=f"# {title}\n\n{body}",
     )
 
-    session_path.write_text(json.dumps({
+    write_json_atomic(session_path, {
         "active": True,
         "github_number": gh_number,
         "issue_id": issue_id,
         "started_at": datetime.now(timezone.utc).isoformat(),
-    }, indent=2), encoding="utf-8")
+    })
 
     return ActionResult(success=True, data={"issue_id": issue_id, "gh_number": gh_number})
 
@@ -1608,7 +1609,7 @@ def _write_batch_marker(target_dir: Path, data: dict[str, Any]) -> None:
     """
     path = _batch_marker_path(target_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    write_json_atomic(path, data)
 
 
 def _batch_fixed_count(target_dir: Path) -> int:
@@ -2205,8 +2206,7 @@ def _retry_pending_github_close(
         session["completed"] = True
         session["completed_at"] = datetime.now(timezone.utc).isoformat()
         session.pop("gh_close_pending", None)
-        (target_dir / GITHUB_SESSION_FILE).write_text(
-            json.dumps(session, indent=2), encoding="utf-8")
+        write_json_atomic(target_dir / GITHUB_SESSION_FILE, session)
         return ActionResult(success=True, data={"pr_state": pr_state, "retried_close": True})
 
     pr_number = pr_data.get("pr_number")
@@ -2220,8 +2220,7 @@ def _retry_pending_github_close(
         session["completed"] = True
         session["completed_at"] = datetime.now(timezone.utc).isoformat()
         session.pop("gh_close_pending", None)
-    (target_dir / GITHUB_SESSION_FILE).write_text(
-        json.dumps(session, indent=2), encoding="utf-8")
+    write_json_atomic(target_dir / GITHUB_SESSION_FILE, session)
     return ActionResult(
         success=True,
         data={"pr_state": pr_state, "retried_close": True, "close_succeeded": closed},
@@ -2297,12 +2296,12 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         if not isinstance(failures, int) or failures < 0:
             failures = 0
         pr_data["pr_poll_failures"] = failures + 1
-        pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
+        write_json_atomic(pr_marker, pr_data)
 
     # Advance the poll time on the *attempt* so that a failing API is also
     # rate-limited by the cooldown instead of being retried on every tick.
     pr_data["last_polled_at"] = datetime.now(timezone.utc).isoformat()
-    pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
+    write_json_atomic(pr_marker, pr_data)
 
     try:
         req = Request(url, headers=headers, method="GET")
@@ -2318,7 +2317,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     # Successful fetch — clear any accumulated backoff so the next poll uses
     # the base cooldown again.
     pr_data["pr_poll_failures"] = 0
-    pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
+    write_json_atomic(pr_marker, pr_data)
 
     def _update_marker(new_state: str, **kwargs: Any) -> None:
         """Update the PR marker file with a new state.
@@ -2328,7 +2327,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         """
         pr_data["pr_state"] = new_state
         pr_data.update(kwargs)
-        pr_marker.write_text(json.dumps(pr_data, indent=2), encoding="utf-8")
+        write_json_atomic(pr_marker, pr_data)
 
     # Terminal: merged
     if gh_state == "closed" and merged:
@@ -2351,8 +2350,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                 session["active"] = False
                 session["completed"] = True
                 session["completed_at"] = datetime.now(timezone.utc).isoformat()
-            (target_dir / GITHUB_SESSION_FILE).write_text(
-                json.dumps(session, indent=2), encoding="utf-8")
+            write_json_atomic(target_dir / GITHUB_SESSION_FILE, session)
         return ActionResult(success=True, data={"pr_state": "merged"})
 
     # Terminal: rejected
@@ -2376,8 +2374,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                 session["active"] = False
                 session["completed"] = True
                 session["completed_at"] = datetime.now(timezone.utc).isoformat()
-            (target_dir / GITHUB_SESSION_FILE).write_text(
-                json.dumps(session, indent=2), encoding="utf-8")
+            write_json_atomic(target_dir / GITHUB_SESSION_FILE, session)
         return ActionResult(success=True, data={"pr_state": "rejected"})
 
     # Still open — check for changes-requested / approved reviews
@@ -2617,9 +2614,9 @@ def run_c_finalize(action: ActionSpec, context: TickContext) -> ActionResult:
     markers_dir = target_dir / SWE_SUBDIR / "markers"
     markers_dir.mkdir(parents=True, exist_ok=True)
     finalize_marker = markers_dir / "c_finalize.marker"
-    finalize_marker.write_text(
-        json.dumps({"finalized_at": datetime.now(timezone.utc).isoformat()}, indent=2),
-        encoding="utf-8",
+    write_json_atomic(
+        finalize_marker,
+        {"finalized_at": datetime.now(timezone.utc).isoformat()},
     )
     return ActionResult(success=True)
 
@@ -3437,10 +3434,10 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
     # Write queued marker
     queued_marker = target_dir / SWE_SUBDIR / DOC_SYNC_QUEUED_MARKER
     queued_marker.parent.mkdir(parents=True, exist_ok=True)
-    queued_marker.write_text(json.dumps({
+    write_json_atomic(queued_marker, {
         "sha": sha,
         "queued_at": datetime.now(timezone.utc).isoformat(),
-    }, indent=2), encoding="utf-8")
+    })
 
     result.data = {**result.data, "async": True}
     return result
@@ -3620,8 +3617,7 @@ def _publish_preconditions_met(context: dict[str, Any]) -> bool:
                 # (e.g. a manual push after the original PR was opened)
                 if pr_data.get("sha") != sha:
                     pr_data["sha"] = sha
-                    pr_marker.write_text(
-                        json.dumps(pr_data, indent=2), encoding="utf-8")
+                    write_json_atomic(pr_marker, pr_data)
                 return False
         except (OSError, json.JSONDecodeError):
             pass
@@ -3733,12 +3729,12 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     pr_url = pr_data.get("html_url", "")
     pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
     pr_marker.parent.mkdir(parents=True, exist_ok=True)
-    pr_marker.write_text(json.dumps({
+    write_json_atomic(pr_marker, {
         "sha": sha,
         "pr_number": pr_number,
         "pr_url": pr_url,
         "published_at": datetime.now(timezone.utc).isoformat(),
-    }, indent=2), encoding="utf-8")
+    })
 
     return ActionResult(success=True, data={"pr_number": pr_number, "pr_url": pr_url})
 
@@ -3856,11 +3852,11 @@ def run_c_pr_review(action: ActionSpec, context: TickContext) -> ActionResult:
     # Write queued marker
     queued_marker = target_dir / SWE_SUBDIR / "pr_review_queued.json"
     queued_marker.parent.mkdir(parents=True, exist_ok=True)
-    queued_marker.write_text(json.dumps({
+    write_json_atomic(queued_marker, {
         "pr_number": pr_number,
         "sha": sha,
         "queued_at": datetime.now(timezone.utc).isoformat(),
-    }, indent=2), encoding="utf-8")
+    })
 
     result.data = {**result.data, "async": True}
     return result
@@ -3905,6 +3901,6 @@ def sync_session_mode(context: dict[str, Any], mode_file: str | None = None) -> 
 
     # Write mode file
     mode_path.parent.mkdir(parents=True, exist_ok=True)
-    mode_path.write_text(json.dumps({"mode": mode}))
+    write_json_atomic(mode_path, {"mode": mode}, indent=None)
 
     return True
