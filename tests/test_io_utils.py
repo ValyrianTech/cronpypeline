@@ -1,7 +1,6 @@
 """Tests for cronpypeline.io_utils — atomic JSON/text write helpers."""
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -51,17 +50,17 @@ class TestWriteJsonAtomic:
     def test_cleanup_temp_on_replace_failure(self, tmp_path):
         path = tmp_path / "state.json"
         path.write_text('{"old": true}')
-        with patch("cronpypeline.io_utils.os.replace", side_effect=OSError("boom")):
-            with pytest.raises(OSError, match="boom"):
-                write_json_atomic(path, {"new": 1})
+        with patch("cronpypeline.io_utils.os.replace", side_effect=OSError("boom")), \
+             pytest.raises(OSError, match="boom"):
+            write_json_atomic(path, {"new": 1})
         assert path.read_text() == '{"old": true}'
         assert list(tmp_path.glob(".state.json.*.tmp")) == []
 
     def test_unlink_file_not_found_is_ignored(self, tmp_path):
         path = tmp_path / "state.json"
-        with patch("cronpypeline.io_utils.os.unlink", side_effect=FileNotFoundError):
-            with pytest.raises(TypeError):
-                write_json_atomic(path, object())
+        with patch("cronpypeline.io_utils.os.unlink", side_effect=FileNotFoundError), \
+             pytest.raises(TypeError):
+            write_json_atomic(path, object())
 
 
 class TestWriteTextAtomic:
@@ -82,15 +81,15 @@ class TestWriteTextAtomic:
     def test_cleanup_temp_on_replace_failure(self, tmp_path):
         path = tmp_path / "report.md"
         path.write_text("old")
-        with patch("cronpypeline.io_utils.os.replace", side_effect=OSError("boom")):
-            with pytest.raises(OSError, match="boom"):
-                write_text_atomic(path, "new")
+        with patch("cronpypeline.io_utils.os.replace", side_effect=OSError("boom")), \
+             pytest.raises(OSError, match="boom"):
+            write_text_atomic(path, "new")
         assert path.read_text() == "old"
         assert list(tmp_path.glob(".report.md.*.tmp")) == []
 
     def test_unlink_file_not_found_is_ignored(self, tmp_path):
         path = tmp_path / "report.md"
         with patch("cronpypeline.io_utils.os.unlink", side_effect=FileNotFoundError), \
-             patch("cronpypeline.io_utils.os.replace", side_effect=OSError("boom")):
-            with pytest.raises(OSError, match="boom"):
-                write_text_atomic(path, "new")
+             patch("cronpypeline.io_utils.os.replace", side_effect=OSError("boom")), \
+             pytest.raises(OSError, match="boom"):
+            write_text_atomic(path, "new")

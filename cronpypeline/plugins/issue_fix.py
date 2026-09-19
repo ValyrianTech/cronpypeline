@@ -10,6 +10,7 @@ Drives a single issue through a fix loop:
                               diff, finalize the issue status.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -291,6 +292,33 @@ def _safe_slug(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_") or "unknown"
 
 
+_REPO_HASH_LEN = 8
+
+
+def _repo_dir_component(repo_name: str) -> str:
+    """Return an injective, filename-safe component encoding a repo name.
+
+    ``_safe_slug`` is lossy (e.g. ``owner/repo`` and ``owner_repo`` both become
+    ``owner_repo``), so using it alone as the repo discriminator in a task
+    directory name lets one repo's cleanup match — and delete — another repo's
+    task directory.  When the safe slug already equals the original name the
+    component is returned unchanged (preserving the historical on-disk
+    layout).  Otherwise a short hash of the *exact* name is appended so that
+    distinct repo names always map to distinct components.  Because a name
+    that survives ``_safe_slug`` unchanged can never contain ``~``, a component
+    containing ``~`` is unambiguously a lossy-name component and can never
+    collide with a safe-name component.
+
+    :param repo_name: Repo name.
+    :returns: Filename-safe component that is unique per repo name.
+    """
+    safe = _safe_slug(repo_name)
+    if safe == repo_name:
+        return safe
+    digest = hashlib.sha256(repo_name.encode("utf-8")).hexdigest()[:_REPO_HASH_LEN]
+    return f"{safe}~{digest}"
+
+
 def select_open_issue(repo_dir: Path, issue_id: str | None = None,
                       verbose: bool = False) -> Issue | None:
     """Pick the issue to work on: explicit id, else ranked, else first 'open'.
@@ -482,17 +510,19 @@ def _iter_task_dirs() -> list[Path]:
 def _task_dir_belongs_to_repo(task_dir_name: str, repo_name: str) -> bool:
     """Return True if a task dir name belongs to the given repo.
 
-    Task dir names use the format ``{date}_{safe_repo}_{task_id}`` where
-    ``date`` is an 8-digit ``YYYYMMDD`` string. The repo slug is matched
+    Task dir names use the format ``{date}_{repo_component}_{task_id}`` where
+    ``date`` is an 8-digit ``YYYYMMDD`` string and ``repo_component`` is the
+    injective ``_repo_dir_component(repo_name)``. The repo component is matched
     exactly and the task-id component must be a single non-underscore token,
-    so e.g. ``my`` does not match a dir belonging to ``my_repo``.
+    so e.g. ``my`` does not match a dir belonging to ``my_repo``, and a lossy
+    name (e.g. ``my/repo``) never matches another repo's safe-name component.
 
     :param task_dir_name: Task directory name.
     :param repo_name: Repo name to match.
     :returns: True if the directory belongs to the repo.
     """
-    safe_repo = _safe_slug(repo_name)
-    pattern = rf"^\d{{8}}_{re.escape(safe_repo)}_[^_]+$"
+    repo_component = _repo_dir_component(repo_name)
+    pattern = rf"^\d{{8}}_{re.escape(repo_component)}_[^_]+$"
     return re.match(pattern, task_dir_name) is not None
 
 
@@ -528,7 +558,7 @@ def _cleanup_stale_task(repo_dir: Path, task_dir: Path, repo_name: str,
     task_id = task.get("task_id", "")
     if not task_id:
         match = re.match(
-            rf"^\d{{8}}_{re.escape(_safe_slug(repo_name))}_(.+)$",
+            rf"^\d{{8}}_{re.escape(_repo_dir_component(repo_name))}_(.+)$",
             task_dir.name,
         )
         if match:
@@ -1066,7 +1096,7 @@ def run_select(repo_dir: Path, repo_name: str, target_config: dict[str, Any],
     coverage_target = float(target_config.get("coverage_threshold", COVERAGE_TARGET))
 
     date_bucket = datetime.now(timezone.utc).strftime("%Y%m%d")
-    task_dir = (TASKS_DIR / date_bucket / f"{date_bucket}_{_safe_slug(repo_name)}_{task_id}")
+    task_dir = (TASKS_DIR / date_bucket / f"{date_bucket}_{_repo_dir_component(repo_name)}_{task_id}")
     branch = _task_branch_name(task_id)
     agent_name = "CodeReviewAgent" if is_review else "CoderAgent"
 
