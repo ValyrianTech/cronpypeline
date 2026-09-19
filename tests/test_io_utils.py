@@ -1,7 +1,6 @@
 """Tests for cronpypeline.io_utils — atomic JSON/text write helpers."""
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
