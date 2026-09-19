@@ -3884,6 +3884,47 @@ class TestCrossStageTargetLock:
         assert (workspace / "my-repo" / "b.md").exists()
         assert not (workspace / "my-repo" / ".processing_a").exists()
 
+    def test_status_does_not_delete_orphaned_processing_marker(self, tmp_path):
+        """Pipeline.status() is a read-only snapshot and must not delete an
+        orphaned processing marker from disk."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        # A0 is complete (a.md exists) BUT processing marker is still on disk
+        (workspace / "my-repo" / "a.md").touch()
+        (workspace / "my-repo" / ".processing_a").write_text('{"retry_count": 0}')
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "target_lock": True,
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Async step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "queue_agent", "params": {"agent": "test", "prompt": "do"}},
+                    "markers": {
+                        "processing": {"type": "json", "name": ".processing_a", "content": {}},
+                        "completion": {"type": "file", "name": "a.md"},
+                    },
+                    "timeout_minutes": 30,
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        snapshot = pipeline.status(targets=["my-repo"])
+        # The status snapshot reports the processing marker, but must not delete it.
+        assert snapshot["my-repo"]["A0"]["complete"] is True
+        assert snapshot["my-repo"]["A0"]["processing"] is True
+        assert (workspace / "my-repo" / ".processing_a").exists()
+
+        # A normal tick still cleans up the orphaned processing marker.
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.NO_WORK
+        assert not (workspace / "my-repo" / ".processing_a").exists()
+
     def test_target_lock_logs_stage_states_distinctly(self, tmp_path):
         """With target_lock active and a processing stage, the log should
         distinguish processing vs complete vs blocked stages."""

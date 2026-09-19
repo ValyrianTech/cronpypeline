@@ -1387,7 +1387,8 @@ class Pipeline:
             active_stages.append(stage)
 
         state = PipelineState(workspace_dir=self.workspace_dir, stages=active_stages)
-        state.derive(targets)
+        # Status is a read-only snapshot and must not mutate processing markers.
+        state.derive(targets, cleanup_orphans=False)
 
         result = {}
         for target, ts in state.target_states.items():

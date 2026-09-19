@@ -545,7 +545,8 @@ def _build_app():
         target_configs = {t.name: t.config for t in target_objs}
 
         state = PipelineState(workspace_dir=workspace, stages=stages, target_lock=cfg.target_lock)
-        state.derive(target_names, target_configs=target_configs)
+        # The dashboard is read-only and must not mutate processing markers.
+        state.derive(target_names, target_configs=target_configs, cleanup_orphans=False)
 
         result: dict[str, Any] = {}
         n_processing = n_stale = n_given_up = n_complete = n_total = 0
