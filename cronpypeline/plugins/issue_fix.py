@@ -23,7 +23,7 @@ from typing import Any
 
 from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
-from cronpypeline.io_utils import write_json_atomic
+from cronpypeline.io_utils import write_json_atomic, write_text_atomic
 from cronpypeline.plugins.issue_store import (
     Issue,
     _write_issue_file,
@@ -1284,7 +1284,7 @@ def run_gate(repo_dir: Path, task_dir: Path, repo_name: str,
             type_ok = True
 
     diff, files = _capture_diff(repo_dir, INTEGRATION_BRANCH)
-    (task_dir / DIFF_FILE).write_text(diff, encoding="utf-8")
+    write_text_atomic(task_dir / DIFF_FILE, diff)
     write_json_atomic(task_dir / FILES_CHANGED_FILE, files)
 
     has_diff = bool(diff.strip())

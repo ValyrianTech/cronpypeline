@@ -370,16 +370,15 @@ class TestQueueFixAgent:
         mock_handler = MagicMock()
         mock_handler.execute.side_effect = mock_execute
 
-        real_write_text = Path.write_text
-
-        def failing_write_text(self, data, encoding=None):
-            if self == ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker":
-                raise OSError("disk full")
-            return real_write_text(self, data, encoding=encoding)
+        def failing_write_text_atomic(path, text, *, encoding="utf-8"):
+            raise OSError("disk full")
 
         with (
             patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
-            patch.object(Path, "write_text", new=failing_write_text),
+            patch(
+                "cronpypeline.plugins.swe_prompts.write_text_atomic",
+                new=failing_write_text_atomic,
+            ),
         ):
             result = queue_fix_agent(action, ctx)
 
@@ -405,8 +404,8 @@ class TestQueueFixAgent:
         queue_file = tmp_path / "queue" / "FixAgent_20240101_120000.json"
 
         def mock_execute(queue_action, context):
-            # Actually write the queue file so the fallback path of the
-            # patched write_text is exercised for non-marker writes.
+            # Actually write the queue file so the cleanup path below has a
+            # real file to remove.
             queue_file.parent.mkdir(parents=True, exist_ok=True)
             queue_file.write_text(json.dumps({"agent": "FixAgent"}))
             return ActionResult(
@@ -417,16 +416,15 @@ class TestQueueFixAgent:
         mock_handler = MagicMock()
         mock_handler.execute.side_effect = mock_execute
 
-        real_write_text = Path.write_text
-
-        def failing_write_text(self, data, encoding=None):
-            if self == ctx.target_dir / ".SWE" / "markers" / f"queued_for_{report_path.stem}.marker":
-                raise OSError("disk full")
-            return real_write_text(self, data, encoding=encoding)
+        def failing_write_text_atomic(path, text, *, encoding="utf-8"):
+            raise OSError("disk full")
 
         with (
             patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=mock_handler),
-            patch.object(Path, "write_text", new=failing_write_text),
+            patch(
+                "cronpypeline.plugins.swe_prompts.write_text_atomic",
+                new=failing_write_text_atomic,
+            ),
             patch.object(Path, "unlink", side_effect=OSError("unlink failed")),
         ):
             result = queue_fix_agent(action, ctx)

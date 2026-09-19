@@ -18,6 +18,7 @@ from typing import Any
 
 from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.config import ActionSpec
+from cronpypeline.io_utils import write_text_atomic
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
 from cronpypeline.plugins.issue_store import Issue, get_issue
 from cronpypeline.plugins.swe_plugin import (
@@ -383,12 +384,11 @@ You are on branch `{PHASE_A_BRANCH}`. After making your changes:
     # so the report is not queued without a dedup marker (double-queue risk).
     try:
         markers_dir = context.target_dir / ".SWE" / "markers"
-        markers_dir.mkdir(parents=True, exist_ok=True)
         dedup_marker = markers_dir / f"queued_for_{report_path.stem}.marker"
-        dedup_marker.write_text(
+        write_text_atomic(
+            dedup_marker,
             f"queued at {datetime.now(timezone.utc).isoformat()} "
             f"against report {report_name}\n",
-            encoding="utf-8",
         )
     except OSError as e:
         # Best-effort cleanup: remove the queued entry to avoid a double-queue.
