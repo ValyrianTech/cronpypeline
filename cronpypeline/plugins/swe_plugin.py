@@ -2284,23 +2284,26 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    def _record_poll_failure() -> None:
-        """Persist the poll attempt time and bump the failure counter.
+    def _flush() -> None:
+        """Persist the current in-memory PR marker data to disk."""
+        write_json_atomic(pr_marker, pr_data)
 
-        Advancing ``last_polled_at`` (and growing ``pr_poll_failures``) on a
-        *failed* attempt ensures a GitHub outage is rate-limited rather than
-        retried on every pipeline tick.
+    def _record_poll_failure() -> None:
+        """Bump the poll failure counter (in memory only).
+
+        Growing ``pr_poll_failures`` on a *failed* attempt ensures a GitHub
+        outage is rate-limited rather than retried on every pipeline tick.
+        The mutation is persisted by a subsequent ``_flush`` call.
         """
         failures = pr_data.get("pr_poll_failures", 0)
         if not isinstance(failures, int) or failures < 0:
             failures = 0
         pr_data["pr_poll_failures"] = failures + 1
-        write_json_atomic(pr_marker, pr_data)
 
     # Advance the poll time on the *attempt* so that a failing API is also
     # rate-limited by the cooldown instead of being retried on every tick.
+    # The value is mutated in memory and persisted by the single flush below.
     pr_data["last_polled_at"] = datetime.now(timezone.utc).isoformat()
-    write_json_atomic(pr_marker, pr_data)
 
     try:
         req = Request(url, headers=headers, method="GET")
@@ -2308,6 +2311,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
             pr_info = json.loads(resp.read().decode("utf-8"))
     except (HTTPError, URLError, OSError):
         _record_poll_failure()
+        _flush()
         return ActionResult(success=False, stderr="Failed to fetch PR info")
 
     gh_state = pr_info.get("state", "open")
@@ -2316,21 +2320,22 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     # Successful fetch — clear any accumulated backoff so the next poll uses
     # the base cooldown again.
     pr_data["pr_poll_failures"] = 0
-    write_json_atomic(pr_marker, pr_data)
 
     def _update_marker(new_state: str, **kwargs: Any) -> None:
-        """Update the PR marker file with a new state.
+        """Update the in-memory PR marker data with a new state.
+
+        The mutation is persisted by a subsequent ``_flush`` call.
 
         :param new_state: The new PR state to record (e.g. 'merged', 'rejected', 'open').
         :param kwargs: Additional fields to merge into the PR marker data.
         """
         pr_data["pr_state"] = new_state
         pr_data.update(kwargs)
-        write_json_atomic(pr_marker, pr_data)
 
     # Terminal: merged
     if gh_state == "closed" and merged:
         _update_marker("merged", merged_at=pr_info.get("merged_at", ""))
+        _flush()
         session = _read_github_session(target_dir)
         if session is not None and session.get("active"):
             gh_issue_number = session.get("github_number")
@@ -2355,6 +2360,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     # Terminal: rejected
     if gh_state == "closed" and not merged:
         _update_marker("rejected", closed_at=pr_info.get("closed_at", ""))
+        _flush()
         session = _read_github_session(target_dir)
         if session is not None and session.get("active"):
             gh_issue_number = session.get("github_number")
@@ -2386,6 +2392,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         # Refreshed attempt time + failure counter so the reviews outage is
         # backed off just like the PR-info fetch above.
         _record_poll_failure()
+        _flush()
         return ActionResult(
             success=False,
             stderr=f"Failed to fetch PR reviews: {e}",
@@ -2454,6 +2461,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                                last_review_id=review_id,
                                filed_issues=[],
                                pr_review_cycles=pr_cycles)
+                _flush()
                 return ActionResult(success=True, data={"pr_state": "changes_requested"})
 
             pr_cycles += 1
@@ -2499,12 +2507,14 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                            last_review_id=review_id,
                            filed_issues=filed_issues,
                            pr_review_cycles=pr_cycles)
+            _flush()
             return ActionResult(success=True, data={"pr_state": "changes_requested"})
 
         # Already handled — check if all filed issues are done → push
         if pr_state == "changes_requested":
             if max_cycles > 0 and pr_cycles >= max_cycles:
                 # Cycle limit reached — idle, do not push
+                _flush()
                 return ActionResult(success=True, data={"pr_state": "open"})
 
             all_done = True
@@ -2533,6 +2543,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                     )  # nosec B603 - git push with fixed args
                     if push_result.returncode == 0:
                         _update_marker("open", last_review_id=review_id, filed_issues=[])
+                        _flush()
                         # Delete review markers so C-pr-review re-triggers
                         for marker_name in ("pr_reviewed.json", "pr_review_queued.json"):
                             marker_path = target_dir / SWE_SUBDIR / marker_name
@@ -2542,9 +2553,11 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                                 pass
                         return ActionResult(success=True, data={"pr_state": "open"})
                     else:
+                        _flush()
                         return ActionResult(success=False, stderr=f"Push failed: {push_result.stderr}")
 
         # Already handled, still working on fixes
+        _flush()
         return ActionResult(success=True, data={"pr_state": "open"})
 
     # --- Approved ---
@@ -2552,6 +2565,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         review_id = latest_approve.get("id")
         if pr_data.get("last_review_id") != review_id:
             _update_marker("approved", last_review_id=review_id)
+            _flush()
             return ActionResult(success=True, data={"pr_state": "approved"})
 
     # Nothing actionable — but if the marker still says "changes_requested"
@@ -2559,8 +2573,10 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     # revision issues don't keep being processed.
     if pr_state == "changes_requested" and latest_changes is None:
         _update_marker("open", filed_issues=[])
+        _flush()
         return ActionResult(success=True, data={"pr_state": "open"})
 
+    _flush()
     return ActionResult(success=True, data={"pr_state": "open"})
 
 
