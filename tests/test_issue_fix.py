@@ -45,10 +45,12 @@ from cronpypeline.plugins.issue_fix import (
     _queue_agent,
     _read_task,
     _recover_orphaned_triaged,
+    _repo_dir_component,
     _run,
     _safe_slug,
     _task_branch_name,
     _task_created_at,
+    _task_dir_belongs_to_repo,
     ensure_integration_branch,
     merge_into_integration,
     run_gate,
@@ -99,6 +101,49 @@ class TestSafeSlug:
 
     def test_only_special(self):
         assert _safe_slug("!!!") == "unknown"
+
+
+class TestRepoDirComponent:
+    def test_safe_name_passthrough(self):
+        assert _repo_dir_component("my_repo") == "my_repo"
+
+    def test_safe_charset_unchanged(self):
+        assert _repo_dir_component("abc.123-_def") == "abc.123-_def"
+
+    def test_lossy_name_gets_suffix(self):
+        comp = _repo_dir_component("my/repo")
+        assert "~" in comp
+        assert comp.startswith(_safe_slug("my/repo"))
+        assert comp != _safe_slug("my/repo")
+
+    def test_injective_across_collisions(self):
+        names = ["my/repo", "my_repo", "my repo"]
+        comps = [_repo_dir_component(n) for n in names]
+        assert len(set(comps)) == len(comps)
+        for i in range(len(comps)):
+            for j in range(i + 1, len(comps)):
+                assert comps[i] != comps[j]
+
+    def test_empty_name(self):
+        comp = _repo_dir_component("")
+        assert comp.startswith("unknown~")
+        assert comp != _repo_dir_component("unknown")
+
+
+class TestTaskDirBelongsToRepo:
+    def test_safe_name_match(self):
+        assert _task_dir_belongs_to_repo("20250101_my_repo_iss1", "my_repo") is True
+
+    def test_lossy_name_does_not_match_safe(self):
+        assert _task_dir_belongs_to_repo("20250101_my_repo_iss1", "my/repo") is False
+
+    def test_lossy_component_matches_itself(self):
+        comp = _repo_dir_component("my/repo")
+        assert _task_dir_belongs_to_repo(f"20250101_{comp}_iss1", "my/repo") is True
+
+    def test_lossy_component_does_not_match_safe_sibling(self):
+        comp = _repo_dir_component("my/repo")
+        assert _task_dir_belongs_to_repo(f"20250101_{comp}_iss1", "my_repo") is False
 
 
 class TestParseCoverageOutput:
@@ -1129,6 +1174,40 @@ class TestCleanupStaleTask:
             assert not task_dir.exists()
         mock_branch.assert_called_once_with("task1")
 
+    def test_colliding_repo_names_slash_only_removes_own_dir(self, tmp_path, monkeypatch):
+        """Repo 'owner/repo' cleanup must not delete 'owner_repo' sibling dir."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        comp_slash = _repo_dir_component("owner/repo")
+        comp_under = _repo_dir_component("owner_repo")
+        dir_slash = tmp_path / "tasks" / "d" / f"20250101_{comp_slash}_iss1"
+        dir_slash.mkdir(parents=True)
+        (dir_slash / TASK_FILE).write_text("not valid json{")
+        dir_under = tmp_path / "tasks" / "d" / f"20250101_{comp_under}_iss1"
+        dir_under.mkdir(parents=True)
+        (dir_under / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, dir_slash, "owner/repo", verbose=True) is True
+        assert not dir_slash.exists()
+        assert dir_under.exists()
+
+    def test_colliding_repo_names_underscore_only_removes_own_dir(self, tmp_path, monkeypatch):
+        """Repo 'owner_repo' cleanup must not delete 'owner/repo' sibling dir."""
+        target = _make_target_dir(tmp_path)
+        _init_git(target)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        comp_slash = _repo_dir_component("owner/repo")
+        comp_under = _repo_dir_component("owner_repo")
+        dir_slash = tmp_path / "tasks" / "d" / f"20250101_{comp_slash}_iss1"
+        dir_slash.mkdir(parents=True)
+        (dir_slash / TASK_FILE).write_text("not valid json{")
+        dir_under = tmp_path / "tasks" / "d" / f"20250101_{comp_under}_iss1"
+        dir_under.mkdir(parents=True)
+        (dir_under / TASK_FILE).write_text("not valid json{")
+        assert _cleanup_stale_task(target, dir_under, "owner_repo", verbose=True) is True
+        assert not dir_under.exists()
+        assert dir_slash.exists()
+
 
 # ─── _cleanup_orphaned_task_dirs ─────────────────────────────────────────────
 
@@ -1270,6 +1349,30 @@ class TestCleanupOrphanedTaskDirs:
         monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
         _cleanup_orphaned_task_dirs("my")
         assert td.exists()
+
+    def test_colliding_repo_names_slash_only_removes_own_dir(self, tmp_path, monkeypatch):
+        comp_slash = _repo_dir_component("owner/repo")
+        comp_under = _repo_dir_component("owner_repo")
+        dir_slash = tmp_path / "2025-01-01" / f"20250101_{comp_slash}_iss1"
+        dir_slash.mkdir(parents=True)
+        dir_under = tmp_path / "2025-01-01" / f"20250101_{comp_under}_iss1"
+        dir_under.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("owner/repo")
+        assert not dir_slash.exists()
+        assert dir_under.exists()
+
+    def test_colliding_repo_names_underscore_only_removes_own_dir(self, tmp_path, monkeypatch):
+        comp_slash = _repo_dir_component("owner/repo")
+        comp_under = _repo_dir_component("owner_repo")
+        dir_slash = tmp_path / "2025-01-01" / f"20250101_{comp_slash}_iss1"
+        dir_slash.mkdir(parents=True)
+        dir_under = tmp_path / "2025-01-01" / f"20250101_{comp_under}_iss1"
+        dir_under.mkdir(parents=True)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path)
+        _cleanup_orphaned_task_dirs("owner_repo")
+        assert dir_slash.exists()
+        assert not dir_under.exists()
 
 
 # ─── _recover_orphaned_triaged ──────────────────────────────────────────────
@@ -1448,6 +1551,15 @@ class TestRunSelect:
         td = next(iter((tmp_path / "tasks").rglob(TASK_FILE))).parent
         assert not (td / GATE_RESULT_FILE).exists()
         assert not (td / CODING_COMPLETE_MARKER).exists()
+
+    def test_repo_with_slash_uses_injective_component(self, tmp_path, monkeypatch):
+        t = self._setup(tmp_path)
+        monkeypatch.setattr("cronpypeline.plugins.issue_fix.TASKS_DIR", tmp_path / "tasks")
+        h = MagicMock(); h.execute.return_value = ActionResult(success=True)
+        with patch("cronpypeline.plugins.swe_prompts._build_queue_handler", return_value=h):
+            assert run_select(t, "owner/repo", {}, _make_tick_context(t)) is True
+        comp = _repo_dir_component("owner/repo")
+        assert any(comp in p.parent.name for p in (tmp_path / "tasks").rglob(TASK_FILE))
 
 
 # ─── _gate_review ────────────────────────────────────────────────────────────
