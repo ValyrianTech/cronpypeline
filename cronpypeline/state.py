@@ -194,9 +194,12 @@ class TargetState:
         """
         if self._orphan_cleanup_done:
             return
+        target_dir = self.target_dir
+        if target_dir is None:
+            return
         for ss in self.stage_states.values():
             if ss.is_complete and ss.is_processing and "processing" in ss.stage.markers:
-                delete_marker(ss.stage.markers["processing"], self.target_dir, context=self.context)
+                delete_marker(ss.stage.markers["processing"], target_dir, context=self.context)
                 ss.is_processing = False
         self._orphan_cleanup_done = True
 
