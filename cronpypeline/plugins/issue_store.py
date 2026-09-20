@@ -335,13 +335,17 @@ def _issues_dir(target_dir: Path | str | None = None) -> Path:
     return Path(target_dir) / ".SWE" / "issues"
 
 
-def _read_issue_file(path: Path) -> Issue:
+def _read_issue_file(path: Path) -> Issue | None:
     """Read a single issue file and parse frontmatter.
 
     :param path: Path to the issue ``.md`` file.
-    :returns: An :class:`Issue` instance parsed from the file.
+    :returns: An :class:`Issue` instance parsed from the file, or None if the
+        file cannot be read (missing permissions, non-UTF-8 bytes, etc.).
     """
-    text = path.read_text()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
     fm, body = parse_frontmatter(text)
     fm["body"] = body
     return Issue.from_dict(fm)
@@ -372,7 +376,7 @@ def load_issues(target_dir: Path | str | None = None) -> list[Issue]:
     issues = []
     for path in sorted(issues_path.glob("*.md")):
         issue = _read_issue_file(path)
-        if issue.id is None:
+        if issue is None or issue.id is None:
             continue
         issues.append(issue)
     return issues
@@ -405,6 +409,8 @@ def set_issue_status(target_dir: Path | str | None = None, issue_id: Any = None,
         return False
     for path in issues_path.glob("*.md"):
         issue = _read_issue_file(path)
+        if issue is None:
+            continue
         if issue.id == issue_id:
             issue.status = status
             _write_issue_file(path, issue)
@@ -447,6 +453,10 @@ def create_issue(target_dir: Path | str | None = None, issue_data: dict[str, Any
         raise ValueError(f"Issue path escapes issues directory: {filename}")
     if path.exists():
         existing = _read_issue_file(path)
+        if existing is None:
+            raise ValueError(
+                f"Cannot read existing issue file {filename!r} to verify id ownership; refusing to overwrite."
+            )
         if existing.id != issue.id:
             raise ValueError(
                 f"Issue id {issue.id!r} sanitizes to filename {filename!r}, which is "
@@ -470,6 +480,8 @@ def finalize_issue_outcome(target_dir: Path | str | None = None, issue_id: Any =
         return False
     for path in issues_path.glob("*.md"):
         issue = _read_issue_file(path)
+        if issue is None:
+            continue
         if issue.id == issue_id:
             issue.status = outcome
             issue.attempts += 1
