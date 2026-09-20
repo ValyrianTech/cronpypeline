@@ -480,7 +480,7 @@ Unhandled exceptions during a tick are caught and reported as an `ACTION_FAILED`
 Each stage has a `timeout_minutes` config. If a task's processing marker is older than this threshold, the pipeline:
 1. Cleans up the stale marker
 2. For sync actions (command, subprocess, http_request): gives up immediately — writes a give-up marker (if configured) and returns `GAVE_UP`. Sync actions are never re-executed when stale.
-3. For async actions (queue_agent) and custom actions: increments the retry counter and either re-queues the action (if retries remain) or writes a give-up marker.
+3. For async actions (queue_agent) and custom actions: increments the retry counter and either re-queues the action (if retries remain) or writes a give-up marker. On the stale re-queue path the retry counter is always advanced (never reset to 0), so an async stage whose agent never produces its completion marker gives up after `max_retries` re-queues instead of being re-queued forever.
 
 Sync actions (command, subprocess, http_request) are never re-executed when stale. If a sync action's stage has a stale processing marker (e.g. from a previous bug, manual intervention, or a custom action that created one), the pipeline does NOT re-execute it — the action may have already been executed, and re-running it could cause duplicate side effects. Instead it cleans up the processing marker, writes a give-up marker (if configured), and returns `GAVE_UP` with message "Stage {id} gave up: sync action with stale processing marker".
 
