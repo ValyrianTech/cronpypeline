@@ -1281,12 +1281,13 @@ class Pipeline:
                 or (stage.action.type == ActionType.CUSTOM and action_result.data.get("async", False))
             )
             if is_async:
-                # Async custom actions are treated as a fresh start (retry_count reset to 0),
-                # matching the normal execution path.
-                new_retry_count = 0 if (
-                    stage.action.type == ActionType.CUSTOM
-                    and action_result.data.get("async", False)
-                ) else retry_count + 1
+                # NOTE: _handle_stale only runs for a *re-queue* of an already
+                # dispatched (stale) stage; the initial dispatch that sets
+                # retry_count to 0 lives in _tick_single_inner. The counter must
+                # therefore always advance here for both QUEUE_AGENT and async
+                # CUSTOM actions -- otherwise max_retries is never reached and
+                # the stage is re-queued forever.
+                new_retry_count = retry_count + 1
                 processing_spec = replace(stage.markers["processing"], content={
                     **stage.markers["processing"].content,
                     "retry_count": new_retry_count,

@@ -1744,13 +1744,87 @@ class TestTickStaleHandling:
             assert result.status == TickResultStatus.ACTION_EXECUTED
             assert not (target_dir / "a.md").exists()
 
-            # Processing marker should have retry_count reset to 0 for async custom actions
+            # A stale re-queue must increment the counter so the retry cap is
+            # respected (only the first async dispatch resets it to 0).
             proc_data = json.loads((target_dir / ".processing").read_text())
-            assert proc_data["retry_count"] == 0
+            assert proc_data["retry_count"] == 2
         finally:
             sys.path.remove(str(tmp_path))
             if "async_mod" in sys.modules:
                 del sys.modules["async_mod"]
+
+    def test_stale_async_custom_action_eventually_gives_up(self, tmp_path):
+        """Regression test: an async CUSTOM stage whose completion marker never
+        appears must eventually give up within max_retries ticks instead of
+        being re-queued forever (retry_count reset to 0 on every re-execution)."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        # Start from a stale processing marker at retry_count 0.
+        (target_dir / ".processing").write_text(json.dumps({"retry_count": 0}))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        (tmp_path / "async_giveup_mod.py").write_text(
+            "def my_action(action, context):\n"
+            "    return {\"success\": True, \"async\": True}\n"
+        )
+        sys.path.insert(0, str(tmp_path))
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Async Step",
+                        "trigger": {"type": "file_missing", "path": "a.md"},
+                        "action": {"type": "custom", "params": {"callable": "async_giveup_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "a.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                            "give_up": {"type": "file", "name": ".gave_up"},
+                        },
+                        "timeout_minutes": 30,
+                        "max_retries": 3,
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+
+            requeues = 0
+            gave_up = False
+            # Safety cap far above max_retries so a regression (infinite
+            # re-queueing) fails the assertion rather than looping forever.
+            for _ in range(10):
+                result = pipeline.tick(target="my-repo")
+                if result.status == TickResultStatus.GAVE_UP:
+                    gave_up = True
+                    break
+                assert result.status == TickResultStatus.ACTION_EXECUTED
+                requeues += 1
+                # The completion marker must never appear (the agent never
+                # finishes) so every subsequent tick hits the stale path.
+                assert not (target_dir / "a.md").exists()
+                # Back-date the freshly written processing marker so the next
+                # tick treats it as stale and re-enters _handle_stale.
+                if (target_dir / ".processing").exists():
+                    stale_time = time.time() - 3600
+                    os.utime(target_dir / ".processing", (stale_time, stale_time))
+
+            assert gave_up, "async custom stage was re-queued forever instead of giving up"
+            # The retry cap must be respected: the stage gives up within
+            # max_retries re-queues.
+            assert requeues <= 3
+            assert (target_dir / ".gave_up").exists()
+            assert not (target_dir / ".processing").exists()
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "async_giveup_mod" in sys.modules:
+                del sys.modules["async_giveup_mod"]
+
 
     def _make_stale_sync_stage_with_chain(self, workspace, second_stage, stage_overrides=None):
         target_dir = workspace / "my-repo"
