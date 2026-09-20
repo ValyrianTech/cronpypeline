@@ -1026,3 +1026,69 @@ class TestListElementRoundTrip:
     def test_parse_escaped_single_quote_scalar(self):
         from cronpypeline.plugins.issue_store import _parse_value
         assert _parse_value("'it''s fine'") == "it's fine"
+
+
+class TestUnreadableIssueFiles:
+    """Tests for graceful handling of unreadable or non-UTF-8 issue files."""
+
+    def test_load_issues_skips_non_utf8_file(self, tmp_path):
+        issues_dir = tmp_path / ".SWE" / "issues"
+        issues_dir.mkdir(parents=True)
+        _write_issue_file(issues_dir, "issue-1", {"id": 1, "status": "open"})
+        (issues_dir / "bad.md").write_bytes(b'---\nid: 1\n---\n\xff\xfe invalid')
+
+        issues = load_issues(tmp_path)
+        assert [i.id for i in issues] == [1]
+
+    def test_set_issue_status_skips_unreadable_file(self, tmp_path):
+        issues_dir = tmp_path / ".SWE" / "issues"
+        issues_dir.mkdir(parents=True)
+        (issues_dir / "aaa-bad.md").write_bytes(b'---\nid: 99\n---\n\xff\xfe invalid')
+        _write_issue_file(issues_dir, "issue-1", {"id": 1, "status": "open", "attempts": 0})
+
+        assert set_issue_status(tmp_path, 1, "in_progress") is True
+        issue = get_issue(tmp_path, 1)
+        assert issue.status == "in_progress"
+        assert issue.attempts == 0
+
+    def test_finalize_issue_outcome_skips_unreadable_file(self, tmp_path):
+        issues_dir = tmp_path / ".SWE" / "issues"
+        issues_dir.mkdir(parents=True)
+        (issues_dir / "aaa-bad.md").write_bytes(b'---\nid: 99\n---\n\xff\xfe invalid')
+        _write_issue_file(issues_dir, "issue-1", {"id": 1, "status": "in_progress", "attempts": 1})
+
+        assert finalize_issue_outcome(tmp_path, 1, "done") is True
+        issue = get_issue(tmp_path, 1)
+        assert issue.status == "done"
+        assert issue.attempts == 2
+
+    def test_create_issue_raises_when_existing_file_unreadable(self, tmp_path):
+        issues_dir = tmp_path / ".SWE" / "issues"
+        issues_dir.mkdir(parents=True)
+        (issues_dir / "issue-1.md").write_bytes(b'---\nid: 1\n---\n\xff\xfe invalid')
+
+        with pytest.raises(ValueError, match="refusing to overwrite"):
+            create_issue(tmp_path, {"id": "issue-1", "status": "open"})
+
+    def test_load_issues_skips_directory_named_md(self, tmp_path):
+        issues_dir = tmp_path / ".SWE" / "issues"
+        issues_dir.mkdir(parents=True)
+        _write_issue_file(issues_dir, "issue-1", {"id": 1, "status": "open"})
+        (issues_dir / "bad.md").mkdir()
+
+        issues = load_issues(tmp_path)
+        assert [i.id for i in issues] == [1]
+
+    def test_set_issue_status_only_unreadable_file_returns_false(self, tmp_path):
+        issues_dir = tmp_path / ".SWE" / "issues"
+        issues_dir.mkdir(parents=True)
+        (issues_dir / "bad.md").write_bytes(b'---\nid: 99\n---\n\xff\xfe invalid')
+
+        assert set_issue_status(tmp_path, 99, "open") is False
+
+    def test_finalize_issue_outcome_only_unreadable_file_returns_false(self, tmp_path):
+        issues_dir = tmp_path / ".SWE" / "issues"
+        issues_dir.mkdir(parents=True)
+        (issues_dir / "bad.md").write_bytes(b'---\nid: 99\n---\n\xff\xfe invalid')
+
+        assert finalize_issue_outcome(tmp_path, 99, "done") is False
