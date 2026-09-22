@@ -252,6 +252,91 @@ class TestActionCapture:
         assert executed["action_command"] == command
 
 
+class TestSecretRedactionLogging:
+    """Verify that secrets in URLs are redacted from the execution log."""
+
+    def _mock_public_dns(self):
+        return [("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))]
+
+    def _mock_response(self):
+        mock_resp = mock.MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"ok": true}'
+        mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = mock.MagicMock(return_value=False)
+        return mock_resp
+
+    def test_http_request_url_secret_redacted_in_log(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+        stage = Stage.from_dict({
+            "id": "A0", "name": "HTTP",
+            "trigger": {"type": "file_missing", "path": "done.md"},
+            "action": {
+                "type": "http_request",
+                "params": {"url": "https://api.example.com/x?token=SECRET", "method": "GET"},
+            },
+            "markers": {"completion": {"type": "file", "name": "done.md"}},
+        })
+        config = make_config(workspace, stages=[stage], log_file="execution.log")
+        pipeline = Pipeline(config)
+
+        with mock.patch("socket.getaddrinfo", return_value=self._mock_public_dns()), \
+                mock.patch("cronpypeline.actions._HTTP_OPENER.open", return_value=self._mock_response()):
+            result = pipeline.tick(target="repo1")
+
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        log_contents = (workspace / "execution.log").read_text()
+        assert "SECRET" not in log_contents
+        lines = read_lines(workspace / "execution.log")
+        executed = next(
+            line for line in lines
+            if line["event"] == "stage" and line["result"] == "action_executed"
+        )
+        assert executed["action_command"] == "https://api.example.com/x"
+
+    def test_command_url_secret_redacted_in_log(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+        command = "true https://api.example.com/x?token=SECRET"
+        config = make_config(
+            workspace,
+            stages=[make_command_stage("A0", "A", "a.md", command=command)],
+            log_file="execution.log",
+        )
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="repo1")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+
+        log_contents = (workspace / "execution.log").read_text()
+        assert "SECRET" not in log_contents
+        assert "https://api.example.com/x" in log_contents
+
+    def test_stdout_stderr_secret_redacted_in_log(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+        command = (
+            "sh -c 'echo https://api.example.com/x?token=SECRET; "
+            "echo https://api.example.com/y?token=SECRET >&2'"
+        )
+        config = make_config(
+            workspace,
+            stages=[make_command_stage("A0", "A", "a.md", command=command)],
+            log_file="execution.log",
+        )
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="repo1")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+
+        log_contents = (workspace / "execution.log").read_text()
+        assert "SECRET" not in log_contents
+        assert "https://api.example.com/x" in log_contents
+        assert "https://api.example.com/y" in log_contents
+
+
 class TestRotation:
     def _big(self, log_path):
         log_path.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
@@ -683,6 +768,24 @@ class TestResolvedCommand:
             params={"url": "https://api.example.com/{target}"},
         )
         assert resolved_command(action, self._ctx(tmp_path)) == "https://api.example.com/repo1"
+
+    def test_http_request_redacts_query_secret(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "https://api.example.com/data?token=SECRET"},
+        )
+        result = resolved_command(action, self._ctx(tmp_path))
+        assert result == "https://api.example.com/data"
+        assert "SECRET" not in result
+
+    def test_http_request_redacts_userinfo_secret(self, tmp_path):
+        action = ActionSpec(
+            type=ActionType.HTTP_REQUEST,
+            params={"url": "https://user:pass@api.example.com/data"},
+        )
+        result = resolved_command(action, self._ctx(tmp_path))
+        assert result == "https://api.example.com/data"
+        assert "user:pass" not in result
 
     def test_custom(self, tmp_path):
         action = ActionSpec(type=ActionType.CUSTOM, params={"callable": "my.module.func"})
