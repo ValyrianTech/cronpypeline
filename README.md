@@ -386,6 +386,8 @@ For the ordering operators (`lt`, `lte`, `gt`, `gte`), if the JSON field value's
 
 The `marker_state` trigger fails closed: if the referenced field is missing from the marker JSON, the trigger returns `False` for every operator instead of treating the field as `0`. The ordered operators (`lt`, `lte`, `gt`, `gte`) additionally require both the field value and the expected value to be numeric.
 
+The `custom` trigger and the composite `and`/`or` triggers also fail closed: if the user-provided custom trigger callable raises an exception (or the composite `and`/`or` evaluation raises), the trigger logs a warning and returns `False` instead of propagating the exception and aborting the tick.
+
 **Example:**
 
 ```json
