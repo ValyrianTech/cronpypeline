@@ -12,6 +12,7 @@ import fnmatch
 import http.client
 import ipaddress
 import os
+import re
 import shlex
 import socket
 import ssl
@@ -105,6 +106,23 @@ def _redact_url(url: str) -> str:
     """Remove userinfo and query params from a URL for safe logging."""
     parsed = urllib.parse.urlparse(url)
     return urllib.parse.urlunparse((parsed.scheme, parsed.netloc.split("@")[-1], parsed.path, "", "", ""))
+
+
+_SCRUB_URL_RE = re.compile(r"https?://\S+")
+
+
+def scrub_secrets(text: str) -> str:
+    """Redact secrets embedded in URLs within arbitrary text.
+
+    Finds every ``http://`` or ``https://`` URL substring within ``text`` and
+    replaces it with its redacted form (userinfo and query/fragment removed)
+    using :func:`_redact_url`. Non-URL text is left unchanged. The returned
+    value is always a string; inputs with no URL are returned unchanged.
+
+    :param text: Arbitrary text that may contain URLs with embedded secrets.
+    :returns: The text with any URLs redacted.
+    """
+    return _SCRUB_URL_RE.sub(lambda match: _redact_url(match.group(0)), text)
 
 
 def _as_bool(value: Any) -> bool | None:
@@ -522,7 +540,7 @@ def resolved_command(action: ActionSpec, context: TickContext) -> str:
         args = [str(a) for a in params.get("args", [])]
         return shlex.join([script] + args)
     if action.type == ActionType.HTTP_REQUEST:
-        return _subst(params.get("url", ""))
+        return _redact_url(_subst(params.get("url", "")))
     if action.type == ActionType.CUSTOM:
         return params.get("callable", "")
     if action.type == ActionType.QUEUE_AGENT:

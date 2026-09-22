@@ -28,6 +28,7 @@ from cronpypeline.actions import (
     build_template_variables,
     execute_action,
     format_template,
+    scrub_secrets,
 )
 from cronpypeline.config import ActionSpec, ActionType
 
@@ -1352,6 +1353,35 @@ class TestRedactUrl:
 
     def test_no_credentials_unchanged(self):
         assert _redact_url("https://example.com/plain") == "https://example.com/plain"
+
+
+class TestScrubSecrets:
+    """Tests for the scrub_secrets text redaction helper."""
+
+    def test_plain_text_unchanged(self):
+        assert scrub_secrets("hello world, nothing to see here") == "hello world, nothing to see here"
+
+    def test_single_url_with_query_params_redacted(self):
+        text = "see https://api.example.com/x?token=SECRET for details"
+        assert scrub_secrets(text) == "see https://api.example.com/x for details"
+
+    def test_url_with_userinfo_redacted(self):
+        text = "connect to https://user:pass@example.com/data"
+        assert scrub_secrets(text) == "connect to https://example.com/data"
+
+    def test_multiple_urls_all_redacted(self):
+        text = "a=https://a.example.com/p?key=one b=https://b.example.com/q?key=two"
+        assert scrub_secrets(text) == "a=https://a.example.com/p b=https://b.example.com/q"
+
+    def test_text_with_no_url_unchanged(self):
+        assert scrub_secrets("no url here") == "no url here"
+
+    def test_empty_string_returns_empty_string(self):
+        assert scrub_secrets("") == ""
+
+    def test_url_with_both_userinfo_and_query_redacted(self):
+        text = "fetch https://user:pass@example.com/api?token=SECRET now"
+        assert scrub_secrets(text) == "fetch https://example.com/api now"
 
 
 class TestHttpRequestActionHandlerRedaction:
