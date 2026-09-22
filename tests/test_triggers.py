@@ -1,6 +1,7 @@
 """Tests for cronpypeline.triggers — built-in trigger condition evaluators."""
 
 import json
+import logging
 import os
 import time
 
@@ -675,3 +676,127 @@ class TestTriggerPathValidation:
         # Valid paths must not raise; the boolean result is asserted by the
         # individual evaluator tests above.
         assert evaluate_trigger(trigger, tmp_path) in (True, False)
+
+
+class TestCustomTriggerExceptionHandling:
+    """Defensive error handling in _eval_custom and evaluate_trigger."""
+
+    def test_custom_callable_raising_exception_returns_false(self, tmp_path, caplog):
+        module_code = """
+def boom(context):
+    raise RuntimeError('boom')
+"""
+        (tmp_path / "boom_module.py").write_text(module_code)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            trigger = TriggerCondition(
+                type=TriggerType.CUSTOM,
+                callable="boom_module.boom",
+            )
+            caplog.set_level(logging.WARNING)
+            assert evaluate_trigger(trigger, tmp_path) is False
+            assert any(
+                "boom_module.boom" in record.message and "raised" in record.message
+                for record in caplog.records
+            )
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "boom_module" in sys.modules:
+                del sys.modules["boom_module"]
+
+    def test_custom_callable_resolution_failure_returns_false(self, tmp_path):
+        trigger = TriggerCondition(
+            type=TriggerType.CUSTOM,
+            callable="nonexistent_module_xyz.func",
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_custom_callable_invalid_path_returns_false(self, tmp_path):
+        trigger = TriggerCondition(
+            type=TriggerType.CUSTOM,
+            callable="nomoduleseparator",
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+    def test_and_composite_with_raising_custom_returns_false(self, tmp_path):
+        module_code = """
+def boom(context):
+    raise RuntimeError('boom')
+"""
+        (tmp_path / "and_boom_module.py").write_text(module_code)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            trigger = TriggerCondition(
+                type=TriggerType.AND,
+                conditions=[
+                    TriggerCondition(type=TriggerType.CUSTOM, callable="and_boom_module.boom"),
+                    TriggerCondition(type=TriggerType.FILE_MISSING, path="missing.md"),
+                ],
+            )
+            assert evaluate_trigger(trigger, tmp_path) is False
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "and_boom_module" in sys.modules:
+                del sys.modules["and_boom_module"]
+
+    def test_or_composite_with_first_condition_raising_returns_false(self, tmp_path):
+        module_code = """
+def boom(context):
+    raise RuntimeError('boom')
+"""
+        (tmp_path / "or_boom_module.py").write_text(module_code)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            trigger = TriggerCondition(
+                type=TriggerType.OR,
+                conditions=[
+                    TriggerCondition(type=TriggerType.CUSTOM, callable="or_boom_module.boom"),
+                    TriggerCondition(type=TriggerType.FILE_EXISTS, path="missing.md"),
+                ],
+            )
+            assert evaluate_trigger(trigger, tmp_path) is False
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "or_boom_module" in sys.modules:
+                del sys.modules["or_boom_module"]
+
+    def test_or_composite_with_raising_custom_and_true_later_condition(self, tmp_path):
+        module_code = """
+def boom(context):
+    raise RuntimeError('boom')
+"""
+        (tmp_path / "or_boom_module2.py").write_text(module_code)
+        import sys
+        sys.path.insert(0, str(tmp_path))
+        try:
+            trigger = TriggerCondition(
+                type=TriggerType.OR,
+                conditions=[
+                    TriggerCondition(type=TriggerType.CUSTOM, callable="or_boom_module2.boom"),
+                    TriggerCondition(type=TriggerType.FILE_MISSING, path="missing.md"),
+                ],
+            )
+            assert evaluate_trigger(trigger, tmp_path) is True
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "or_boom_module2" in sys.modules:
+                del sys.modules["or_boom_module2"]
+
+    def test_composite_dispatch_swallows_unexpected_exception(self, tmp_path):
+        (tmp_path / "task.json").write_text(json.dumps({"status": "open"}))
+        trigger = TriggerCondition(
+            type=TriggerType.AND,
+            conditions=[
+                TriggerCondition(
+                    type=TriggerType.MARKER_STATE,
+                    path="task.json",
+                    field="status",
+                    op="contains",
+                    value="open",
+                ),
+            ],
+        )
+        assert evaluate_trigger(trigger, tmp_path) is False

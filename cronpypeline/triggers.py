@@ -6,6 +6,7 @@ and returns True if the stage should fire, False otherwise.
 
 import importlib
 import json
+import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -199,9 +200,17 @@ def _eval_custom(trigger: TriggerCondition, base_dir: Path, context: dict[str, A
     :param context: Context dict passed to the custom callable.
     :returns: True if the callable returns a truthy value.
     """
-    func = resolve_custom_callable(trigger.callable or "")
-    ctx = context or {}
-    return bool(func(ctx))
+    try:
+        func = resolve_custom_callable(trigger.callable or "")
+        ctx = context or {}
+        return bool(func(ctx))
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "Custom trigger callable '%s' raised %s; failing closed",
+            trigger.callable,
+            type(exc).__name__,
+        )
+        return False
 
 
 _EVALUATORS = {
@@ -227,10 +236,18 @@ def evaluate_trigger(
     :raises ValueError: If no evaluator is registered for the trigger type.
     """
     if trigger.type in (TriggerType.AND, TriggerType.OR):
-        if trigger.type == TriggerType.AND:
-            return _eval_and(trigger, base_dir, context)
-        else:
-            return _eval_or(trigger, base_dir, context)
+        try:
+            if trigger.type == TriggerType.AND:
+                return _eval_and(trigger, base_dir, context)
+            else:
+                return _eval_or(trigger, base_dir, context)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "Composite trigger '%s' raised %s; failing closed",
+                trigger.type,
+                type(exc).__name__,
+            )
+            return False
 
     if trigger.type == TriggerType.CUSTOM:
         return _eval_custom(trigger, base_dir, context)
