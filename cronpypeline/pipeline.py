@@ -25,6 +25,7 @@ from cronpypeline.actions import (
     ActionHandler,
     TickContext,
     execute_action,
+    scrub_secrets,
 )
 from cronpypeline.config import ActionType, PipelineConfig, Stage
 from cronpypeline.lock import FileLock
@@ -383,11 +384,11 @@ class Pipeline:
             "chained": chained,
         }
         if action_command:
-            entry["action_command"] = action_command
+            entry["action_command"] = scrub_secrets(action_command)
         if stdout:
-            entry["stdout"] = stdout
+            entry["stdout"] = scrub_secrets(stdout)
         if stderr:
-            entry["stderr"] = stderr
+            entry["stderr"] = scrub_secrets(stderr)
         if self._current_tick_mode:
             entry["mode"] = self._current_tick_mode
         self._log(entry)
