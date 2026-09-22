@@ -6239,33 +6239,35 @@ class TestLoadGithubTokenDotenvFallback:
         with patch.dict("sys.modules", {"dotenv": None}):
             assert _load_github_token({}) is None
 
-    def test_reads_env_from_grandparent(self, tmp_path, monkeypatch):
+    def test_does_not_read_env_from_grandparent(self, tmp_path, monkeypatch):
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
         from cronpypeline.plugins import swe_plugin
         swe_dir = tmp_path / "workspace" / "tasks" / "x"
         swe_dir.mkdir(parents=True)
         monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
-        # SWE_WORKSPACE_DIR.parent.parent / ".env" (2 levels up) IS read
+        # SWE_WORKSPACE_DIR.parent.parent / ".env" (2 levels up) is NOT read
         grandparent_env = swe_dir.parent.parent / ".env"
         grandparent_env.write_text("SWE_GITHUB_TOKEN=grandparent-token\n")
         with patch.dict("sys.modules", {"dotenv": None}):
-            assert _load_github_token({}) == "grandparent-token"
+            assert _load_github_token({}) is None
 
-    def test_reads_env_from_great_grandparent(self, tmp_path, monkeypatch):
+    def test_does_not_read_env_from_great_grandparent(self, tmp_path, monkeypatch):
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
         from cronpypeline.plugins import swe_plugin
         swe_dir = tmp_path / "workspace" / "tasks" / "x"
         swe_dir.mkdir(parents=True)
         monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
-        # SWE_WORKSPACE_DIR.parent.parent.parent / ".env" (3 levels up) IS read
+        # SWE_WORKSPACE_DIR.parent.parent.parent / ".env" (3 levels up) is NOT read
         great_grandparent_env = swe_dir.parent.parent.parent / ".env"
         great_grandparent_env.write_text("SWE_GITHUB_TOKEN=great-grandparent-token\n")
         with patch.dict("sys.modules", {"dotenv": None}):
-            assert _load_github_token({}) == "great-grandparent-token"
+            assert _load_github_token({}) is None
 
     def test_does_not_read_env_from_cwd(self, tmp_path, monkeypatch):
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
@@ -6282,9 +6284,10 @@ class TestLoadGithubTokenDotenvFallback:
         with patch.dict("sys.modules", {"dotenv": None}):
             assert _load_github_token({}) is None
 
-    def test_home_dotenv_used_when_workspace_dotenv_absent(self, tmp_path, monkeypatch):
+    def test_home_dotenv_not_used_when_workspace_dotenv_absent(self, tmp_path, monkeypatch):
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
         from cronpypeline.plugins import swe_plugin
         swe_dir = tmp_path / "workspace" / "tasks" / "x"
         swe_dir.mkdir(parents=True)
@@ -6294,11 +6297,12 @@ class TestLoadGithubTokenDotenvFallback:
         (home / ".env").write_text("SWE_GITHUB_TOKEN=home-token\n")
         monkeypatch.setattr(Path, "home", lambda: home)
         with patch.dict("sys.modules", {"dotenv": None}):
-            assert _load_github_token({}) == "home-token"
+            assert _load_github_token({}) is None
 
-    def test_workspace_dotenv_takes_precedence_over_home_dotenv(self, tmp_path, monkeypatch):
+    def test_workspace_dotenv_wins_home_dotenv_ignored(self, tmp_path, monkeypatch):
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
         from cronpypeline.plugins import swe_plugin
         swe_dir = tmp_path / "workspace" / "tasks" / "x"
         swe_dir.mkdir(parents=True)
@@ -6328,12 +6332,67 @@ class TestLoadGithubTokenDotenvFallback:
     def test_does_not_read_env_from_4_levels_up(self, tmp_path, monkeypatch):
         monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
         from cronpypeline.plugins import swe_plugin
         swe_dir = tmp_path / "workspace" / "tasks" / "x"
         swe_dir.mkdir(parents=True)
         (swe_dir.parent.parent.parent.parent / ".env").write_text("SWE_GITHUB_TOKEN=great-great-grandparent-token\n")
         monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) is None
+
+    def test_swe_env_file_override_used(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        override = tmp_path / "override.env"
+        override.write_text("SWE_GITHUB_TOKEN=override-token\n")
+        monkeypatch.setenv("SWE_ENV_FILE", str(override))
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) == "override-token"
+
+    def test_swe_env_file_takes_precedence_over_workspace_dotenv(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        (swe_dir / ".env").write_text("SWE_GITHUB_TOKEN=workspace-token\n")
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        override = tmp_path / "override.env"
+        override.write_text("SWE_GITHUB_TOKEN=override-token\n")
+        monkeypatch.setenv("SWE_ENV_FILE", str(override))
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) == "override-token"
+
+    def test_swe_env_file_empty_ignored(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        (swe_dir / ".env").write_text("SWE_GITHUB_TOKEN=workspace-token\n")
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        monkeypatch.setenv("SWE_ENV_FILE", "")
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) == "workspace-token"
+
+    def test_swe_env_file_nonexistent_ignored(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        monkeypatch.setenv("SWE_ENV_FILE", str(tmp_path / "does-not-exist.env"))
         with patch.dict("sys.modules", {"dotenv": None}):
             assert _load_github_token({}) is None
 
