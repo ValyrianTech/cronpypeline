@@ -248,7 +248,7 @@ Three event types are written, one JSON object per line:
 | `stage` | `event`, `tick_id`, `target`, `stage_id`, `stage_name`, `trigger_type`, `action_type`, `result`, `duration_ms`, `dry_run`, `chained`, plus optional `action_command`, `stdout`, `stderr`, `mode` |
 | `tick_end` | `event`, `tick_id`, `target`, `total_duration_ms`, `stages_checked`, `actions_executed`, `failures`, `final_status`, `final_stage_id` |
 
-Stage `result` values include `complete`, `processing`, `given_up`, `blocked`, `trigger_fired`, `skipped`, `dry_run`, `action_executed`, `action_failed`, `gave_up`, `no_state`, `would_give_up`, and `would_requeue`. The `action_command` field records the resolved action command/prompt/url/callable (with template variables substituted).
+Stage `result` values include `complete`, `processing`, `given_up`, `blocked`, `trigger_fired`, `skipped`, `dry_run`, `action_executed`, `action_failed`, `gave_up`, `no_state`, `would_give_up`, and `would_requeue`. The `action_command` field records the resolved action command/prompt/url/callable (with template variables substituted). Secrets embedded in URLs are redacted from the log: the `action_command`, `stdout`, and `stderr` fields are scrubbed via `scrub_secrets`, which redacts any `http://`/`https://` URL substring (dropping userinfo and query/fragment), so query-string tokens and userinfo credentials read into a command or captured in stdout/stderr never appear verbatim in the log. For `http_request` actions the logged `action_command` is the redacted URL.
 
 When the log file exceeds 10 MB, it is rotated to `.1`, shifting older backups up to `.5` (a maximum of 5 backups). The webui dashboard can display recent activity read from this log (see the "Recent Activity" section in `webui/README.md`).
 
@@ -754,7 +754,7 @@ DNS resolution and private-IP validation always run (regardless of `pin_to_valid
 }
 ```
 
-The URL reported in the result data (`result.data['url']`) is redacted — userinfo (credentials) and query parameters are removed — to avoid leaking sensitive information.
+The URL reported in the result data (`result.data['url']`) is redacted — userinfo (credentials) and query parameters are removed — to avoid leaking sensitive information. The same redaction now also applies to what is written to the execution log: the `action_command` field (which for `http_request` actions is the redacted URL) and any URL appearing in `stdout`/`stderr` are scrubbed the same way.
 
 **Auth token resolution** (in order):
 1. `auth_token` — direct value (supports template variables)
