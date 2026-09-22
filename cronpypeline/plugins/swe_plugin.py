@@ -780,10 +780,16 @@ def _load_github_token(target_config: dict[str, Any]) -> str | None:
     Resolution order: per-repo ``github_token`` → ``SWE_GITHUB_TOKEN`` →
     ``GITHUB_TOKEN`` → ``.env`` file (via python-dotenv, if installed).
 
-    The ``.env`` file is searched in ``SWE_WORKSPACE_DIR/.env``, its parent
-    directories (up to 3 levels), and ``~/.env``.  The current working
-    directory is NOT searched, to avoid loading credentials from an
-    untrusted CWD.
+    ``SWE_GITHUB_TOKEN`` / ``GITHUB_TOKEN`` are the canonical and recommended
+    token sources.  The ``.env`` fallback is deliberately restricted to
+    pipeline-owned locations to avoid loading credentials from untrusted
+    directories:
+
+    * ``$SWE_ENV_FILE`` — an explicit opt-in path to a ``.env`` file, honoured
+      only if the environment variable is set and non-empty, and
+    * ``SWE_WORKSPACE_DIR/.env`` — the pipeline-owned workspace directory.
+
+    Ancestor directories and ``~/.env`` are intentionally NOT searched.
 
     The ``.env`` file is read directly (never loaded into ``os.environ``), so
     this function never mutates the process environment.
@@ -798,13 +804,12 @@ def _load_github_token(target_config: dict[str, Any]) -> str | None:
         val = os.environ.get(key, "")
         if val:
             return val
-    # Fallback: read .env file (workspace dir, parent dirs, and home dir)
-    env_candidates = [SWE_WORKSPACE_DIR / ".env"]
-    parent = SWE_WORKSPACE_DIR.parent
-    for _ in range(3):
-        env_candidates.append(parent / ".env")
-        parent = parent.parent
-    env_candidates.append(Path.home() / ".env")
+    # Fallback: read a .env file from an explicit override or the workspace dir.
+    env_candidates: list[Path] = []
+    env_file_override = os.environ.get("SWE_ENV_FILE", "").strip()
+    if env_file_override:
+        env_candidates.append(Path(env_file_override))
+    env_candidates.append(SWE_WORKSPACE_DIR / ".env")
     for env_file in env_candidates:
         if not env_file.exists():
             continue
