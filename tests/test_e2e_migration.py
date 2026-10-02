@@ -471,6 +471,8 @@ class TestSWEDryRunValidation:
         })
 
         (tmp_path / "test-repo").mkdir()
+        (tmp_path / "test-repo" / ".SWE").mkdir()
+        (tmp_path / "test-repo" / ".SWE" / "init_complete.marker").touch()
         pipeline = Pipeline(config)
 
         # Dry run should not create any files
