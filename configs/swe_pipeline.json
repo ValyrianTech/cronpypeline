@@ -36,8 +36,11 @@
       "id": "A0",
       "name": "Queue RepoResearchAgent for repo briefing",
       "trigger": {
-        "type": "file_missing",
-        "path": ".SWE/repo_briefing.md"
+        "type": "and",
+        "conditions": [
+          {"type": "file_missing", "path": ".SWE/repo_briefing.md"},
+          {"type": "file_exists", "path": ".SWE/init_complete.marker"}
+        ]
       },
       "action": {
         "type": "queue_agent",
@@ -75,7 +78,8 @@
         "type": "and",
         "conditions": [
           {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
-          {"type": "file_missing", "path": ".SWE/reports/test-infra/latest.md"}
+          {"type": "file_missing", "path": ".SWE/reports/test-infra/latest.md"},
+          {"type": "file_exists", "path": ".SWE/init_complete.marker"}
         ]
       },
       "action": {
@@ -106,7 +110,8 @@
         "type": "and",
         "conditions": [
           {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
-          {"type": "file_missing", "path": ".SWE/reports/lint/latest.md"}
+          {"type": "file_missing", "path": ".SWE/reports/lint/latest.md"},
+          {"type": "file_exists", "path": ".SWE/init_complete.marker"}
         ]
       },
       "action": {
@@ -187,7 +192,8 @@
         "type": "and",
         "conditions": [
           {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
-          {"type": "file_missing", "path": ".SWE/reports/docstrings/latest.md"}
+          {"type": "file_missing", "path": ".SWE/reports/docstrings/latest.md"},
+          {"type": "file_exists", "path": ".SWE/init_complete.marker"}
         ]
       },
       "action": {
@@ -252,7 +258,8 @@
         "type": "and",
         "conditions": [
           {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
-          {"type": "file_missing", "path": ".SWE/reports/typecheck/latest.md"}
+          {"type": "file_missing", "path": ".SWE/reports/typecheck/latest.md"},
+          {"type": "file_exists", "path": ".SWE/init_complete.marker"}
         ]
       },
       "action": {
@@ -317,7 +324,8 @@
         "type": "and",
         "conditions": [
           {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
-          {"type": "file_missing", "path": ".SWE/reports/security/latest.md"}
+          {"type": "file_missing", "path": ".SWE/reports/security/latest.md"},
+          {"type": "file_exists", "path": ".SWE/init_complete.marker"}
         ]
       },
       "action": {
@@ -444,7 +452,8 @@
         "type": "and",
         "conditions": [
           {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
-          {"type": "file_missing", "path": ".SWE/reports/coverage/latest.md"}
+          {"type": "file_missing", "path": ".SWE/reports/coverage/latest.md"},
+          {"type": "file_exists", "path": ".SWE/init_complete.marker"}
         ]
       },
       "action": {
@@ -510,7 +519,8 @@
         "type": "and",
         "conditions": [
           {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
-          {"type": "file_missing", "path": ".SWE/reports/complexity/latest.md"}
+          {"type": "file_missing", "path": ".SWE/reports/complexity/latest.md"},
+          {"type": "file_exists", "path": ".SWE/init_complete.marker"}
         ]
       },
       "action": {
@@ -541,7 +551,8 @@
         "type": "and",
         "conditions": [
           {"type": "file_exists", "path": ".SWE/repo_briefing.md"},
-          {"type": "file_missing", "path": ".SWE/reports/dep-audit/latest.md"}
+          {"type": "file_missing", "path": ".SWE/reports/dep-audit/latest.md"},
+          {"type": "file_exists", "path": ".SWE/init_complete.marker"}
         ]
       },
       "action": {
