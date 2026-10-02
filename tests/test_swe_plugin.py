@@ -7317,6 +7317,28 @@ class TestRunCPrStatusAlreadyHandled:
         assert result.success is True
         assert result.data["pr_state"] == "open"
 
+    def test_cycle_limit_reached_but_filed_issue_done_pushes(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7, "pr_state": "changes_requested",
+            "last_review_id": 500, "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 2,
+        }))
+        (target / ".SWE" / "issues" / "pr-revision-7-1.md").write_text("---\nstatus: done\n---\n# Done")
+        ctx = _make_tick_context(target, slug="owner/repo", max_pr_review_cycles=2)
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 500, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]), \
+             patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="abc12345"), \
+             patch("cronpypeline.plugins.swe_plugin.subprocess.run",
+                   return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "open"
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["filed_issues"] == []
+
     def test_filed_issue_not_done_idles(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")

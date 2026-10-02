@@ -2517,11 +2517,6 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
 
         # Already handled — check if all filed issues are done → push
         if pr_state == "changes_requested":
-            if max_cycles > 0 and pr_cycles >= max_cycles:
-                # Cycle limit reached — idle, do not push
-                _flush()
-                return ActionResult(success=True, data={"pr_state": "open"})
-
             all_done = True
             for issue_id in pr_data.get("filed_issues", []):
                 try:
