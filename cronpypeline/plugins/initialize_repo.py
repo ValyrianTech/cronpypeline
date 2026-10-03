@@ -92,9 +92,28 @@ def clone_repo(git_url: str, dest: Path) -> None:
     run(['git', 'clone', git_url, str(dest)])
 
 
-def create_venv(repo_dir: Path) -> Path:
+def resolve_python(python: str | None, registry_entry: dict) -> str:
+    """Resolve the interpreter used to create the repo venv.
+
+    Precedence: an explicit ``python`` argument, then the registry entry's
+    ``python`` key, then the ``SWE_PYTHON`` environment variable, then the
+    interpreter running this script (``sys.executable``).
+
+    :param python: Explicit interpreter path, or None.
+    :param registry_entry: The repo's repos.json entry (may be empty).
+    :returns: The interpreter path to use.
+    """
+    if python:
+        return python
+    registry_python = registry_entry.get('python')
+    if registry_python:
+        return str(registry_python)
+    return os.environ.get('SWE_PYTHON') or sys.executable
+
+
+def create_venv(repo_dir: Path, python: str | None = None) -> Path:
     venv_dir = repo_dir / '.venv'
-    run([sys.executable, '-m', 'venv', str(venv_dir)])
+    run([python or sys.executable, '-m', 'venv', str(venv_dir)])
     return venv_dir
 
 
@@ -286,6 +305,7 @@ def initialize_repo(
     editable: bool | None = None,
     extras: list[str] | None = None,
     no_install: bool = False,
+    python: str | None = None,
     repos_dir: Path,
     tasks_dir: Path,
     registry_file: Path,
@@ -310,6 +330,9 @@ def initialize_repo(
         falls back to the registry entry.
     :param extras: Extras to install; None falls back to the registry entry.
     :param no_install: Skip all dependency installation (still creates the venv).
+    :param python: Interpreter used to create the repo venv; None falls back to
+        the registry entry's ``python`` key, then the ``SWE_PYTHON`` env var,
+        then ``sys.executable``.
     :param repos_dir: Directory the repo is cloned into.
     :param tasks_dir: Directory holding per-repo task subdirectories.
     :param registry_file: Path to the repos.json registry.
@@ -327,11 +350,14 @@ def initialize_repo(
     """
     repo_name = derive_repo_name(git_url)
     repo_dir = repos_dir / repo_name
+    registry_entry = lookup_registry_entry(registry_file, repo_name)
+    interpreter = resolve_python(python, registry_entry)
 
     print(f"SWE workspace: {repos_dir}")
     print(f"Repo URL:      {git_url}")
     print(f"Repo name:     {repo_name}")
     print(f"Target dir:    {repo_dir}")
+    print(f"Python:        {interpreter}")
     print(f"Force:         {force}")
     print()
 
@@ -347,11 +373,10 @@ def initialize_repo(
             )
 
     clone_repo(git_url, repo_dir)
-    venv_dir = create_venv(repo_dir)
+    venv_dir = create_venv(repo_dir, interpreter)
     upgrade_pip(venv_dir)
     upgrade_setuptools(venv_dir)
 
-    registry_entry = lookup_registry_entry(registry_file, repo_name)
     resolved_editable = editable if editable is not None \
         else registry_entry.get('editable_install')
     resolved_extras = extras if extras is not None \
@@ -442,6 +467,13 @@ def main():
         help="Skip all dependency installation (still creates the venv).",
     )
     parser.add_argument(
+        '--python',
+        default=None,
+        help="Interpreter used to create the repo venv (default: the registry "
+             "entry's 'python' key, else the SWE_PYTHON env var, else the "
+             "interpreter running this script).",
+    )
+    parser.add_argument(
         '--no-install-ruff',
         dest='install_ruff',
         action='store_false',
@@ -529,6 +561,7 @@ def main():
             editable=args.editable,
             extras=args.extras,
             no_install=args.no_install,
+            python=args.python,
             repos_dir=repos_dir,
             tasks_dir=tasks_dir,
             registry_file=registry_file,

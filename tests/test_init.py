@@ -259,6 +259,22 @@ class TestInitializeRepoScript:
     def test_derive_repo_name_ssh(self):
         assert ir.derive_repo_name("git@github.com:org/myrepo.git") == "myrepo"
 
+    def test_resolve_python_explicit_wins(self, monkeypatch):
+        monkeypatch.setenv("SWE_PYTHON", "/env/python")
+        assert ir.resolve_python("/explicit/python", {"python": "/reg/python"}) == "/explicit/python"
+
+    def test_resolve_python_registry_wins_over_env(self, monkeypatch):
+        monkeypatch.setenv("SWE_PYTHON", "/env/python")
+        assert ir.resolve_python(None, {"python": "/reg/python"}) == "/reg/python"
+
+    def test_resolve_python_env_wins_over_default(self, monkeypatch):
+        monkeypatch.setenv("SWE_PYTHON", "/env/python")
+        assert ir.resolve_python(None, {}) == "/env/python"
+
+    def test_resolve_python_default_is_sys_executable(self, monkeypatch):
+        monkeypatch.delenv("SWE_PYTHON", raising=False)
+        assert ir.resolve_python(None, {}) == sys.executable
+
     def _paths(self, tmp_path):
         repos = tmp_path / "repos"
         tasks = tmp_path / "tasks"
@@ -312,6 +328,38 @@ class TestInitializeRepoScript:
         assert not (repo_dir / "old.txt").exists()
         assert not task_dir.exists()
         assert (repo_dir / ".SWE" / "init_complete.marker").exists()
+
+    def test_initialize_repo_uses_explicit_python(self, tmp_path, monkeypatch):
+        repos, tasks, registry = self._paths(tmp_path)
+        calls = []
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: calls.append(cmd) or 0)
+        ir.initialize_repo(
+            "https://github.com/org/myrepo.git",
+            python="/opt/py310/bin/python",
+            repos_dir=repos,
+            tasks_dir=tasks,
+            registry_file=registry,
+        )
+        venv_calls = [c for c in calls if "venv" in c]
+        assert venv_calls
+        assert venv_calls[0][0] == "/opt/py310/bin/python"
+
+    def test_initialize_repo_uses_registry_python(self, tmp_path, monkeypatch):
+        repos = tmp_path / "repos"
+        tasks = tmp_path / "tasks"
+        registry = tmp_path / "repos.json"
+        registry.write_text('{"repos": [{"name": "myrepo", "python": "/reg/py"}]}')
+        calls = []
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: calls.append(cmd) or 0)
+        ir.initialize_repo(
+            "https://github.com/org/myrepo.git",
+            repos_dir=repos,
+            tasks_dir=tasks,
+            registry_file=registry,
+        )
+        venv_calls = [c for c in calls if "venv" in c]
+        assert venv_calls
+        assert venv_calls[0][0] == "/reg/py"
 
 
 # ─── SWE run_repo_init callable ──────────────────────────────────────────────
@@ -434,3 +482,52 @@ class TestRunRepoInit:
         assert swe_plugin._registry_file_from_context(ctx) == Path(
             "/spellbook_data/Serendipity/swe/repos.json"
         )
+
+    def test_python_param_passed_through(self, tmp_path, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            ir, "initialize_repo",
+            lambda git_url, **kwargs: captured.update(kwargs) or {"repo_name": "myrepo"},
+        )
+        action = ActionSpec.from_dict({
+            "type": "custom",
+            "params": {
+                "callable": "cronpypeline.plugins.swe_plugin.run_repo_init",
+                "python": "/opt/py310/bin/python",
+            },
+        })
+        ctx = TickContext(
+            target="myrepo",
+            workspace_dir=tmp_path / "repos",
+            target_config={"slug": "org/myrepo"},
+        )
+        swe_plugin.run_repo_init(action, ctx)
+        assert captured["python"] == "/opt/py310/bin/python"
+
+    def test_python_from_target_config(self, tmp_path, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            ir, "initialize_repo",
+            lambda git_url, **kwargs: captured.update(kwargs) or {"repo_name": "myrepo"},
+        )
+        ctx = TickContext(
+            target="myrepo",
+            workspace_dir=tmp_path / "repos",
+            target_config={"slug": "org/myrepo", "python": "/reg/py"},
+        )
+        swe_plugin.run_repo_init(_init_action(), ctx)
+        assert captured["python"] == "/reg/py"
+
+    def test_python_defaults_to_none(self, tmp_path, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            ir, "initialize_repo",
+            lambda git_url, **kwargs: captured.update(kwargs) or {"repo_name": "myrepo"},
+        )
+        ctx = TickContext(
+            target="myrepo",
+            workspace_dir=tmp_path / "repos",
+            target_config={"slug": "org/myrepo"},
+        )
+        swe_plugin.run_repo_init(_init_action(), ctx)
+        assert captured["python"] is None

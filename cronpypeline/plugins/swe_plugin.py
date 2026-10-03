@@ -135,7 +135,7 @@ def run_repo_init(action: ActionSpec, context: TickContext) -> ActionResult:
     all markers are removed before re-cloning.
 
     :param action: Action spec (params may override ``git_url``, ``repos_dir``,
-        ``tasks_dir``, and ``registry_file``).
+        ``tasks_dir``, ``registry_file``, and ``python``).
     :param context: Tick context with the target and per-target config.
     :returns: ActionResult with the init summary in ``data``.
     """
@@ -162,6 +162,8 @@ def run_repo_init(action: ActionSpec, context: TickContext) -> ActionResult:
     else:
         registry_file = _registry_file_from_context(context)
 
+    python = params.get("python") or target_config.get("python")
+
     if context.dry_run:
         return ActionResult(
             success=True,
@@ -173,6 +175,7 @@ def run_repo_init(action: ActionSpec, context: TickContext) -> ActionResult:
         summary = init_mod.initialize_repo(
             git_url,
             force=context.force,
+            python=python,
             repos_dir=repos_dir,
             tasks_dir=tasks_dir,
             registry_file=registry_file,
