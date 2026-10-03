@@ -6,6 +6,15 @@
   "target_lock": true,
   "config_file": ".SWE/pipeline_config.json",
   "log_file": ".SWE/execution_log.jsonl",
+  "init": {
+    "action": {
+      "type": "custom",
+      "params": {
+        "callable": "cronpypeline.plugins.swe_plugin.run_repo_init"
+      }
+    },
+    "marker": ".SWE/init_complete.marker"
+  },
   "pre_tick": {
     "callable": "cronpypeline.plugins.swe_plugin.sync_session_mode"
   },

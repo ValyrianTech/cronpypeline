@@ -1,8 +1,9 @@
 """Standalone FastAPI web UI for visualizing cronpypeline status.
 
-Read-only dashboard over pipeline JSON configs. The only mutation is the
-enable/disable toggle, which writes ``{"enabled": bool}`` to the pipeline's
-``config_file``.
+Read-only dashboard over pipeline JSON configs, with two token-guarded
+mutations: the enable/disable toggle (writes ``{"enabled": bool}`` to the
+pipeline's ``config_file``) and the init/reinit trigger (runs the pipeline's
+configured ``init`` action for a target).
 
 Run with:
     uvicorn app:app --port 8600
@@ -500,6 +501,7 @@ def _build_app():
             "mode_file": cfg.mode_file,
             "target_lock": cfg.target_lock,
             "has_toggle": cfg.config_file is not None,
+            "has_init": cfg.init is not None,
             "enabled": _read_enabled(cfg),
             "stages": [
                 {**_serialize_stage(s), "active": s.id in active_ids}
@@ -672,6 +674,61 @@ def _build_app():
             raise HTTPException(status_code=500, detail=f"Failed to write toggle file: {e}")
 
         return {"enabled": body.enabled, "toggle_file": str(toggle)}
+
+    class InitRequest(BaseModel):
+        """Request body for the init/reinit trigger.
+
+        :ivar force: Whether to force a full reset before re-initializing.
+        """
+
+        force: bool = False
+
+    @app.post("/api/init")
+    def init_pipeline(
+        body: InitRequest,
+        config: str = Query(...),
+        target: str = Query(...),
+        token: str = Query(""),
+    ) -> dict[str, Any]:
+        """Run the pipeline's configured init action for a target.
+
+        :param body: Request body with the desired force flag.
+        :param config: Config filename.
+        :param target: Target name to initialize.
+        :param token: Auth token required to trigger init.
+        :returns: Dict with the tick result fields.
+        :raises HTTPException: If no auth token is configured (403), the token
+            is invalid or missing (401), the config has no init action (409),
+            or the target name is invalid (400).
+        """
+        if not WEBUI_TOKEN:
+            raise HTTPException(status_code=403, detail="Init is disabled: no auth token configured")
+        if token != WEBUI_TOKEN:
+            raise HTTPException(status_code=401, detail="Invalid or missing auth token")
+
+        cfg = _load_config(config)
+        if cfg.init is None:
+            raise HTTPException(status_code=409, detail="This pipeline has no init action configured")
+
+        from cronpypeline.pipeline import Pipeline
+
+        try:
+            pipeline = Pipeline(cfg)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=422, detail=f"Failed to build pipeline: {e}")
+
+        try:
+            result = pipeline.run_init(target=target, force=body.force)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return {
+            "target": result.target,
+            "status": result.status.value,
+            "message": result.message,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        }
 
     # ─── Static frontend ─────────────────────────────────────────────────────
 

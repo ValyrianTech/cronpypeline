@@ -311,6 +311,31 @@ class HookConfig:
 
 
 @dataclass
+class InitConfig:
+    """Configuration for an optional manual target-initialization action.
+
+    :ivar action: Action to run when a target is initialized or re-initialized.
+    :ivar marker: Optional completion marker path (relative to the target dir)
+        that the init action produces.
+    """
+
+    action: ActionSpec
+    marker: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "InitConfig":
+        """Create an InitConfig from a JSON config dict.
+
+        :param data: Dictionary with ``action`` and optional ``marker``.
+        :returns: An :class:`InitConfig` instance.
+        """
+        return cls(
+            action=ActionSpec.from_dict(data["action"]),
+            marker=data.get("marker"),
+        )
+
+
+@dataclass
 class PipelineConfig:
     """Top-level pipeline configuration loaded from JSON.
 
@@ -326,6 +351,7 @@ class PipelineConfig:
     :ivar post_tick: Post-tick hook config.
     :ivar mode_file: Path to JSON file with ``{"mode": "..."}`` for mode switching.
     :ivar target_lock: Cross-stage lock — blocks all stages for a target while any stage is processing.
+    :ivar init: Optional manual target-initialization action config.
     """
 
     name: str
@@ -340,6 +366,7 @@ class PipelineConfig:
     post_tick: HookConfig | None = None
     mode_file: str | None = None
     target_lock: bool = False
+    init: InitConfig | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PipelineConfig":
@@ -379,6 +406,10 @@ class PipelineConfig:
         if data.get("post_tick"):
             post_tick = HookConfig.from_dict(data["post_tick"])
 
+        init = None
+        if data.get("init"):
+            init = InitConfig.from_dict(data["init"])
+
         return cls(
             name=data["name"],
             workspace_dir=data["workspace_dir"],
@@ -392,6 +423,7 @@ class PipelineConfig:
             post_tick=post_tick,
             mode_file=data.get("mode_file"),
             target_lock=data.get("target_lock", False),
+            init=init,
         )
 
     @classmethod

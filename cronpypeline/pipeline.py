@@ -1406,3 +1406,94 @@ class Pipeline:
                 }
             result[target] = stages
         return result
+
+    def _resolve_target_config(self, target: str) -> dict[str, Any]:
+        """Resolve a target's per-target config dict from the registry.
+
+        :param target: Target name to resolve.
+        :returns: The matching target's config dict, or ``{}`` if the target is
+            not found or the registry cannot be loaded.
+        """
+        try:
+            targets = load_targets_with_config(self.config.targets)
+        except Exception:  # noqa: BLE001
+            return {}
+        for t in targets:
+            if t.name == target:
+                return t.config
+        return {}
+
+    def run_init(
+        self,
+        target: str,
+        force: bool = False,
+        dry_run: bool = False,
+        verbose: bool = False,
+    ) -> TickResult:
+        """Run the pipeline's configured init action for a target.
+
+        This is the manual "kick off" / "reset and restart" entry point used by
+        the CLI (``--init`` / ``--reinit``) and the dashboard. It runs the
+        ``init`` action configured on the pipeline (see
+        :class:`cronpypeline.config.InitConfig`), passing ``force`` through the
+        tick context so the action can reset the target before re-initializing.
+
+        :param target: Target name to initialize.
+        :param force: When True, request a full reset. The init action decides
+            how to reset (e.g. delete the repo dir, clean task dirs, clear
+            markers) — the flag is exposed on the tick context as ``force``.
+        :param dry_run: Show the planned action without executing it.
+        :param verbose: Verbose output.
+        :returns: TickResult describing what happened.
+        """
+        _validate_target_name(target)
+
+        if self.config.init is None:
+            return TickResult(
+                target=target,
+                stage_id=None,
+                status=TickResultStatus.ACTION_FAILED,
+                message="No init action configured for this pipeline",
+            )
+
+        target_config = self._resolve_target_config(target)
+
+        self.lock.dry_run = dry_run
+        if not self.lock.acquire():
+            return TickResult(
+                target=target,
+                stage_id=None,
+                status=TickResultStatus.LOCK_FAILED,
+                message="Could not acquire lock",
+            )
+
+        try:
+            ctx = TickContext(
+                target=target,
+                workspace_dir=self.workspace_dir,
+                dry_run=dry_run,
+                verbose=verbose,
+                target_config=target_config,
+                pipeline=self,
+                handlers=self._handlers,
+                force=force,
+            )
+            action_result = execute_action(self.config.init.action, ctx)
+        finally:
+            self.lock.release()
+
+        if action_result.success:
+            status = TickResultStatus.DRY_RUN if dry_run else TickResultStatus.ACTION_EXECUTED
+            message = "Would run init action" if dry_run else "Init action executed"
+        else:
+            status = TickResultStatus.ACTION_FAILED
+            message = "Init action failed"
+
+        return TickResult(
+            target=target,
+            stage_id=None,
+            status=status,
+            message=message,
+            stdout=action_result.stdout,
+            stderr=action_result.stderr,
+        )

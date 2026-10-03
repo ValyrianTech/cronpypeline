@@ -16,6 +16,7 @@
 - **Per-target config**: Registry targets carry per-target configuration (custom commands, thresholds, GitHub slugs) that flows into triggers, actions, and templates.
 - **Mode switching**: Pipeline-wide mode file enables/disables groups of stages at runtime (e.g. "default" vs "github session" mode).
 - **Target locking**: Optional cross-stage lock ensures one target flows through the entire pipeline before the next target starts.
+- **Manual init/reinit**: Optional per-pipeline `init` action triggered on demand (CLI `--init`/`--reinit` or the dashboard) to onboard a target or reset it from scratch — runs outside the stage chain.
 - **Pre/post-tick hooks**: Run custom callables before state derivation (can skip tick) or after tick completion.
 - **Marker invalidation**: Stages can declaratively delete other stages' markers on success — no manual cleanup code.
 - **Rejection tracking**: Separate rejection counter (distinct from retries) with `max_rejections` give-up — supports revision/review loops.
@@ -282,6 +283,23 @@ When `target_lock: true` is set on the pipeline, no stage for a target is action
 
 Target selection (the first stage with work) also respects this: under `target_lock`, an actively-processing (non-stale) stage causes target selection to report no actionable stage, and disabled stages are skipped during selection.
 
+### Manual init / reinit
+
+A pipeline can declare an optional top-level `init` block — an action (plus an optional completion `marker`) that is **not** part of the stage chain. It is triggered on demand to onboard a target or reset it from scratch:
+
+```json
+"init": {
+  "action": {"type": "custom", "params": {"callable": "cronpypeline.plugins.swe_plugin.run_repo_init"}},
+  "marker": ".SWE/init_complete.marker"
+}
+```
+
+- `python -m cronpypeline --config ... --init --target <name>` runs the init action (kick off).
+- `python -m cronpypeline --config ... --reinit --target <name>` runs it with `force=True` (reset and restart).
+- The dashboard exposes the same operation via a token-guarded `POST /api/init` endpoint and per-target `init`/`reset` buttons.
+
+The action runs under the pipeline lock (so it never races a tick) and receives the usual tick context plus a `force` flag. How a reset is performed is up to the action — the SWE pipeline's `run_repo_init` deletes the repo dir, cleans its task dirs, and clears all markers before re-cloning.
+
 ### Pre-tick / post-tick hooks
 
 A pipeline can declare `pre_tick` and `post_tick` hooks — custom Python callables that run before state derivation and after tick completion respectively.
@@ -344,6 +362,7 @@ State derivation is a read-only snapshot for status/dashboard callers. `Pipeline
 | `target_lock` | bool | no | `false` | Cross-stage lock — blocks all stages for a target while any stage is processing |
 | `pre_tick` | object | no | `null` | Pre-tick hook config (`{"callable": "module.func"}`) |
 | `post_tick` | object | no | `null` | Post-tick hook config (`{"callable": "module.func"}`) |
+| `init` | object | no | `null` | Optional manual target-initialization action (`{"action": {...}, "marker": "..."}`). Run on demand via `--init`/`--reinit` or the dashboard — it is not part of the stage chain |
 
 ### Stage definition
 
@@ -569,9 +588,13 @@ Options:
   --status              Print pipeline state and exit (no actions)
   --reset-stage ID      Delete a stage's completion marker to force re-run
   --reset-target NAME   Clear all markers for a target (nuclear reset)
+  --init                Run the configured init action for --target (kick off / onboard)
+  --reinit              Force-reset and re-run the configured init action for --target
 ```
 
 `--reset-stage` and `--reset-target` validate the target name and return exit code 1 with an error message if the target name contains path traversal (e.g. `..` segments or absolute paths). Both options also build a marker context from the target's registry config (the same enrichment used in `Pipeline.tick`), so markers whose names or directories contain template placeholders (e.g. `{slug}`, `{test_cmd}`, or any flattened target config key) are resolved and deleted correctly.
+
+`--init` and `--reinit` require `--target` and run the pipeline's configured `init` action (see the `init` top-level config field) for that target. `--init` is the "kick off / onboard" trigger; `--reinit` additionally requests a full reset (the init action decides how — for the SWE pipeline it deletes the repo dir, cleans its task dirs, and clears all markers before re-cloning). Both respect `--dry-run`/`--verbose` and exit non-zero if the init action fails.
 
 ## Plugin system
 
@@ -791,6 +814,9 @@ Custom triggers and actions for the SWE pipeline:
 - `sync_session_mode` — pre_tick hook: syncs `.SWE/github_session.json` to the pipeline `mode_file` (the top-level `mode_file` config, resolved relative to `workspace_dir`). An active (non-completed) session sets the mode to `"github"`; a completed session (even one still marked `active`) is treated as inactive and sets the mode to `"default"`, and the tick proceeds normally (it is no longer skipped for completed sessions, so a completed session no longer permanently blocks the target). The mode file is always written, so it never goes stale.
 - `run_lint_autofix` — action: runs a lint autofix command (default `ruff check --fix .`), parses the fixed-count, writes a timestamped report, and commits changes. The command is executed via an argument list (`shell=False` using `shlex.split()`) rather than a shell, so commands relying on shell features (pipes, redirection, `&&`, etc.) must be wrapped in `sh -c '...'`; invalid/unparseable commands return an ACTION_FAILED result.
 - `run_a9_dep_audit` — action: runs the pip-audit dependency scanner via `run_diagnostic`, then parses the output and creates dependency-audit issues in the issue store. It proceeds to create dependency-audit issues even when the pip-audit command exits non-zero (the normal case when vulnerabilities are found), and reports success only when dependency-audit issues were actually created — the goal is the created issues, not a clean audit. If the audit fails but no issues could be created from the output, the action preserves the failure (returns `success=False`) rather than unconditionally reporting success.
+- `run_repo_init` — action: clone/initialize a repo into the SWE workspace by calling the standalone `cronpypeline.plugins.initialize_repo` helper. Derives the git URL from the target's registry `slug` (or an explicit `git_url` param), and derives the repos dir, tasks dir, and registry file from the pipeline context. Used by the pipeline's `init` action; `force` (from `--reinit`) triggers a full reset (delete repo dir + task dirs + markers, then re-clone).
+
+The standalone `cronpypeline/plugins/initialize_repo.py` script clones a repo, creates its `.venv`, installs the repo's dependencies plus the Phase A tooling, and writes `.SWE/init_complete.marker`. It is decoupled from Spellbook: the workspace layout is resolved from `--repos-dir`/`--tasks-dir`/`--registry-file`, else the `SWE_REPOS_DIR`/`SWE_TASKS_DIR`/`SWE_REGISTRY_FILE` env vars, else `SWE_DATA_DIR` (default `/spellbook_data`). It can be run standalone (`python -m cronpypeline.plugins.initialize_repo <git_url> [--force]`) or imported (`initialize_repo(...)`).
 
 The `run_c_pr_status` action (used by the `C-pr-status` stage) reads the `pr_published.json` marker to determine the PR number for status polling. If that marker file is missing, the action returns an `ActionResult` with `success=False` and `stderr="PR marker file not found"` instead of raising an exception, so the stage fails gracefully rather than crashing the tick. If the GitHub reviews API call fails (HTTPError, URLError, or OSError), the action returns an `ActionResult` with `success=False` and `stderr` containing `"Failed to fetch PR reviews: {error}"`, so the failure is reported instead of silently treated as no reviews. Once the PR's review cycle is complete, the action only pushes the integration branch (merging the reviewed changes) when the PR has filed issues recorded in the `pr_published.json` marker's `filed_issues` list; when that list is empty, the action idles instead of prematurely pushing.
 
@@ -879,7 +905,7 @@ These queue builder actions require a `queue_dir` to be configured, either in th
 
 The issue-fix plugin's prompt builders (`_build_coder_prompt`, `_build_coverage_prompt`, `_build_review_prompt`, and the closing-loop instructions) shell-quote the repository directory path with `shlex.quote()` before embedding it in generated prompts (e.g. `cd {repo_dir} && ...`), preventing command injection when the repo directory path contains spaces or shell metacharacters.
 
-**SWE pipeline config**: A full example config is available at `configs/swe_pipeline.json` with all SWE stages (A1–A9 diagnostics, fix agents, B1, C-select/gate/code/publish/pr-review/pr-status/session-terminal/stale).
+**SWE pipeline config**: A full example config is available at `configs/swe_pipeline.json` with all SWE stages (A1–A9 diagnostics, fix agents, B1, C-select/gate/code/publish/pr-review/pr-status/session-terminal/stale) plus an `init` action (`run_repo_init`) for on-demand repo onboarding/reset.
 
 #### VNN pipeline plugin (`cronpypeline.plugins.vnn_plugin`)
 
@@ -925,13 +951,14 @@ cronpypeline/
     ├── issue_store.py         # SWE issue store with YAML frontmatter
     ├── swe_diagnostics.py     # SWE diagnostic report handler + output parsers
     ├── swe_prompts.py         # SWE prompt builders for fix/coder/review agents
+    ├── initialize_repo.py     # Standalone repo clone + venv + Phase A tooling installer
     └── vnn_plugin.py          # VNN pipeline hooks (rejection log, story sync, etc.)
 configs/
 ├── swe_pipeline.json         # Full SWE pipeline example config
 └── vnn_pipeline.json         # Full VNN pipeline example config
 ```
 
-The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) for visualizing pipeline state. The dashboard also shows a "Recent Activity" section that lists recent execution-log ticks (read from the pipeline's `log_file` via the `/api/log` endpoint), with expandable per-stage details including `action_command`, `stdout`, and `stderr`. The webui module can now be imported even when the web stack is unavailable or broken — the FastAPI app is built lazily via a `_build_app()` function, and the module-level `app` is `None` when app construction fails for any reason (missing fastapi/pydantic, or any other error during app construction). This is useful for importing helper functions without installing the web stack. The enable/disable toggle endpoint restricts its writes to toggle paths that resolve within the pipeline's workspace directory or the configs directory (security hardening), rejecting paths that resolve outside both. The dashboard's `/api/pipeline` endpoint filters sensitive keys (tokens, secrets, passwords, credentials) from per-target registry configs before serializing them, so per-repo secrets are not leaked to the browser; this filtering is applied recursively to nested dicts and lists within each per-target config, not just to top-level keys. Processing-stage nodes display a live countdown to their timeout (derived from the stage's `timeout_minutes`), with the detail panel showing processing age and time-until-timeout.
+The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) for visualizing pipeline state. The dashboard also shows a "Recent Activity" section that lists recent execution-log ticks (read from the pipeline's `log_file` via the `/api/log` endpoint), with expandable per-stage details including `action_command`, `stdout`, and `stderr`. The webui module can now be imported even when the web stack is unavailable or broken — the FastAPI app is built lazily via a `_build_app()` function, and the module-level `app` is `None` when app construction fails for any reason (missing fastapi/pydantic, or any other error during app construction). This is useful for importing helper functions without installing the web stack. The enable/disable toggle endpoint restricts its writes to toggle paths that resolve within the pipeline's workspace directory or the configs directory (security hardening), rejecting paths that resolve outside both. The dashboard also exposes a token-guarded `POST /api/init` endpoint (and per-target `init`/`reset` buttons) that runs the pipeline's configured `init` action for a target — the same operation as the CLI `--init`/`--reinit`. The dashboard's `/api/pipeline` endpoint filters sensitive keys (tokens, secrets, passwords, credentials) from per-target registry configs before serializing them, so per-repo secrets are not leaked to the browser; this filtering is applied recursively to nested dicts and lists within each per-target config, not just to top-level keys. Processing-stage nodes display a live countdown to their timeout (derived from the stage's `timeout_minutes`), with the detail panel showing processing age and time-until-timeout.
 
 ## Testing
 
@@ -974,6 +1001,9 @@ results = pipeline.tick_all(dry_run=False, verbose=False)
 
 # Get status snapshot
 status = pipeline.status(targets=["my-repo"])
+
+# Run the configured init action for a target (manual kick off / reset)
+result = pipeline.run_init(target="my-repo", force=False)
 ```
 
 `status()` is a read-only snapshot: it derives state with `cleanup_orphans=False`, so it does not clean up orphaned processing markers (the tick path still does).
@@ -1015,7 +1045,7 @@ from cronpypeline import (
     # Config
     PipelineConfig, Stage, TriggerCondition, TriggerType,
     ActionSpec, ActionType, MarkerSpec, TargetSpec, TargetType,
-    ActionHandlerConfig,
+    ActionHandlerConfig, InitConfig,
     # State
     PipelineState, StageState, TargetState,
     # Markers

@@ -38,6 +38,7 @@ let justCompleted = new Set(); // "target::stage" keys that flipped to complete
 let hidePending = localStorage.getItem('cronpypeline.hidePending') === '1';
 let lanesAnimated = false;    // entrance animation only on first render per config
 let expandedTicks = new Set(); // tick IDs that are expanded in the activity list
+let inFlightInits = new Set(); // target names with an init/reinit request in flight
 let apiToken = localStorage.getItem('cronpypeline.apiToken') || '';
 
 els.tokenInput.value = apiToken;
@@ -269,6 +270,42 @@ els.toggleBtn.addEventListener('click', async () => {
   }
 });
 
+// ── Init / reinit ────────────────────────────────────────────────────────────
+
+async function runInit(target, force, btn) {
+  if (force && !confirm(`Force reset and re-initialize '${target}'?\n\nThis deletes the repo directory, its task dirs, and all markers, then re-clones and reinstalls.`)) {
+    return;
+  }
+  const original = btn.textContent;
+  inFlightInits.add(target);
+  btn.disabled = true;
+  btn.classList.add('busy');
+  btn.textContent = '…';
+  try {
+    const res = await fetch('/api/init?config=' + encodeURIComponent(currentConfig) + '&target=' + encodeURIComponent(target) + '&token=' + encodeURIComponent(apiToken), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    if (data.status === 'action_failed') {
+      showError(`Init failed for ${target}: ${data.stderr || data.message}`);
+      btn.textContent = '✕';
+    } else {
+      btn.textContent = '✓';
+    }
+  } catch (e) {
+    showError('Init failed: ' + e.message);
+    btn.textContent = '✕';
+  } finally {
+    inFlightInits.delete(target);
+    btn.disabled = false;
+    btn.classList.remove('busy');
+    setTimeout(() => { btn.textContent = original; }, 2500);
+  }
+}
+
 // ── Polling + rendering ──────────────────────────────────────────────────────
 
 async function poll() {
@@ -382,6 +419,19 @@ function sweBadges(swe) {
   return badges.join('');
 }
 
+// Init / reinit buttons (only when the pipeline configures an init action)
+function initButtons(target) {
+  if (!pipelineMeta || !pipelineMeta.has_init) return '';
+  const t = esc(target);
+  const busy = inFlightInits.has(target);
+  const dis = busy ? ' disabled' : '';
+  const busyCls = busy ? ' busy' : '';
+  const label = busy ? '…' : 'init';
+  const resetLabel = busy ? '…' : 'reset';
+  return `<button class="lane-action${busyCls}" data-init-target="${t}" data-force="0"${dis} title="Run init (clone + venv + install)">${label}</button>
+    <button class="lane-action danger${busyCls}" data-init-target="${t}" data-force="1"${dis} title="Force reset and re-init (delete repo dir + tasks + markers)">${resetLabel}</button>`;
+}
+
 // Pipeline lanes (subway map per target)
 function stageName(sid) {
   const meta = (pipelineMeta?.stages || []).find(s => s.id === sid);
@@ -472,6 +522,7 @@ function renderLanes(status) {
         ${dirWarn}
         ${hiddenBadge}
         <div class="flex-1"></div>
+        ${initButtons(target)}
         <span class="text-xs text-slate-500 font-[JetBrains_Mono]">${done}/${tracked.length} stages · ${pct}%</span>
       </div>
       <div class="lane-progress-track"><div class="lane-progress-fill${ts.has_processing ? ' active' : ''}" style="width:${pct}%"></div></div>
@@ -482,6 +533,14 @@ function renderLanes(status) {
   // Attach click handlers for detail panel
   els.lanes.querySelectorAll('.subway-stop').forEach(el => {
     el.addEventListener('click', () => openPanel(el.dataset.target, el.dataset.stage));
+  });
+
+  // Attach init/reinit handlers
+  els.lanes.querySelectorAll('[data-init-target]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      runInit(el.dataset.initTarget, el.dataset.force === '1', el);
+    });
   });
 
   lanesAnimated = true;

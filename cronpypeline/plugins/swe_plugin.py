@@ -111,6 +111,86 @@ def detect_deadcode_trigger(context: dict[str, Any]) -> bool:
     return not (target_dir / ".SWE" / "reports" / "deadcode" / "latest.md").exists()
 
 
+def _registry_file_from_context(context: TickContext) -> Path:
+    """Resolve the repos.json registry path from the pipeline's target spec.
+
+    :param context: Tick context carrying the pipeline instance.
+    :returns: The registry file path, or the SWE default when unavailable.
+    """
+    pipeline = getattr(context, "pipeline", None)
+    spec = getattr(getattr(pipeline, "config", None), "targets", None)
+    file = getattr(spec, "file", None)
+    if file:
+        return Path(file)
+    return SWE_WORKSPACE_DIR.parent / "repos.json"
+
+
+def run_repo_init(action: ActionSpec, context: TickContext) -> ActionResult:
+    """Custom action: clone and initialize a repo into the SWE workspace.
+
+    Derives the git URL from the target's registry ``slug`` (or an explicit
+    ``git_url`` param), then runs the standalone
+    :func:`cronpypeline.plugins.initialize_repo.initialize_repo` helper. When
+    ``context.force`` is set (manual reinit), the repo dir, its task dirs, and
+    all markers are removed before re-cloning.
+
+    :param action: Action spec (params may override ``git_url``, ``repos_dir``,
+        ``tasks_dir``, and ``registry_file``).
+    :param context: Tick context with the target and per-target config.
+    :returns: ActionResult with the init summary in ``data``.
+    """
+    from cronpypeline.plugins import initialize_repo as init_mod
+
+    params = action.params
+    target_config = context.target_config or {}
+
+    git_url = params.get("git_url") or target_config.get("git_url")
+    if not git_url:
+        slug = target_config.get("slug")
+        if not slug:
+            return ActionResult(
+                success=False,
+                stderr="No git_url or slug in target config; cannot initialize repo",
+            )
+        git_url = f"https://github.com/{slug}.git"
+
+    repos_dir = Path(params.get("repos_dir") or context.workspace_dir)
+    tasks_dir = Path(params.get("tasks_dir") or (repos_dir.parent / "tasks"))
+    registry_file = params.get("registry_file")
+    if registry_file:
+        registry_file = Path(registry_file)
+    else:
+        registry_file = _registry_file_from_context(context)
+
+    if context.dry_run:
+        return ActionResult(
+            success=True,
+            dry_run=True,
+            command=f"initialize_repo {git_url}" + (" --force" if context.force else ""),
+        )
+
+    try:
+        summary = init_mod.initialize_repo(
+            git_url,
+            force=context.force,
+            repos_dir=repos_dir,
+            tasks_dir=tasks_dir,
+            registry_file=registry_file,
+        )
+    except FileExistsError as exc:
+        return ActionResult(success=False, stderr=str(exc))
+    except subprocess.CalledProcessError as exc:
+        return ActionResult(
+            success=False,
+            stderr=f"command failed: {exc}",
+            exit_code=exc.returncode,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ActionResult(success=False, stderr=f"{type(exc).__name__}: {exc}")
+
+    return ActionResult(success=True, data=summary)
+
+
 def _resolve_latest_report(target_dir: Path, subdir: str) -> Path | None:
     """Resolve the latest.md symlink in a report subdir to the actual report file.
 

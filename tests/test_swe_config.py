@@ -36,6 +36,13 @@ class TestSWEPipelineConfig:
         config = PipelineConfig.from_file(self.CONFIG_PATH)
         assert config.mode_file is not None
 
+    def test_config_has_init_action(self):
+        config = PipelineConfig.from_file(self.CONFIG_PATH)
+        assert config.init is not None
+        assert config.init.action.type.value == "custom"
+        assert config.init.action.params.get("callable") == "cronpypeline.plugins.swe_plugin.run_repo_init"
+        assert config.init.marker == ".SWE/init_complete.marker"
+
     def test_all_stage_ids_unique(self):
         config = PipelineConfig.from_file(self.CONFIG_PATH)
         ids = [s.id for s in config.stages]

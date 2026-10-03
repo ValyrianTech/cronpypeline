@@ -78,6 +78,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Clear all markers for a target (nuclear reset)",
     )
+    parser.add_argument(
+        "--init",
+        action="store_true",
+        default=False,
+        help="Run the configured init action for --target (kick off / onboard)",
+    )
+    parser.add_argument(
+        "--reinit",
+        action="store_true",
+        default=False,
+        help="Force-reset and re-run the configured init action for --target",
+    )
     return parser
 
 
@@ -173,6 +185,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             for marker in stage.markers.values():
                 delete_marker(marker, target_dir, context=marker_ctx)
         print(f"Reset all markers for target {args.reset_target}")
+        return 0
+
+    # Handle --init / --reinit
+    if args.init or args.reinit:
+        if not args.target:
+            print("Error: --init/--reinit require --target", file=sys.stderr)
+            return 1
+        try:
+            result = pipeline.run_init(
+                target=args.target,
+                force=args.reinit,
+                dry_run=args.dry_run,
+                verbose=args.verbose,
+            )
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        print(result)
+        if result.status == TickResultStatus.ACTION_FAILED:
+            return 1
         return 0
 
     # Normal tick execution

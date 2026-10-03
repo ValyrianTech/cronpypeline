@@ -50,6 +50,7 @@ class TickContext:
     :ivar retry_count: Number of retries so far (0 for first attempt).
     :ivar retry_data: Data from the previous processing marker (for continuation).
     :ivar handlers: Optional per-tick action-handler registry override.
+    :ivar force: Whether a manual init/reinit requested a forced reset.
     """
 
     target: str
@@ -63,6 +64,7 @@ class TickContext:
     retry_count: int = 0
     retry_data: dict[str, Any] | None = None
     handlers: dict[ActionType, ActionHandler] | None = None
+    force: bool = False
 
     @property
     def target_dir(self) -> Path:

@@ -981,6 +981,7 @@ class TestBuildApp:
             "GET /api/log",
             "GET /api/pipeline",
             "GET /api/status",
+            "POST /api/init",
             "POST /api/toggle",
         ]
         assert len(built.mounts) == 1
@@ -1694,6 +1695,115 @@ class TestBuildApp:
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"), pytest.raises(fastapi_module.HTTPException) as excinfo:
             handler(types.SimpleNamespace(enabled=True), config="swe.json", token="wrong")
         assert excinfo.value.status_code == 401
+
+    def _write_init_config(self, configs_dir, workspace, name="swe.json", with_init=True):
+        data = {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "stages": [],
+        }
+        if with_init:
+            data["init"] = {"action": {"type": "command", "params": {"command": "echo init-ran"}}}
+        return self._write_config(configs_dir, name, data)
+
+    def test_pipeline_info_has_init(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace)
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/pipeline"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        assert result["has_init"] is True
+
+    def test_pipeline_info_has_init_false(self, tmp_path):
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace, with_init=False)
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/pipeline"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="swe.json")
+        assert result["has_init"] is False
+
+    def test_init_no_token_configured(self, tmp_path):
+        """Init returns 403 when no auth token is configured."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace)
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/init"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", ""), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="")
+        assert excinfo.value.status_code == 403
+
+    def test_init_wrong_token(self, tmp_path):
+        """Init returns 401 when the provided token is wrong."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace)
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/init"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "secret"), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="wrong")
+        assert excinfo.value.status_code == 401
+
+    def test_init_no_init_action(self, tmp_path):
+        """Init returns 409 when the config has no init action."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace, with_init=False)
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/init"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="test-token")
+        assert excinfo.value.status_code == 409
+
+    def test_init_runs_action(self, tmp_path):
+        """Init runs the configured action and returns the tick result."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "repo1").mkdir()
+        self._write_init_config(configs_dir, workspace)
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/init"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
+            result = handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="test-token")
+        assert result["status"] == "action_executed"
+        assert "init-ran" in result["stdout"]
+
+    def test_init_invalid_target(self, tmp_path):
+        """Init returns 400 for an invalid target name."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace)
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/init"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="../escape", token="test-token")
+        assert excinfo.value.status_code == 400
 
     def test_index_serves_frontend(self):
         built, _fastapi_module, responses_module, *_ = self._build_app()
