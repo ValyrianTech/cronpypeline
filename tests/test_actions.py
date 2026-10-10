@@ -2368,6 +2368,76 @@ class TestHttpRequestActionHandlerRedirects:
         assert "Unsupported URL scheme" in result.stderr
         mock_open.assert_called_once()
 
+    def test_redirect_https_to_http_downgrade_refused(self, tmp_path):
+        action = self._action(
+            "https://example.com/start",
+            auth_token="secret-token",
+            pin_to_validated_ips=False,
+        )
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://example.com/safe", url="https://example.com/start")
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is False
+        assert result.exit_code == 302
+        assert "Refusing HTTPS->HTTP downgrade redirect" in result.stderr
+        assert f"Refusing HTTPS->HTTP downgrade redirect to {_redact_url('http://example.com/safe')}" in result.stderr
+        mock_open.assert_called_once()
+
+    def test_redirect_https_to_https_followed(self, tmp_path):
+        action = self._action("https://example.com/start", pin_to_validated_ips=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "https://example.com/safe", url="https://example.com/start")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+
+    def test_redirect_http_to_http_followed(self, tmp_path):
+        action = self._action("http://example.com/start", pin_to_validated_ips=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "http://example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+
+    def test_redirect_http_to_https_upgrade_followed(self, tmp_path):
+        action = self._action("http://example.com/start", pin_to_validated_ips=False)
+        ctx = self._ctx(tmp_path)
+        handler = HttpRequestActionHandler()
+
+        redirect = _make_redirect_error(302, "https://example.com/safe")
+        mock_resp = self._mock_response(200)
+
+        with patch("socket.getaddrinfo", return_value=self._mock_public_dns()), patch(
+            "cronpypeline.actions._HTTP_OPENER.open", side_effect=[redirect, mock_resp]
+        ) as mock_open:
+            result = handler.execute(action, ctx)
+
+        assert result.success is True
+        assert mock_open.call_count == 2
+
 
 class TestHostMatches:
     """Direct unit tests for the _host_matches helper."""
