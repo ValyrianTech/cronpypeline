@@ -922,6 +922,15 @@ class HttpRequestActionHandler(ActionHandler):
                     # Don't forward auth headers to a different host
                     redirect_parsed = urllib.parse.urlparse(current_url)
                     original_parsed = urllib.parse.urlparse(original_url)
+                    original_scheme = urllib.parse.urlparse(original_url).scheme
+                    redirect_scheme = urllib.parse.urlparse(current_url).scheme
+                    if original_scheme == "https" and redirect_scheme == "http":
+                        return ActionResult(
+                            success=False,
+                            exit_code=e.code,
+                            stderr=f"Refusing HTTPS->HTTP downgrade redirect to {_redact_url(current_url)}",
+                            command=command_str,
+                        )
                     if redirect_parsed.netloc != original_parsed.netloc:
                         headers = {
                             k: v for k, v in headers.items()
