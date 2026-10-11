@@ -479,16 +479,16 @@ class TestInitializeRepoScript:
         assert entry == {"name": "other", "slug": "org/myrepo"}
 
     def _no_tooling(self):
-        return dict(
-            install_ruff=False,
-            install_interrogate=False,
-            install_mypy=False,
-            install_bandit=False,
-            install_vulture=False,
-            install_pip_audit=False,
-            install_pytest_cov=False,
-            install_radon=False,
-        )
+        return {
+            "install_ruff": False,
+            "install_interrogate": False,
+            "install_mypy": False,
+            "install_bandit": False,
+            "install_vulture": False,
+            "install_pip_audit": False,
+            "install_pytest_cov": False,
+            "install_radon": False,
+        }
 
     def test_install_dependencies_requirements_txt(self, tmp_path, monkeypatch):
         repo_dir = tmp_path / "repo"
