@@ -8,7 +8,7 @@ from packaging.version import Version
 try:
     import tomllib
 except ImportError:  # pragma: no cover - Python < 3.11
-    import tomli as tomllib
+    import tomli as tomllib  # type: ignore[no-redef]
 
 
 PYPROJECT_PATH = Path(__file__).parent.parent / "pyproject.toml"

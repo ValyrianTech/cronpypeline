@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 DEFAULT_DATA_DIR = '/spellbook_data'
@@ -81,7 +82,7 @@ def derive_repo_name(git_url: str) -> str:
     return name
 
 
-def run(cmd, cwd=None, check=True):
+def run(cmd: list[str], cwd: str | None = None, check: bool = True) -> int:
     """Run a subprocess command and return its exit code.
 
     :param cmd: The command and arguments to run (list of strings).
@@ -226,7 +227,7 @@ def install_dependencies(
     Returns a small dict summarizing what was done so the caller can log it.
     """
     pip = pip_path(venv_dir)
-    summary = {'requirements_txt': False,
+    summary: dict[str, Any] = {'requirements_txt': False,
                'editable_install': False, 'extras_installed': [],
                'ruff_installed': False, 'interrogate_installed': False,
                'mypy_installed': False, 'bandit_installed': False,
@@ -465,7 +466,7 @@ def initialize_repo(
     }
 
 
-def main():
+def main() -> None:
     """CLI entry point: parse args and initialize a repo into the workspace.
 
     Builds an argparse parser for the ``git_url`` positional plus the
