@@ -82,12 +82,33 @@ def derive_repo_name(git_url: str) -> str:
 
 
 def run(cmd, cwd=None, check=True):
+    """Run a subprocess command and return its exit code.
+
+    :param cmd: The command and arguments to run (list of strings).
+    :type cmd: list
+    :param cwd: Working directory to run the command in, or None.
+    :type cwd: str or None
+    :param check: If True, raise on a non-zero exit code.
+    :type check: bool
+    :returns: The command's return code.
+    :rtype: int
+    :raises subprocess.CalledProcessError: If ``check`` is True and the
+        command exits with a non-zero status.
+    """
     print(f"$ {' '.join(cmd)}" + (f"  (cwd={cwd})" if cwd else ""))
     result = subprocess.run(cmd, cwd=cwd, check=check)
     return result.returncode
 
 
 def clone_repo(git_url: str, dest: Path) -> None:
+    """Clone a Git repository into the destination directory.
+
+    :param git_url: Git URL of the repo to clone (HTTPS or SSH).
+    :type git_url: str
+    :param dest: Destination directory for the clone.
+    :type dest: Path
+    :raises subprocess.CalledProcessError: If the git clone fails.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     run(['git', 'clone', git_url, str(dest)])
 
@@ -112,6 +133,17 @@ def resolve_python(python: str | None, registry_entry: dict) -> str:
 
 
 def create_venv(repo_dir: Path, python: str | None = None) -> Path:
+    """Create a ``.venv`` inside repo_dir and return its path.
+
+    :param repo_dir: Repository directory to create the venv inside.
+    :type repo_dir: Path
+    :param python: Interpreter to create the venv with, or None to use
+        ``sys.executable``.
+    :type python: str or None
+    :returns: The path to the created venv directory (``repo_dir/.venv``).
+    :rtype: Path
+    :raises subprocess.CalledProcessError: If the venv creation fails.
+    """
     venv_dir = repo_dir / '.venv'
     run([python or sys.executable, '-m', 'venv', str(venv_dir)])
     return venv_dir
@@ -160,6 +192,14 @@ def lookup_registry_entry(registry_file: Path, repo_name: str) -> dict:
 
 
 def pip_path(venv_dir: Path) -> Path:
+    """Resolve the pip executable path inside the venv.
+
+    :param venv_dir: The venv directory to resolve pip for.
+    :type venv_dir: Path
+    :returns: The pip executable path (``bin/pip``, falling back to the
+        Windows ``Scripts/pip.exe``).
+    :rtype: Path
+    """
     pip = venv_dir / 'bin' / 'pip'
     if not pip.exists():
         # Windows fallback
@@ -426,6 +466,17 @@ def initialize_repo(
 
 
 def main():
+    """CLI entry point: parse args and initialize a repo into the workspace.
+
+    Builds an argparse parser for the ``git_url`` positional plus the
+    ``--force``, ``--editable``, ``--no-editable``, ``--extras``,
+    ``--no-install``, ``--python``, ``--no-install-*`` tooling, and
+    ``--repos-dir`` / ``--tasks-dir`` / ``--registry-file`` flags, resolves
+    the workspace paths, then calls :func:`initialize_repo`.
+
+    :returns: None. Exits with a non-zero status code on error.
+    :rtype: None
+    """
     parser = argparse.ArgumentParser(
         description="Initialize a Git repository into the SWE shared workspace."
     )
