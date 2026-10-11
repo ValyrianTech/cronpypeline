@@ -34,6 +34,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -44,6 +45,8 @@ from urllib.parse import urlparse
 from cronpypeline.plugins.issue_fix import _task_dir_belongs_to_repo
 
 DEFAULT_DATA_DIR = '/spellbook_data'
+
+_SAFE_REPO_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
 
 
 def default_paths() -> tuple[Path, Path, Path]:
@@ -79,8 +82,8 @@ def derive_repo_name(git_url: str) -> str:
 
     name = path.rstrip('/').split('/')[-1]
     name = name.removesuffix('.git')
-    if not name:
-        raise ValueError(f"Could not derive repo name from URL: {git_url}")
+    if not name or name in ('.', '..') or not _SAFE_REPO_NAME.match(name):
+        raise ValueError(f"Could not derive a safe repo name from URL: {git_url}")
     return name
 
 
@@ -401,7 +404,10 @@ def initialize_repo(
     :raises subprocess.CalledProcessError: If a git or pip step fails.
     """
     repo_name = derive_repo_name(git_url)
-    repo_dir = repos_dir / repo_name
+    resolved_repos_dir = Path(repos_dir).resolve()
+    repo_dir = resolved_repos_dir / repo_name
+    if not repo_dir.resolve().is_relative_to(resolved_repos_dir):
+        raise ValueError(f"repo_dir escapes repos_dir: {repo_dir}")
     registry_entry = lookup_registry_entry(registry_file, repo_name)
     interpreter = resolve_python(python, registry_entry)
 
