@@ -4254,6 +4254,63 @@ class TestSyncSessionMode:
         assert data["mode"] == "github"
 
 
+class TestSyncSessionModePipelineContext:
+    """sync_session_mode driven through the pipeline-level hook context."""
+
+    def test_context_mode_file_writes_github_mode(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        session = {"active": True, "github_number": 42}
+        (target / ".SWE" / "github_session.json").write_text(json.dumps(session))
+        mode_file = tmp_path / "pipeline_mode.json"
+        ctx = {
+            "target_dir": str(target),
+            "target_config": {},
+            "mode_file": str(mode_file),
+            "workspace_dir": str(workspace),
+        }
+        assert sync_session_mode(ctx) is True
+        data = json.loads(mode_file.read_text())
+        assert data["mode"] == "github"
+
+    def test_relative_mode_file_resolved_against_workspace_dir(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        session = {"active": True}
+        (target / ".SWE" / "github_session.json").write_text(json.dumps(session))
+        ctx = {
+            "target_dir": str(target),
+            "mode_file": "rel/mode.json",
+            "workspace_dir": str(workspace),
+        }
+        assert sync_session_mode(ctx) is True
+        written = workspace / "rel" / "mode.json"
+        assert written.exists()
+        data = json.loads(written.read_text())
+        assert data["mode"] == "github"
+
+    def test_context_mode_file_takes_precedence_over_target_config(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        session = {"active": True}
+        (target / ".SWE" / "github_session.json").write_text(json.dumps(session))
+        context_mode_file = tmp_path / "context_mode.json"
+        target_config_mode_file = tmp_path / "target_config_mode.json"
+        ctx = {
+            "target_dir": str(target),
+            "target_config": {"mode_file": str(target_config_mode_file)},
+            "mode_file": str(context_mode_file),
+            "workspace_dir": str(workspace),
+        }
+        assert sync_session_mode(ctx) is True
+        data = json.loads(context_mode_file.read_text())
+        assert data["mode"] == "github"
+        assert not target_config_mode_file.exists()
+
+
 # ─── Exception path tests ───────────────────────────────────────────────────
 
 

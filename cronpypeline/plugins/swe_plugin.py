@@ -3884,9 +3884,15 @@ def sync_session_mode(context: dict[str, Any], mode_file: str | None = None) -> 
     is active (and not completed), writes ``{"mode": "github"}`` to the mode_file.
     Otherwise (including completed sessions) writes ``{"mode": "default"}``.
 
-    The mode_file path can be passed explicitly or resolved from target_config.
+    The mode_file path is resolved in this order:
+    1. the explicit ``mode_file`` argument,
+    2. ``context["mode_file"]`` (the pipeline-level resolved mode file),
+    3. ``context["target_config"]["mode_file"]`` (backwards compatibility).
 
-    :param context: Hook context dict with ``target_dir`` and ``target_config``.
+    Relative paths are resolved against ``context["workspace_dir"]``.
+
+    :param context: Hook context dict with ``target_dir``, ``target_config``,
+        and optionally ``mode_file`` and ``workspace_dir``.
     :param mode_file: Optional explicit path to the mode file.
     :returns: True to allow the tick to proceed.
     """
@@ -3895,6 +3901,8 @@ def sync_session_mode(context: dict[str, Any], mode_file: str | None = None) -> 
 
     # Resolve mode_file path
     if mode_file is None:
+        mode_file = context.get("mode_file")
+    if mode_file is None:
         target_config = context.get("target_config", {})
         mode_file = target_config.get("mode_file")
 
@@ -3902,6 +3910,8 @@ def sync_session_mode(context: dict[str, Any], mode_file: str | None = None) -> 
         return True  # No mode_file configured, nothing to sync
 
     mode_path = Path(mode_file)
+    if not mode_path.is_absolute():
+        mode_path = Path(context.get("workspace_dir", ".")) / mode_path
 
     # Determine mode from session file
     mode = "default"
