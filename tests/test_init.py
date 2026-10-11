@@ -349,6 +349,23 @@ class TestInitializeRepoScript:
     def test_derive_repo_name_ssh(self):
         assert ir.derive_repo_name("git@github.com:org/myrepo.git") == "myrepo"
 
+    def test_derive_repo_name_dotted(self):
+        assert ir.derive_repo_name("https://github.com/org/my.repo.git") == "my.repo"
+
+    def test_derive_repo_name_ssh_traversal_raises(self):
+        with pytest.raises(ValueError):
+            ir.derive_repo_name("git@github.com:..")
+
+    def test_derive_repo_name_https_traversal_raises(self):
+        with pytest.raises(ValueError):
+            ir.derive_repo_name("https://github.com/org/..")
+
+    def test_derive_repo_name_rejects_disallowed_chars(self):
+        with pytest.raises(ValueError):
+            ir.derive_repo_name("https://github.com/org/my repo.git")
+        with pytest.raises(ValueError):
+            ir.derive_repo_name("https://github.com/org/my\\repo.git")
+
     def test_resolve_python_explicit_wins(self, monkeypatch):
         monkeypatch.setenv("SWE_PYTHON", "/env/python")
         assert ir.resolve_python("/explicit/python", {"python": "/reg/python"}) == "/explicit/python"
@@ -371,6 +388,17 @@ class TestInitializeRepoScript:
         registry = tmp_path / "repos.json"
         registry.write_text('{"repos": []}')
         return repos, tasks, registry
+
+    def test_initialize_repo_containment_guard(self, tmp_path, monkeypatch):
+        repos, tasks, registry = self._paths(tmp_path)
+        monkeypatch.setattr(ir, "derive_repo_name", lambda git_url: "..")
+        with pytest.raises(ValueError):
+            ir.initialize_repo(
+                "https://github.com/org/myrepo.git",
+                repos_dir=repos,
+                tasks_dir=tasks,
+                registry_file=registry,
+            )
 
     def test_initialize_repo_writes_marker(self, tmp_path, monkeypatch):
         repos, tasks, registry = self._paths(tmp_path)
