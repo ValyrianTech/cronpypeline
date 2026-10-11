@@ -18,6 +18,7 @@ from cronpypeline.config import InitConfig, PipelineConfig, TargetSpec, TargetTy
 from cronpypeline.pipeline import Pipeline, TickResult, TickResultStatus
 from cronpypeline.plugins import initialize_repo as ir
 from cronpypeline.plugins import swe_plugin
+from cronpypeline.plugins.issue_fix import _repo_dir_component
 
 # ─── InitConfig parsing ──────────────────────────────────────────────────────
 
@@ -561,6 +562,80 @@ class TestInitializeRepoScript:
         (date_dir / "plainfile.txt").write_text("plain")
         (date_dir / "unrelated_task").mkdir()
         ir.cleanup_tasks(tasks_dir, "myrepo")
+        assert "No task directories found" in capsys.readouterr().out
+
+    def test_cleanup_tasks_substring_bug_not_prefix_ambiguous(self, tmp_path, capsys):
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        date_dir = tasks_dir / "20260101"
+        date_dir.mkdir()
+        my_repo_task = date_dir / "20260101_my_repo_task1"
+        my_repo_task.mkdir()
+        my_task = date_dir / "20260101_my_task1"
+        my_task.mkdir()
+        ir.cleanup_tasks(tasks_dir, "my")
+        assert my_repo_task.exists()
+        assert not my_task.exists()
+        assert "Removed 1 task directories for my." in capsys.readouterr().out
+
+    def test_cleanup_tasks_repo_does_not_match_prefix(self, tmp_path):
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        date_dir = tasks_dir / "20260101"
+        date_dir.mkdir()
+        my_repo_task = date_dir / "20260101_my_repo_task1"
+        my_repo_task.mkdir()
+        ir.cleanup_tasks(tasks_dir, "repo")
+        assert my_repo_task.exists()
+
+    def test_cleanup_tasks_injective_encoding(self, tmp_path):
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        date_dir = tasks_dir / "20240101"
+        date_dir.mkdir()
+        component = _repo_dir_component("owner/repo")
+        assert "~" in component
+        encoded = date_dir / f"20240101_{component}_task1"
+        encoded.mkdir()
+        plain = date_dir / "20240101_owner_repo_task1"
+        plain.mkdir()
+        ir.cleanup_tasks(tasks_dir, "owner/repo")
+        assert not encoded.exists()
+        assert plain.exists()
+
+    def test_cleanup_tasks_symlink_outside_refused(self, tmp_path, capsys):
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        date_dir = tasks_dir / "20240101"
+        date_dir.mkdir()
+        link = date_dir / "20240101_myrepo_task1"
+        link.symlink_to(outside, target_is_directory=True)
+        ir.cleanup_tasks(tasks_dir, "myrepo")
+        out = capsys.readouterr().out
+        assert outside.exists()
+        assert "refusing to remove task directory outside tasks dir" in out
+        assert "No task directories found" in out
+
+    def test_cleanup_tasks_resolve_oserror_skipped(self, tmp_path, monkeypatch, capsys):
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        date_dir = tasks_dir / "20240101"
+        date_dir.mkdir()
+        task_dir = date_dir / "20240101_myrepo_task1"
+        task_dir.mkdir()
+
+        real_resolve = Path.resolve
+
+        def fake_resolve(self, strict=False):
+            if self == task_dir:
+                raise OSError("boom")
+            return real_resolve(self, strict=strict)
+
+        monkeypatch.setattr(Path, "resolve", fake_resolve)
+        ir.cleanup_tasks(tasks_dir, "myrepo")
+        assert task_dir.exists()
         assert "No task directories found" in capsys.readouterr().out
 
     def test_initialize_repo_no_install(self, tmp_path, monkeypatch, capsys):

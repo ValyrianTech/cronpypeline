@@ -41,6 +41,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from cronpypeline.plugins.issue_fix import _task_dir_belongs_to_repo
+
 DEFAULT_DATA_DIR = '/spellbook_data'
 
 
@@ -323,16 +325,25 @@ def cleanup_tasks(tasks_dir: Path, repo_name: str) -> None:
     if not tasks_dir.is_dir():
         return
     count = 0
+    tasks_root = tasks_dir.resolve()
     for date_dir in sorted(tasks_dir.iterdir()):
         if not date_dir.is_dir():
             continue
         for task_dir in sorted(date_dir.iterdir()):
             if not task_dir.is_dir():
                 continue
-            if f'_{repo_name}' in task_dir.name:
-                print(f"Removing task directory: {task_dir}")
-                shutil.rmtree(task_dir)
-                count += 1
+            if not _task_dir_belongs_to_repo(task_dir.name, repo_name):
+                continue
+            try:
+                resolved = task_dir.resolve()
+            except OSError:
+                continue
+            if not resolved.is_relative_to(tasks_root):
+                print(f"WARNING: refusing to remove task directory outside tasks dir: {task_dir}")
+                continue
+            print(f"Removing task directory: {task_dir}")
+            shutil.rmtree(task_dir)
+            count += 1
     if count:
         print(f"Removed {count} task directories for {repo_name}.\n")
     else:
