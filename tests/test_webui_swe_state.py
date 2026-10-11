@@ -1805,6 +1805,27 @@ class TestBuildApp:
             handler(types.SimpleNamespace(force=False), config="swe.json", target="../escape", token="test-token")
         assert excinfo.value.status_code == 400
 
+    def test_init_pipeline_construction_fails(self, tmp_path):
+        """Init returns 422 when Pipeline(cfg) construction raises."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace)
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/init"]
+
+        def boom(cfg):
+            raise RuntimeError("boom")
+
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
+                mock.patch("cronpypeline.pipeline.Pipeline", boom), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="test-token")
+        assert excinfo.value.status_code == 422
+        assert "Failed to build pipeline" in excinfo.value.detail
+
     def test_index_serves_frontend(self):
         built, _fastapi_module, responses_module, *_ = self._build_app()
         routes = self._get_routes(built)
