@@ -4526,6 +4526,40 @@ def post_tick(context, result):
         result = pipeline.tick(target="my-repo")
         assert result.status == TickResultStatus.ACTION_EXECUTED
 
+    def test_sync_session_mode_pre_tick_writes_mode_file(self, tmp_path):
+        """pre_tick sync_session_mode should write the pipeline mode_file."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target = workspace / "my-repo"
+        (target / ".SWE").mkdir(parents=True)
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "github_number": 42})
+        )
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "mode_file": "mode.json",
+            "pre_tick": {"callable": "cronpypeline.plugins.swe_plugin.sync_session_mode"},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo hi"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+
+        mode_file = workspace / "mode.json"
+        assert mode_file.exists()
+        data = json.loads(mode_file.read_text())
+        assert data["mode"] == "github"
+
 
 class TestCrossStageInvalidation:
     """Tests for cross-stage marker invalidation via invalidates field."""

@@ -613,6 +613,7 @@ class Pipeline:
             "workspace_dir": str(self.workspace_dir),
             "target_config": target_config,
             "stage_id": None,
+            "mode_file": str(self.mode_file) if self.mode_file else None,
         }
 
         # Pre-tick hook
