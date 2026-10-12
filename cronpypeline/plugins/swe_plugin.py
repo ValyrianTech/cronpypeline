@@ -3829,9 +3829,21 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     if pr_data is None:
         return ActionResult(success=False, stderr="Failed to create PR")
     if isinstance(pr_data, _GhPostAccepted):
-        pr_data = {}
+        existing = _gh_api_get_list(
+            owner, gh_repo_name, "pulls", token,
+            params={"head": f"{owner}:{INTEGRATION_BRANCH}", "state": "open"},
+        )
+        if existing:
+            pr_data = existing[0]
+        else:
+            return ActionResult(
+                success=False,
+                stderr="PR created but response unparseable and PR could not be recovered",
+            )
 
     pr_number = pr_data.get("number")
+    if pr_number is None:
+        return ActionResult(success=False, stderr="Failed to determine PR number")
     pr_url = pr_data.get("html_url", "")
     pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
     pr_marker.parent.mkdir(parents=True, exist_ok=True)
