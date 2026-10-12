@@ -3683,7 +3683,10 @@ class TestRunCPrPublish:
         assert result.data["pr_url"] == "https://github.com/owner/repo/pull/42"
         pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
         assert pr_data["pr_number"] == 42
-        assert mock_get.call_args.kwargs["params"]["head"] == "owner:swe-pipeline/integration"
+        mock_get.assert_called_once_with(
+            "owner", "repo", "pulls", "token",
+            params={"head": f"owner:{INTEGRATION_BRANCH}", "state": "open"},
+        )
 
     def test_422_already_exists_unrecoverable_returns_failure(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
@@ -3724,7 +3727,7 @@ class TestRunCPrPublish:
         recovered = {"number": 42, "html_url": "https://github.com/owner/repo/pull/42"}
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run", return_value=mock_push), \
              patch("cronpypeline.plugins.swe_plugin._gh_api_post", return_value=_GH_POST_ACCEPTED), \
-             patch("cronpypeline.plugins.swe_plugin._gh_api_get_list", return_value=[recovered]):
+             patch("cronpypeline.plugins.swe_plugin._gh_api_get_list", return_value=[recovered]) as mock_get:
             result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_number"] == 42
@@ -3732,6 +3735,10 @@ class TestRunCPrPublish:
         pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
         assert pr_data["pr_number"] == 42
         assert pr_data["pr_url"] == "https://github.com/owner/repo/pull/42"
+        mock_get.assert_called_once_with(
+            "owner", "repo", "pulls", "token",
+            params={"head": f"owner:{INTEGRATION_BRANCH}", "state": "open"},
+        )
 
     def test_accepted_sentinel_with_unrecoverable_pr_returns_failure(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
