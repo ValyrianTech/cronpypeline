@@ -2358,12 +2358,6 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     slug = (target_config.get("slug") or "").strip()
     owner, gh_repo_name = slug.split("/", 1)
 
-    retry_result = _retry_pending_github_close(
-        target_dir, target_config, token, owner, gh_repo_name,
-    )
-    if retry_result is not None:
-        return retry_result
-
     # Fetch PR info
     url = f"https://api.github.com/repos/{owner}/{gh_repo_name}/pulls/{pr_number}"
     headers = {
@@ -2390,8 +2384,22 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
 
     # Advance the poll time on the *attempt* so that a failing API is also
     # rate-limited by the cooldown instead of being retried on every tick.
-    # The value is mutated in memory and persisted by the single flush below.
+    # The value is mutated in memory and persisted by the flush below.
     pr_data["last_polled_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Deferred GitHub issue close: if a previous close failed (``gh_close_pending``
+    # flag on the session) and the PR is terminal, retry the close before polling
+    # the API again.  The poll timestamp is advanced above and the failure counter
+    # is bumped on a failed close so a sustained GitHub outage backs off the retry
+    # instead of hammering the API on every tick.
+    retry_result = _retry_pending_github_close(
+        target_dir, target_config, token, owner, gh_repo_name,
+    )
+    if retry_result is not None:
+        if not (retry_result.data or {}).get("close_succeeded", True):
+            _record_poll_failure()
+        write_json_atomic(pr_marker, pr_data)
+        return retry_result
 
     try:
         req = Request(url, headers=headers, method="GET")

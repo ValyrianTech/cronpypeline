@@ -8163,6 +8163,40 @@ class TestGhClosePendingSecondTick:
         mock_patch.assert_called_once()
 
 
+class TestGhClosePendingRetryCooldown:
+    """A failing gh_close_pending retry must advance the poll cooldown."""
+
+    def test_failed_retry_respects_cooldown_on_next_tick(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        monkeypatch.setattr("cronpypeline.plugins.swe_plugin.PR_POLL_COOLDOWN_SECONDS", 300)
+
+        (target / ".SWE" / "github_session.json").write_text(
+            json.dumps({"active": True, "gh_close_pending": True, "github_number": 42})
+        )
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 7, "pr_state": "rejected"})
+        )
+        ctx = _make_tick_context(target, slug="owner/repo")
+
+        with patch("cronpypeline.plugins.swe_plugin._close_and_comment_github_issue", return_value=False):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+
+        assert result.data["retried_close"] is True
+        assert result.data["close_succeeded"] is False
+
+        # The retry path must persist the PR marker with an advanced poll
+        # timestamp and a bumped failure counter so the next tick backs off.
+        saved = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert saved["pr_poll_failures"] == 1
+        assert saved.get("last_polled_at")
+
+        # Immediately following tick must respect the (now doubled) cooldown.
+        assert detect_c_pr_status(
+            {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        ) is False
+
+
 # ─── Invalid issue_id branches (ValueError coverage) ────────────────────────
 
 
