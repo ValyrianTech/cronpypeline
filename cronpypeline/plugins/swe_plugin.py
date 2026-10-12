@@ -3773,8 +3773,33 @@ def detect_c_pr_publish(context: dict[str, Any]) -> bool:
     return meta_marker.exists()
 
 
+def _recover_existing_pr(owner: str, gh_repo_name: str, token: str) -> dict[str, Any] | None:
+    """Look up an already-open PR for the integration branch.
+
+    Used to recover the PR when the POST failed (e.g. a 422 because the PR
+    already exists) or when the POST was accepted but its response body could
+    not be parsed.
+
+    :param owner: Repo owner.
+    :param gh_repo_name: Repo name.
+    :param token: GitHub auth token.
+    :returns: The existing PR dict if found, else None.
+    """
+    existing = _gh_api_get_list(
+        owner, gh_repo_name, "pulls", token,
+        params={"head": f"{owner}:{INTEGRATION_BRANCH}", "state": "open"},
+    )
+    if existing:
+        return existing[0]
+    return None
+
+
 def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     """Push integration branch and create PR via GitHub API.
+
+    If the PR already exists (the POST fails, e.g. with a 422), or the POST
+    response is unparseable, an existing open PR for the integration branch is
+    recovered via the head-branch lookup and recorded as published.
 
     :param action: Action spec.
     :param context: Tick context.
@@ -3827,15 +3852,12 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
         token,
     )
     if pr_data is None:
-        return ActionResult(success=False, stderr="Failed to create PR")
+        pr_data = _recover_existing_pr(owner, gh_repo_name, token)
+        if pr_data is None:
+            return ActionResult(success=False, stderr="Failed to create PR")
     if isinstance(pr_data, _GhPostAccepted):
-        existing = _gh_api_get_list(
-            owner, gh_repo_name, "pulls", token,
-            params={"head": f"{owner}:{INTEGRATION_BRANCH}", "state": "open"},
-        )
-        if existing:
-            pr_data = existing[0]
-        else:
+        pr_data = _recover_existing_pr(owner, gh_repo_name, token)
+        if pr_data is None:
             return ActionResult(
                 success=False,
                 stderr="PR created but response unparseable and PR could not be recovered",
