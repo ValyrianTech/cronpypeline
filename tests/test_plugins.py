@@ -337,6 +337,133 @@ class TestConversationQueueHandler:
             handler.execute(action, ctx)
 
 
+class TestConversationQueueScrubDeep:
+    """Tests for recursive secret scrubbing of queue entries."""
+
+    def test_non_standard_param_nested_dict_secret(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "A",
+                "prompt": "p",
+                "headers": {"X-Api-Key": "SECRET", "Accept": "json"},
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler.execute(action, ctx)
+
+        files = list(queue_dir.glob("*.json"))
+        raw = files[0].read_text()
+        entry = json.loads(raw)
+        assert entry["headers"] == {"Accept": "json"}
+        assert "X-Api-Key" not in entry["headers"]
+        assert "SECRET" not in raw
+
+    def test_non_standard_param_list_of_dicts_secret(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={
+                "agent": "A",
+                "prompt": "p",
+                "creds": [{"token": "T1"}, {"name": "ok"}],
+            },
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler.execute(action, ctx)
+
+        files = list(queue_dir.glob("*.json"))
+        raw = files[0].read_text()
+        entry = json.loads(raw)
+        assert entry["creds"] == [{}, {"name": "ok"}]
+        assert "T1" not in raw
+
+    def test_default_fields_nested_secret_scrubbed(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            default_fields={"meta": {"password": "P"}, "ok": 1},
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "A", "prompt": "p"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler.execute(action, ctx)
+
+        files = list(queue_dir.glob("*.json"))
+        raw = files[0].read_text()
+        entry = json.loads(raw)
+        assert entry["meta"] == {}
+        assert entry["ok"] == 1
+        assert "P" not in raw
+
+    def test_agent_config_nested_secret_scrubbed(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+        (agent_settings_dir / "A.json").write_text(json.dumps({
+            "system_prompt": "hi",
+            "headers": {"X-Api-Key": "SECRET", "Accept": "json"},
+        }))
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "A", "prompt": "p"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler.execute(action, ctx)
+
+        files = list(queue_dir.glob("*.json"))
+        raw = files[0].read_text()
+        entry = json.loads(raw)
+        assert entry["agent_config"]["headers"] == {"Accept": "json"}
+        assert "SECRET" not in raw
+
+    def test_flatten_agent_settings_nested_and_top_level_secret(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        agent_settings_dir.mkdir()
+        (agent_settings_dir / "A.json").write_text(json.dumps({
+            "api_token": "TOPSECRET",
+            "headers": {"X-Api-Key": "SECRET", "Accept": "json"},
+            "user_name": "coder",
+        }))
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+            flatten_agent_settings=True,
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "A", "prompt": "p"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler.execute(action, ctx)
+
+        files = list(queue_dir.glob("*.json"))
+        raw = files[0].read_text()
+        entry = json.loads(raw)
+        assert "api_token" not in entry
+        assert entry["headers"] == {"Accept": "json"}
+        assert entry["user_name"] == "coder"
+        assert "TOPSECRET" not in raw
+        assert "SECRET" not in raw
+
+
 class TestConversationQueueSerendipityFormat:
     """Tests for Serendipity-compatible queue entry format (Phase 1)."""
 

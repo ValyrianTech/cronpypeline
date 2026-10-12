@@ -3,10 +3,12 @@
 import pytest
 
 from cronpypeline.template_safety import (
+    _is_scrubbable_key,
     flatten_target_config,
     is_sensitive_key,
     iter_template_fields,
     matches_credential_key,
+    scrub_secrets_deep,
     validate_template_fields,
 )
 
@@ -159,6 +161,57 @@ class TestMatchesCredentialKey:
         assert matches_credential_key("DB_PASSWORD") is True
         assert matches_credential_key("X-API-Key", whole_word=True) is True
         assert matches_credential_key("X-Monkey", whole_word=True) is False
+
+
+class TestScrubSecretsDeep:
+    """Tests for scrub_secrets_deep."""
+
+    def test_dict_recursion(self):
+        value = {
+            "headers": {"api_key": "SECRET", "Accept": "json"},
+            "auth": {"token": "T"},
+            "ok": 1,
+        }
+        result = scrub_secrets_deep(value)
+        assert result == {"headers": {"Accept": "json"}, "ok": 1}
+
+    def test_list_recursion(self):
+        value = [{"token": "T1"}, {"name": "ok"}, "scalar", ["nested", {"password": "P"}]]
+        result = scrub_secrets_deep(value)
+        assert result == [{}, {"name": "ok"}, "scalar", ["nested", {}]]
+
+    def test_scalar_passthrough(self):
+        assert scrub_secrets_deep("just a string") == "just a string"
+        assert scrub_secrets_deep(42) == 42
+        assert scrub_secrets_deep(None) is None
+        assert scrub_secrets_deep(True) is True
+
+    def test_hyphenated_header_name_is_scrubbed(self):
+        """Whole-word matching catches HTTP header names like X-Api-Key."""
+        value = {"headers": {"X-Api-Key": "SECRET", "Accept": "json"}}
+        assert scrub_secrets_deep(value) == {"headers": {"Accept": "json"}}
+
+    def test_benign_whole_word_substrings_are_kept(self):
+        """Whole-word mode must not drop keys that merely contain a keyword."""
+        value = {"monkey": 1, "keychain": 2, "author": 3, "name": 4}
+        assert scrub_secrets_deep(value) == value
+
+
+class TestIsScrubbableKey:
+    """Tests for the private union matcher used by scrub_secrets_deep."""
+
+    def test_underscore_style_key(self):
+        assert _is_scrubbable_key("api_key") is True
+        assert _is_scrubbable_key("auth") is True
+        assert _is_scrubbable_key("github_token") is True
+
+    def test_hyphenated_header_name(self):
+        assert _is_scrubbable_key("X-Api-Key") is True
+
+    def test_benign_key(self):
+        assert _is_scrubbable_key("Accept") is False
+        assert _is_scrubbable_key("monkey") is False
+        assert _is_scrubbable_key("user_name") is False
 
 
 class TestFlattenTargetConfig:

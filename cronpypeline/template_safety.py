@@ -134,6 +134,46 @@ def is_sensitive_key(name: str) -> bool:
     return matches_credential_key(name, exact_auth=True)
 
 
+def _is_scrubbable_key(name: str) -> bool:
+    """Return True if a nested mapping key should be dropped when scrubbing.
+
+    Uses the union of both credential-matching modes so that both
+    underscore-style keys (``api_key`` -> substring match) and hyphenated HTTP
+    header names (``X-Api-Key`` -> whole-word match on ``key``) are caught.
+    Whole-word matching alone keeps benign keys such as ``monkey`` or
+    ``keychain`` from being flagged, so the union is fail-closed without
+    over-dropping harmless keys like ``Accept`` or ``user_name``.
+
+    :param name: Mapping key name to inspect.
+    :returns: True if the key likely carries a secret.
+    """
+    return is_sensitive_key(name) or matches_credential_key(name, whole_word=True)
+
+
+def scrub_secrets_deep(value: Any) -> Any:
+    """Recursively remove sensitive keys from dicts and lists.
+
+    Returns a new structure in which any dict key flagged by
+    :func:`_is_scrubbable_key` (a fail-closed union of the substring and
+    whole-word credential policies, so both ``api_key`` and ``X-Api-Key`` are
+    caught) is dropped, and every surviving value is scrubbed recursively.
+    Lists are preserved but each item is scrubbed in turn. Non-container values
+    are returned unchanged, so the helper never mutates its input.
+
+    :param value: The value to scrub (a dict, list, or any scalar).
+    :returns: A scrubbed copy with sensitive keys removed recursively.
+    """
+    if isinstance(value, dict):
+        return {
+            k: scrub_secrets_deep(v)
+            for k, v in value.items()
+            if not _is_scrubbable_key(str(k))
+        }
+    if isinstance(value, list):
+        return [scrub_secrets_deep(item) for item in value]
+    return value
+
+
 def flatten_target_config(ctx: dict[str, Any], target_config: dict[str, Any] | None) -> dict[str, Any]:
     """Flatten ``target_config`` keys into ``ctx``, excluding sensitive keys.
 
