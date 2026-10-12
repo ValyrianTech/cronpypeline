@@ -20,7 +20,10 @@ from cronpypeline.actions import (
 )
 from cronpypeline.config import ActionSpec
 from cronpypeline.io_utils import write_json_atomic
-from cronpypeline.template_safety import is_sensitive_key
+from cronpypeline.template_safety import (
+    _is_scrubbable_key,
+    scrub_secrets_deep,
+)
 
 
 class ConversationQueueHandler(ActionHandler):
@@ -115,7 +118,7 @@ class ConversationQueueHandler(ActionHandler):
             return ActionResult(success=False, stderr=str(e))
 
         # Build queue entry — start with default fields, then add dynamic fields
-        entry = dict(self.default_fields)
+        entry = scrub_secrets_deep(dict(self.default_fields))
 
         # Apply runs_left decrement on retry
         if is_retry and "runs_left" in self.default_fields:
@@ -142,9 +145,9 @@ class ConversationQueueHandler(ActionHandler):
         # Copy any non-standard action params into the entry (override defaults),
         # skipping sensitive-looking keys so secrets never reach the queue file.
         for pk, pv in params.items():
-            if pk in _standard_params or pv is None or is_sensitive_key(pk):
+            if pk in _standard_params or pv is None or _is_scrubbable_key(str(pk)):
                 continue
-            entry[pk] = pv
+            entry[pk] = scrub_secrets_deep(pv)
 
         # Load agent settings if configured. Malformed or unreadable settings
         # files fail open (skipped) rather than aborting the whole pipeline tick.
@@ -161,10 +164,12 @@ class ConversationQueueHandler(ActionHandler):
                     if self.flatten_agent_settings:
                         # Merge flat — agent settings override defaults but not action params
                         for ak, av in agent_config.items():
+                            if _is_scrubbable_key(str(ak)):
+                                continue
                             if ak not in entry or entry[ak] == self.default_fields.get(ak):
-                                entry[ak] = av
+                                entry[ak] = scrub_secrets_deep(av)
                     else:
-                        entry["agent_config"] = agent_config
+                        entry["agent_config"] = scrub_secrets_deep(agent_config)
 
         # Remove None values
         entry = {k: v for k, v in entry.items() if v is not None}
