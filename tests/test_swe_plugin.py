@@ -3659,6 +3659,54 @@ class TestRunCPrPublish:
             result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
 
+    def test_422_already_exists_recovers_existing_pr(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: fix login bug", "body": "## Summary\n\nFixes the login bug."}))
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        mock_push = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        recovered = {"number": 42, "html_url": "https://github.com/owner/repo/pull/42"}
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", return_value=mock_push), \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_post", return_value=None), \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_get_list", return_value=[recovered]) as mock_get:
+            result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_number"] == 42
+        assert result.data["pr_url"] == "https://github.com/owner/repo/pull/42"
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["pr_number"] == 42
+        assert mock_get.call_args.kwargs["params"]["head"] == "owner:swe-pipeline/integration"
+
+    def test_422_already_exists_unrecoverable_returns_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: fix login bug", "body": "## Summary\n\nFixes the login bug."}))
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        mock_push = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", return_value=mock_push), \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_post", return_value=None), \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_get_list", return_value=None):
+            result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "Failed to create PR"
+        assert not (target / ".SWE" / "pr_published.json").exists()
+
     def test_publishes_pr_when_accepted_sentinel(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
