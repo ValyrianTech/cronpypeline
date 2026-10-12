@@ -3773,23 +3773,32 @@ def detect_c_pr_publish(context: dict[str, Any]) -> bool:
     return meta_marker.exists()
 
 
-def _recover_existing_pr(owner: str, gh_repo_name: str, token: str) -> dict[str, Any] | None:
+def _recover_existing_pr(owner: str, gh_repo_name: str, token: str, base_branch: str) -> dict[str, Any] | None:
     """Look up an already-open PR for the integration branch.
 
     Used to recover the PR when the POST failed (e.g. a 422 because the PR
     already exists) or when the POST was accepted but its response body could
     not be parsed.
 
+    The lookup is filtered by the PR `base` branch (the branch the PR would be
+    merged into). Among any returned PRs, the one whose `base.ref` matches
+    `base_branch` is preferred, falling back to the first entry (relying on
+    GitHub's default ordering) when no base ref is available or matching.
+
     :param owner: Repo owner.
     :param gh_repo_name: Repo name.
     :param token: GitHub auth token.
+    :param base_branch: The base branch the PR would be merged into.
     :returns: The existing PR dict if found, else None.
     """
     existing = _gh_api_get_list(
         owner, gh_repo_name, "pulls", token,
-        params={"head": f"{owner}:{INTEGRATION_BRANCH}", "state": "open"},
+        params={"head": f"{owner}:{INTEGRATION_BRANCH}", "state": "open", "base": base_branch},
     )
     if existing:
+        for pr in existing:
+            if (pr.get("base") or {}).get("ref") == base_branch:
+                return pr
         return existing[0]
     return None
 
@@ -3852,11 +3861,11 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
         token,
     )
     if pr_data is None:
-        pr_data = _recover_existing_pr(owner, gh_repo_name, token)
+        pr_data = _recover_existing_pr(owner, gh_repo_name, token, default_branch)
         if pr_data is None:
             return ActionResult(success=False, stderr="Failed to create PR")
     if isinstance(pr_data, _GhPostAccepted):
-        pr_data = _recover_existing_pr(owner, gh_repo_name, token)
+        pr_data = _recover_existing_pr(owner, gh_repo_name, token, default_branch)
         if pr_data is None:
             return ActionResult(
                 success=False,
