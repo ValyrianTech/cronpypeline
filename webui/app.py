@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -426,7 +427,7 @@ def _swe_state(target_dir: Path) -> dict[str, Any] | None:
 
 def _build_app():
     """Build the FastAPI application. Requires fastapi and pydantic installed."""
-    from fastapi import FastAPI, HTTPException, Query
+    from fastapi import FastAPI, Header, HTTPException, Query
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
@@ -631,12 +632,13 @@ def _build_app():
         enabled: bool
 
     @app.post("/api/toggle")
-    def toggle_pipeline(body: ToggleRequest, config: str = Query(...), token: str = Query("")) -> dict[str, Any]:
+    def toggle_pipeline(body: ToggleRequest, config: str = Query(...), x_auth_token: str = Header(default="")) -> dict[str, Any]:
         """Enable or disable a pipeline by writing its config_file toggle.
 
         :param body: Request body with the desired enabled state.
         :param config: Config filename.
-        :param token: Auth token required to enable/disable a pipeline.
+        :param x_auth_token: Auth token (sent via the X-Auth-Token header)
+            required to enable/disable a pipeline.
         :returns: Dict with the new enabled state.
         :raises HTTPException: If no auth token is configured (403), the token
             is invalid or missing (401), the pipeline has no config_file
@@ -645,7 +647,7 @@ def _build_app():
         """
         if not WEBUI_TOKEN:
             raise HTTPException(status_code=403, detail="Toggle is disabled: no auth token configured")
-        if token != WEBUI_TOKEN:
+        if not secrets.compare_digest(x_auth_token, WEBUI_TOKEN):
             raise HTTPException(status_code=401, detail="Invalid or missing auth token")
 
         cfg = _load_config(config)
@@ -688,14 +690,15 @@ def _build_app():
         body: InitRequest,
         config: str = Query(...),
         target: str = Query(...),
-        token: str = Query(""),
+        x_auth_token: str = Header(default=""),
     ) -> dict[str, Any]:
         """Run the pipeline's configured init action for a target.
 
         :param body: Request body with the desired force flag.
         :param config: Config filename.
         :param target: Target name to initialize.
-        :param token: Auth token required to trigger init.
+        :param x_auth_token: Auth token (sent via the X-Auth-Token header)
+            required to trigger init.
         :returns: Dict with the tick result fields.
         :raises HTTPException: If no auth token is configured (403), the token
             is invalid or missing (401), the config has no init action (409),
@@ -703,7 +706,7 @@ def _build_app():
         """
         if not WEBUI_TOKEN:
             raise HTTPException(status_code=403, detail="Init is disabled: no auth token configured")
-        if token != WEBUI_TOKEN:
+        if not secrets.compare_digest(x_auth_token, WEBUI_TOKEN):
             raise HTTPException(status_code=401, detail="Invalid or missing auth token")
 
         cfg = _load_config(config)
