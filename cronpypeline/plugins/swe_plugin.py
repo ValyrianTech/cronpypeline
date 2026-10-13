@@ -530,14 +530,22 @@ TASK_BRANCH_PREFIX = "swe-pipeline/task_"
 def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
     """Clean up git branch after failure.
 
-    Runs ``git checkout integration && git branch -D {task_branch}``.
-
     The task branch is validated before any destructive command is run: it
     must start with ``TASK_BRANCH_PREFIX`` (the canonical ``swe-pipeline/task_``
-    prefix produced by ``_task_branch_name``), which prevents accidental
+    prefix produced by ``_task_branch_name``). If it does not, the function
+    returns early with ``(False, "Refusing to delete unexpected branch: ...")``
+    and no git command is run at all. This check prevents accidental
     force-deletion of unrelated branches — including ``INTEGRATION_BRANCH``
     itself (which does not carry the task prefix) and option-like names that
     begin with ``-``.
+
+    Otherwise it runs ``git checkout {INTEGRATION_BRANCH}`` (i.e.
+    ``git checkout swe-pipeline/integration``), ignoring ``TimeoutExpired`` and
+    ``FileNotFoundError``, then ``git branch -D -- {task_branch}`` — the ``--``
+    separator ensures a branch name that looks like an option is not treated as
+    a flag. If the delete command exits non-zero, it returns
+    ``(False, stderr-or-fallback-message)``; on success it returns
+    ``(True, "Cleaned up branch {task_branch}")``.
 
     :param action: Action spec with optional ``task_branch`` param.
     :param context: Tick context with target directory.
