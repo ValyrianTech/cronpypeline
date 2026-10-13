@@ -1697,6 +1697,24 @@ class TestBuildApp:
             handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="wrong")
         assert excinfo.value.status_code == 401
 
+    def test_toggle_non_ascii_token_returns_401(self, tmp_path):
+        """Toggle returns 401 (not 500) for a non-ASCII token."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "config_file": "toggle.json",
+            "stages": [],
+        })
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/toggle"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"), pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="tökén")
+        assert excinfo.value.status_code == 401
+
     def _write_init_config(self, configs_dir, workspace, name="swe.json", with_init=True):
         data = {
             "name": "swe",
@@ -1759,6 +1777,21 @@ class TestBuildApp:
                 mock.patch.object(app, "WEBUI_TOKEN", "secret"), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
             handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", x_auth_token="wrong")
+        assert excinfo.value.status_code == 401
+
+    def test_init_non_ascii_token_returns_401(self, tmp_path):
+        """Init returns 401 (not 500) for a non-ASCII token."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace)
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/init"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "secret"), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", x_auth_token="tökén")
         assert excinfo.value.status_code == 401
 
     def test_init_no_init_action(self, tmp_path):
