@@ -4382,12 +4382,27 @@ class TestCleanupGitBranch:
         (target / "f.txt").write_text("x")
         subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
-        subprocess.run(["git", "-C", str(target), "branch", "task-branch"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/task_branch"], capture_output=True, check=True)
         ctx = _make_tick_context(target)
-        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "task-branch"})
+        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "swe-pipeline/task_branch"})
         success, msg = cleanup_git_branch(action, ctx)
         assert success is True
-        assert "task-branch" in msg
+        assert "swe-pipeline/task_branch" in msg
+
+    def test_cleans_up_branch_when_param_omitted(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        subprocess.run(["git", "init", "-b", INTEGRATION_BRANCH, str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/task_branch"], capture_output=True, check=True)
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={})
+        success, msg = cleanup_git_branch(action, ctx)
+        assert success is True
+        assert "swe-pipeline/task_branch" in msg
 
     def test_refuses_unexpected_branch(self, tmp_path):
         target = _make_target_dir(tmp_path)
@@ -4428,16 +4443,16 @@ class TestCleanupGitBranch:
         subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         ctx = _make_tick_context(target)
-        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "task-missing"})
+        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "swe-pipeline/task_missing"})
         success, msg = cleanup_git_branch(action, ctx)
         assert success is False
         assert msg
-        assert "task-missing" in msg
+        assert "swe-pipeline/task_missing" in msg
 
     def test_fails_when_delete_raises_file_not_found(self, tmp_path):
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target)
-        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "task-branch"})
+        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "swe-pipeline/task_branch"})
         mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         def _mock_run(*args, **kwargs):
@@ -4454,7 +4469,7 @@ class TestCleanupGitBranch:
     def test_fails_when_delete_raises_timeout(self, tmp_path):
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target)
-        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "task-branch"})
+        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "swe-pipeline/task_branch"})
         mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         def _mock_run(*args, **kwargs):
@@ -5994,7 +6009,7 @@ class TestCleanupGitBranchTimeout:
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         ctx = _make_tick_context(target)
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)):
-            success, msg = cleanup_git_branch(ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "task-branch"}), ctx)
+            success, msg = cleanup_git_branch(ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "swe-pipeline/task_branch"}), ctx)
         assert success is False
         assert "Failed to delete" in msg
 
