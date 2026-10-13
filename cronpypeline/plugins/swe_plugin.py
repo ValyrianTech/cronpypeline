@@ -1010,6 +1010,53 @@ def _gh_api_get_all_pages(
     return results
 
 
+def _gh_api_get_all_pages_raise(
+    owner: str, gh_repo: str, endpoint: str, token: str,
+    params: dict[str, str] | None = None,
+    max_pages: int = 10,
+) -> list[dict[str, Any]]:
+    """GET all pages from a paginated GitHub REST API list endpoint.
+
+    Like :func:`_gh_api_get_all_pages`, but RAISES the underlying
+    ``HTTPError``/``URLError``/``OSError`` instead of swallowing them, so a
+    caller can distinguish a failed fetch from a legitimately empty list.
+
+    :param owner: Repo owner.
+    :param gh_repo: Repo name.
+    :param endpoint: API endpoint (e.g. "pulls/7/reviews").
+    :param token: GitHub auth token.
+    :param params: Optional base query parameters.
+    :param max_pages: Safety cap on the number of pages fetched.
+    :returns: Aggregated list of dicts across all fetched pages.
+    :raises HTTPError: On a non-2xx response.
+    :raises URLError: On a network-level failure.
+    :raises OSError: On a lower-level socket/stream failure.
+    """
+    results: list[dict[str, Any]] = []
+    page = 1
+    while page <= max_pages:
+        p = dict(params or {})
+        p.update({"per_page": "100", "page": str(page)})
+        url = f"https://api.github.com/repos/{owner}/{gh_repo}/{endpoint}"
+        if p:
+            url += "?" + urlencode(p)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        req = Request(url, headers=headers, method="GET")
+        with _GH_OPENER.open(req, timeout=30) as resp:  # nosec B310 - HTTPS URL to GitHub API
+            chunk = json.loads(resp.read().decode("utf-8"))
+        if not chunk:
+            break
+        results.extend(chunk)
+        if len(chunk) < 100:
+            break
+        page += 1
+    return results
+
+
 def _gh_api_post(
     owner: str, gh_repo: str, endpoint: str, payload: dict, token: str,
     expected_statuses: tuple[int, ...] = (201,),
@@ -2479,11 +2526,10 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         return ActionResult(success=True, data={"pr_state": "rejected"})
 
     # Still open — check for changes-requested / approved reviews
-    reviews_url = f"https://api.github.com/repos/{owner}/{gh_repo_name}/pulls/{pr_number}/reviews"
     try:
-        req2 = Request(reviews_url, headers=headers, method="GET")
-        with _GH_OPENER.open(req2, timeout=30) as resp2:  # nosec B310 - HTTPS GitHub API
-            reviews = json.loads(resp2.read().decode("utf-8"))
+        reviews = _gh_api_get_all_pages_raise(
+            owner, gh_repo_name, f"pulls/{pr_number}/reviews", token,
+        )
     except (HTTPError, URLError, OSError) as e:
         # Refreshed attempt time + failure counter so the reviews outage is
         # backed off just like the PR-info fetch above.
@@ -2494,22 +2540,21 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
             stderr=f"Failed to fetch PR reviews: {e}",
         )
 
-    latest_approve = None
-    latest_changes = None
+    latest_terminal = None
     latest_comment = None
     for rev in reviews:
         state = rev.get("state", "")
-        if state == "APPROVED":
-            latest_approve = rev
-        elif state == "CHANGES_REQUESTED":
-            latest_changes = rev
+        if state in ("APPROVED", "CHANGES_REQUESTED"):
+            if latest_terminal is None or rev.get("submitted_at", "") >= latest_terminal.get("submitted_at", ""):
+                latest_terminal = rev
         elif state == "COMMENTED":
             latest_comment = rev
 
-    # Defensive fallback: treat COMMENTED review as CHANGES_REQUESTED when
-    # appropriate.  Prefer the structured verdict from pr_reviewed.json
+    # Defensive fallback: treat COMMENTED review as CHANGES_REQUESTED/APPROVED
+    # when appropriate.  Prefer the structured verdict from pr_reviewed.json
     # (written by the PRReviewAgent) over regex parsing of the review body.
-    if latest_changes is None and latest_comment is not None:
+    # Only synthesize a terminal review when no real terminal review exists.
+    if latest_terminal is None and latest_comment is not None:
         reviewed_marker = target_dir / SWE_SUBDIR / "pr_reviewed.json"
         marker_verdict = None
         marker_change_requests: list[str] | None = None
@@ -2523,13 +2568,14 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                 pass
 
         if marker_verdict == "changes_requested":
-            latest_changes = latest_comment
+            latest_terminal = dict(latest_comment)
+            latest_terminal["state"] = "CHANGES_REQUESTED"
             if marker_change_requests is not None:
-                latest_changes = dict(latest_comment)
-                latest_changes["_structured_change_requests"] = (
+                latest_terminal["_structured_change_requests"] = (
                     marker_change_requests)
         elif marker_verdict == "approve":
-            latest_approve = latest_comment
+            latest_terminal = dict(latest_comment)
+            latest_terminal["state"] = "APPROVED"
         elif marker_verdict is None:
             # No structured verdict — fall back to regex for backward compat
             body = latest_comment.get("body", "")
@@ -2538,15 +2584,16 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                 r"request\s*changes?\b)",
                 body, re.IGNORECASE,
             ):
-                latest_changes = latest_comment
+                latest_terminal = dict(latest_comment)
+                latest_terminal["state"] = "CHANGES_REQUESTED"
 
     pr_state = pr_data.get("pr_state", "open")
     pr_cycles = pr_data.get("pr_review_cycles", 0)
     max_cycles = target_config.get("max_pr_review_cycles", MAX_PR_REVIEW_CYCLES)
 
     # --- Changes requested ---
-    if latest_changes is not None:
-        review_id = latest_changes.get("id")
+    if latest_terminal is not None and latest_terminal.get("state") == "CHANGES_REQUESTED":
+        review_id = latest_terminal.get("id")
         already_handled = pr_data.get("last_review_id")
 
         # New review we haven't seen yet → file revision issues
@@ -2561,11 +2608,11 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                 return ActionResult(success=True, data={"pr_state": "changes_requested"})
 
             pr_cycles += 1
-            structured_requests = latest_changes.get("_structured_change_requests")
+            structured_requests = latest_terminal.get("_structured_change_requests")
             if structured_requests:
                 requests_list = list(structured_requests)
             else:
-                body = latest_changes.get("body", "")
+                body = latest_terminal.get("body", "")
                 from cronpypeline.plugins.swe_prompts import _parse_change_requests
                 requests_list = _parse_change_requests(body)
                 if not requests_list:
@@ -2652,8 +2699,8 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
         return ActionResult(success=True, data={"pr_state": "open"})
 
     # --- Approved ---
-    if latest_approve is not None:
-        review_id = latest_approve.get("id")
+    if latest_terminal is not None and latest_terminal.get("state") == "APPROVED":
+        review_id = latest_terminal.get("id")
         if pr_data.get("last_review_id") != review_id:
             _update_marker("approved", last_review_id=review_id)
             _flush()
@@ -2662,7 +2709,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     # Nothing actionable — but if the marker still says "changes_requested"
     # and there's no CHANGES_REQUESTED review anymore, clear it so stale
     # revision issues don't keep being processed.
-    if pr_state == "changes_requested" and latest_changes is None:
+    if pr_state == "changes_requested" and (latest_terminal is None or latest_terminal.get("state") != "CHANGES_REQUESTED"):
         _update_marker("open", filed_issues=[])
         _flush()
         return ActionResult(success=True, data={"pr_state": "open"})
