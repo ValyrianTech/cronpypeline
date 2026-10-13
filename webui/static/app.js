@@ -256,9 +256,9 @@ els.toggleBtn.addEventListener('click', async () => {
   const target = !els.toggleBtn.classList.contains('on');
   els.toggleBtn.classList.add('busy');
   try {
-    const res = await fetch('/api/toggle?config=' + encodeURIComponent(currentConfig) + '&token=' + encodeURIComponent(apiToken), {
+    const res = await fetch('/api/toggle?config=' + encodeURIComponent(currentConfig), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': apiToken },
       body: JSON.stringify({ enabled: target }),
     });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
@@ -282,9 +282,9 @@ async function runInit(target, force, btn) {
   btn.classList.add('busy');
   btn.textContent = '…';
   try {
-    const res = await fetch('/api/init?config=' + encodeURIComponent(currentConfig) + '&target=' + encodeURIComponent(target) + '&token=' + encodeURIComponent(apiToken), {
+    const res = await fetch('/api/init?config=' + encodeURIComponent(currentConfig) + '&target=' + encodeURIComponent(target), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': apiToken },
       body: JSON.stringify({ force }),
     });
     const data = await res.json();
