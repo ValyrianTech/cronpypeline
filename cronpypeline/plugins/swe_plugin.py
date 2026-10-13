@@ -2539,6 +2539,12 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
             stderr=f"Failed to fetch PR reviews: {e}",
         )
 
+    # The `>=` comparator makes the later review in API list order win when
+    # submitted_at values are equal (or missing/None, normalized to "" via
+    # `rev.get("submitted_at") or ""`). This relies on the GitHub reviews
+    # endpoint returning ascending id order (newest last), so among reviews
+    # with equal/absent submitted_at the last one encountered is chosen.
+    # This is why the comparator is NOT silently changed to `>`.
     latest_terminal = None
     latest_comment = None
     for rev in reviews:
