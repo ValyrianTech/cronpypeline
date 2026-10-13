@@ -797,7 +797,7 @@ class TestCleanupGitBranch:
         # Check the git commands
         calls = mock_run.call_args_list
         assert calls[0].args[0] == [GIT_BIN, "checkout", INTEGRATION_BRANCH]
-        assert calls[1].args[0] == [GIT_BIN, "branch", "-D", "task-issue-42"]
+        assert calls[1].args[0] == [GIT_BIN, "branch", "-D", "--", "task-issue-42"]
 
 
 class TestResetIssueStatus:
@@ -1113,7 +1113,8 @@ class TestCleanupGitBranchEdgeCases:
         with patch("subprocess.run", side_effect=sp.TimeoutExpired(cmd="git", timeout=30)):
             result = cleanup_git_branch(action, ctx)
 
-        assert result[0] is True
+        assert result[0] is False
+        assert "Failed to delete" in result[1]
 
     def test_filenotfounderror_does_not_raise(self, tmp_path):
         """FileNotFoundError (git not installed) should not raise."""
@@ -1129,7 +1130,8 @@ class TestCleanupGitBranchEdgeCases:
         with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
             result = cleanup_git_branch(action, ctx)
 
-        assert result[0] is True
+        assert result[0] is False
+        assert "Failed to delete" in result[1]
 
 
 class TestSyncSessionMode:
