@@ -647,7 +647,7 @@ def _build_app():
         """
         if not WEBUI_TOKEN:
             raise HTTPException(status_code=403, detail="Toggle is disabled: no auth token configured")
-        if not secrets.compare_digest(x_auth_token, WEBUI_TOKEN):
+        if not secrets.compare_digest(x_auth_token.encode("utf-8"), WEBUI_TOKEN.encode("utf-8")):
             raise HTTPException(status_code=401, detail="Invalid or missing auth token")
 
         cfg = _load_config(config)
@@ -706,7 +706,7 @@ def _build_app():
         """
         if not WEBUI_TOKEN:
             raise HTTPException(status_code=403, detail="Init is disabled: no auth token configured")
-        if not secrets.compare_digest(x_auth_token, WEBUI_TOKEN):
+        if not secrets.compare_digest(x_auth_token.encode("utf-8"), WEBUI_TOKEN.encode("utf-8")):
             raise HTTPException(status_code=401, detail="Invalid or missing auth token")
 
         cfg = _load_config(config)
