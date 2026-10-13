@@ -41,6 +41,7 @@ from cronpypeline.plugins.swe_plugin import (
     _find_issue_by_id,
     _find_previous_review_sha,
     _gh_api_get_all_pages,
+    _gh_api_get_all_pages_raise,
     _gh_api_get_list,
     _gh_api_patch,
     _gh_api_post,
@@ -1098,6 +1099,72 @@ class TestGhApiGetAllPages:
         assert params["labels"] == "bug"
         assert params["per_page"] == "100"
         assert params["page"] == "1"
+
+
+# ─── _gh_api_get_all_pages_raise ────────────────────────────────────────────
+
+
+class TestGhApiGetAllPagesRaise:
+    def test_aggregates_multiple_pages_with_per_page_100(self):
+        page1 = [{"id": i} for i in range(100)]
+        page2 = [{"id": i} for i in range(100, 150)]
+        mock_open = MagicMock()
+        mock_open.side_effect = [_mock_http_response(page1), _mock_http_response(page2)]
+        with patch(
+            "cronpypeline.plugins.swe_plugin._GH_OPENER.open", mock_open,
+        ):
+            result = _gh_api_get_all_pages_raise(
+                "owner", "repo", "pulls/7/reviews", "token")
+        assert result == page1 + page2
+        assert mock_open.call_count == 2
+        assert "per_page=100" in mock_open.call_args_list[0].args[0].full_url
+        assert "page=1" in mock_open.call_args_list[0].args[0].full_url
+        assert "page=2" in mock_open.call_args_list[1].args[0].full_url
+        assert "per_page=100" in mock_open.call_args_list[1].args[0].full_url
+
+    def test_stops_when_page_returns_fewer_than_100(self):
+        short_page = [{"id": i} for i in range(3)]
+        mock_open = MagicMock()
+        mock_open.side_effect = [_mock_http_response(short_page)]
+        with patch(
+            "cronpypeline.plugins.swe_plugin._GH_OPENER.open", mock_open,
+        ):
+            result = _gh_api_get_all_pages_raise(
+                "owner", "repo", "pulls/7/reviews", "token")
+        assert result == short_page
+        assert mock_open.call_count == 1
+
+    def test_stops_when_empty_list(self):
+        mock_open = MagicMock()
+        mock_open.side_effect = [_mock_http_response([])]
+        with patch(
+            "cronpypeline.plugins.swe_plugin._GH_OPENER.open", mock_open,
+        ):
+            result = _gh_api_get_all_pages_raise(
+                "owner", "repo", "pulls/7/reviews", "token")
+        assert result == []
+        assert mock_open.call_count == 1
+
+    def test_respects_max_pages_cap(self):
+        full_page = [{"id": i} for i in range(100)]
+        mock_open = MagicMock()
+        mock_open.side_effect = [_mock_http_response(full_page) for _ in range(10)]
+        with patch(
+            "cronpypeline.plugins.swe_plugin._GH_OPENER.open", mock_open,
+        ):
+            result = _gh_api_get_all_pages_raise(
+                "owner", "repo", "pulls/7/reviews", "token", max_pages=2)
+        assert len(result) == 200
+        assert mock_open.call_count == 2
+
+    def test_raises_on_http_error(self):
+        from urllib.error import URLError
+        with patch(
+            "cronpypeline.plugins.swe_plugin._GH_OPENER.open",
+            side_effect=URLError("fail"),
+        ), pytest.raises(URLError):
+            _gh_api_get_all_pages_raise(
+                "owner", "repo", "pulls/7/reviews", "token")
 
 
 # ─── _gh_api_post ───────────────────────────────────────────────────────────
@@ -6827,6 +6894,105 @@ class TestRunCPrStatusReviews:
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
         assert "Push failed" in result.stderr
+
+    def test_approved_after_changes_requested_wins(self, tmp_path, monkeypatch):
+        """Approval posted after a change-request is the latest terminal review."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7,
+            "pr_state": "changes_requested",
+            "last_review_id": 400,
+            "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 1,
+        }))
+        (target / ".SWE" / "issues" / "pr-revision-7-1.md").write_text("---\nstatus: done\n---\n# Done")
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([
+            {"id": 400, "state": "CHANGES_REQUESTED", "submitted_at": "2025-01-01T00:00:00Z", "body": "needs work"},
+            {"id": 500, "state": "APPROVED", "submitted_at": "2025-01-02T00:00:00Z", "body": "LGTM"},
+        ])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "approved"
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["pr_state"] == "approved"
+        assert pr_data["last_review_id"] == 500
+
+    def test_changes_requested_after_approved_wins(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([
+            {"id": 100, "state": "APPROVED", "submitted_at": "2025-01-01T00:00:00Z", "body": "LGTM"},
+            {"id": 200, "state": "CHANGES_REQUESTED", "submitted_at": "2025-01-02T00:00:00Z", "body": "## Change Requests\n\n1. Fix bug"},
+        ])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "changes_requested"
+
+    def test_terminal_tiebreak_equal_submitted_at_later_wins(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([
+            {"id": 1, "state": "CHANGES_REQUESTED", "submitted_at": "2025-01-01T00:00:00Z", "body": "needs work"},
+            {"id": 2, "state": "APPROVED", "submitted_at": "2025-01-01T00:00:00Z", "body": "LGTM"},
+        ])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "approved"
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["last_review_id"] == 2
+
+    def test_terminal_tiebreak_missing_submitted_at_later_wins(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([
+            {"id": 1, "state": "CHANGES_REQUESTED", "body": "needs work"},
+            {"id": 2, "state": "APPROVED", "body": "LGTM"},
+        ])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "approved"
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["last_review_id"] == 2
+
+    def test_commented_not_promoted_when_terminal_review_exists(self, tmp_path, monkeypatch):
+        """A COMMENTED review must not override an existing terminal review."""
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        (target / ".SWE" / "pr_reviewed.json").write_text(json.dumps({
+            "pr_number": 7,
+            "reviewed_at": "2026-09-11T20:00:00Z",
+            "verdict": "changes_requested",
+            "change_requests": ["Fix the ordering bug"],
+        }))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([
+            {"id": 500, "state": "APPROVED", "submitted_at": "2025-01-02T00:00:00Z", "body": "LGTM"},
+            {"id": 501, "state": "COMMENTED", "body": "Changes needed before merging."},
+        ])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "approved"
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["last_review_id"] == 500
 
 
 # ─── run_c_coverage_issue per-file gaps ─────────────────────────────────────
