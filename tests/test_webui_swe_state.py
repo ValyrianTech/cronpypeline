@@ -1,6 +1,7 @@
 """Tests for webui SWE plugin state helpers (_swe_state, _read_json, _swe_issue_counts)."""
 
 import importlib
+import inspect
 import json
 import os
 import sys
@@ -1715,6 +1716,27 @@ class TestBuildApp:
             handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="tökén")
         assert excinfo.value.status_code == 401
 
+    def test_toggle_legacy_token_query_param_ignored(self, tmp_path):
+        """Toggle must not accept the token via the legacy `token` query parameter."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "config_file": "toggle.json",
+            "stages": [],
+        })
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/toggle"]
+        params = inspect.signature(handler).parameters
+        assert "token" not in params
+        assert "x_auth_token" in params
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"):
+            with pytest.raises(TypeError):
+                handler(types.SimpleNamespace(enabled=True), config="swe.json", token="secret")
+
     def _write_init_config(self, configs_dir, workspace, name="swe.json", with_init=True):
         data = {
             "name": "swe",
@@ -1793,6 +1815,22 @@ class TestBuildApp:
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
             handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", x_auth_token="tökén")
         assert excinfo.value.status_code == 401
+
+    def test_init_legacy_token_query_param_ignored(self, tmp_path):
+        """Init must not accept the token via the legacy `token` query parameter."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace)
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/init"]
+        params = inspect.signature(handler).parameters
+        assert "token" not in params
+        assert "x_auth_token" in params
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"):
+            with pytest.raises(TypeError):
+                handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="secret")
 
     def test_init_no_init_action(self, tmp_path):
         """Init returns 409 when the config has no init action."""
