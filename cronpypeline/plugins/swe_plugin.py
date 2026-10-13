@@ -985,7 +985,11 @@ def _gh_api_get_all_pages(
 
     Follows pagination by requesting ``per_page=100`` and incrementing ``page``
     until the endpoint is exhausted (a page returns fewer than 100 items or an
-    empty/None chunk) or ``max_pages`` is reached.
+    empty chunk) or ``max_pages`` is reached.
+
+    Like :func:`_gh_api_get_all_pages_raise`, but swallows the underlying
+    ``HTTPError``/``URLError``/``OSError`` and returns ``[]`` instead of
+    raising, so a caller can treat a failed fetch as an empty result.
 
     :param owner: Repo owner.
     :param gh_repo: Repo name.
@@ -995,19 +999,14 @@ def _gh_api_get_all_pages(
     :param max_pages: Safety cap on the number of pages fetched.
     :returns: Aggregated list of dicts across all fetched pages.
     """
-    results: list[dict[str, Any]] = []
-    page = 1
-    while page <= max_pages:
-        p = dict(params or {})
-        p.update({"per_page": "100", "page": str(page)})
-        chunk = _gh_api_get_list(owner, gh_repo, endpoint, token, params=p)
-        if not chunk:
-            break
-        results.extend(chunk)
-        if len(chunk) < 100:
-            break
-        page += 1
-    return results
+    try:
+        return _gh_api_get_all_pages_raise(
+            owner, gh_repo, endpoint, token,
+            params=params, max_pages=max_pages,
+        )
+    except (HTTPError, URLError, OSError) as e:
+        _gh_log_failure("GET", endpoint, e)
+        return []
 
 
 def _gh_api_get_all_pages_raise(
