@@ -6970,6 +6970,23 @@ class TestRunCPrStatusReviews:
         pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
         assert pr_data["last_review_id"] == 2
 
+    def test_terminal_tiebreak_null_submitted_at_later_wins(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7, "pr_state": "open"}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([
+            {"id": 1, "state": "CHANGES_REQUESTED", "submitted_at": None, "body": "needs work"},
+            {"id": 2, "state": "APPROVED", "submitted_at": None, "body": "LGTM"},
+        ])
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "approved"
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["last_review_id"] == 2
+
     def test_commented_not_promoted_when_terminal_review_exists(self, tmp_path, monkeypatch):
         """A COMMENTED review must not override an existing terminal review."""
         target = _make_target_dir(tmp_path)
