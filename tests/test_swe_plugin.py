@@ -4404,7 +4404,7 @@ class TestCleanupGitBranch:
         assert success is True
         assert "swe-pipeline/task_branch" in msg
 
-    def test_refuses_unexpected_branch(self, tmp_path):
+    def test_refuses_branch_without_task_prefix(self, tmp_path):
         target = _make_target_dir(tmp_path)
         subprocess.run(["git", "init", "-b", INTEGRATION_BRANCH, str(target)], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
