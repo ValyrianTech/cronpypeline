@@ -524,7 +524,7 @@ def detect_agent_forgot_marker(context: dict[str, Any]) -> bool:
     return True
 
 
-TASK_BRANCH_PREFIX = "task-"
+TASK_BRANCH_PREFIX = "swe-pipeline/task_"
 
 
 def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
@@ -533,7 +533,8 @@ def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, 
     Runs ``git checkout integration && git branch -D {task_branch}``.
 
     The task branch is validated before any destructive command is run: it
-    must start with ``TASK_BRANCH_PREFIX`` and must not equal
+    must start with ``TASK_BRANCH_PREFIX`` (the canonical ``swe-pipeline/task_``
+    prefix produced by ``_task_branch_name``) and must not equal
     ``INTEGRATION_BRANCH``, preventing accidental force-deletion of unrelated
     branches (including option-like names that begin with ``-``).
 
@@ -542,7 +543,7 @@ def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, 
     :returns: Tuple of (success, message).
     """
     target_dir = context.target_dir
-    task_branch = action.params.get("task_branch", "task-branch")
+    task_branch = action.params.get("task_branch", f"{TASK_BRANCH_PREFIX}branch")
 
     if not task_branch.startswith(TASK_BRANCH_PREFIX) or task_branch == INTEGRATION_BRANCH:
         return False, f"Refusing to delete unexpected branch: {task_branch}"
