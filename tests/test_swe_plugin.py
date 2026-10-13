@@ -4419,12 +4419,14 @@ class TestCleanupGitBranch:
         assert "Refusing" in msg
 
     def test_refuses_integration_branch(self, tmp_path):
+        # INTEGRATION_BRANCH is refused because it lacks the task prefix, not
+        # because of a special-case comparison against INTEGRATION_BRANCH.
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target)
         action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": INTEGRATION_BRANCH})
         success, msg = cleanup_git_branch(action, ctx)
         assert success is False
-        assert "Refusing" in msg
+        assert msg == f"Refusing to delete unexpected branch: {INTEGRATION_BRANCH}"
 
     def test_refuses_option_like_branch(self, tmp_path):
         target = _make_target_dir(tmp_path)

@@ -534,9 +534,10 @@ def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, 
 
     The task branch is validated before any destructive command is run: it
     must start with ``TASK_BRANCH_PREFIX`` (the canonical ``swe-pipeline/task_``
-    prefix produced by ``_task_branch_name``) and must not equal
-    ``INTEGRATION_BRANCH``, preventing accidental force-deletion of unrelated
-    branches (including option-like names that begin with ``-``).
+    prefix produced by ``_task_branch_name``), which prevents accidental
+    force-deletion of unrelated branches — including ``INTEGRATION_BRANCH``
+    itself (which does not carry the task prefix) and option-like names that
+    begin with ``-``.
 
     :param action: Action spec with optional ``task_branch`` param.
     :param context: Tick context with target directory.
@@ -545,7 +546,7 @@ def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, 
     target_dir = context.target_dir
     task_branch = action.params.get("task_branch", f"{TASK_BRANCH_PREFIX}branch")
 
-    if not task_branch.startswith(TASK_BRANCH_PREFIX) or task_branch == INTEGRATION_BRANCH:
+    if not task_branch.startswith(TASK_BRANCH_PREFIX):
         return False, f"Refusing to delete unexpected branch: {task_branch}"
 
     try:
