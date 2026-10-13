@@ -4389,7 +4389,7 @@ class TestCleanupGitBranch:
         assert success is True
         assert "task-branch" in msg
 
-    def test_succeeds_even_without_branch(self, tmp_path):
+    def test_refuses_unexpected_branch(self, tmp_path):
         target = _make_target_dir(tmp_path)
         subprocess.run(["git", "init", "-b", INTEGRATION_BRANCH, str(target)], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
@@ -4399,8 +4399,74 @@ class TestCleanupGitBranch:
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         ctx = _make_tick_context(target)
         action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "nonexistent"})
-        success, _msg = cleanup_git_branch(action, ctx)
-        assert success is True
+        success, msg = cleanup_git_branch(action, ctx)
+        assert success is False
+        assert "Refusing" in msg
+
+    def test_refuses_integration_branch(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": INTEGRATION_BRANCH})
+        success, msg = cleanup_git_branch(action, ctx)
+        assert success is False
+        assert "Refusing" in msg
+
+    def test_refuses_option_like_branch(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "--all"})
+        success, msg = cleanup_git_branch(action, ctx)
+        assert success is False
+        assert "Refusing" in msg
+
+    def test_fails_with_stderr_when_branch_missing(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        subprocess.run(["git", "init", "-b", INTEGRATION_BRANCH, str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "task-missing"})
+        success, msg = cleanup_git_branch(action, ctx)
+        assert success is False
+        assert msg
+        assert "task-missing" in msg
+
+    def test_fails_when_delete_raises_file_not_found(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "task-branch"})
+        mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        def _mock_run(*args, **kwargs):
+            cmd = args[0] if args else []
+            if "branch" in cmd and "-D" in cmd:
+                raise FileNotFoundError("git")
+            return mock_proc
+
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_mock_run):
+            success, msg = cleanup_git_branch(action, ctx)
+        assert success is False
+        assert "Failed to delete" in msg
+
+    def test_fails_when_delete_raises_timeout(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target)
+        action = ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "task-branch"})
+        mock_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        def _mock_run(*args, **kwargs):
+            cmd = args[0] if args else []
+            if "branch" in cmd and "-D" in cmd:
+                raise subprocess.TimeoutExpired(cmd="git", timeout=30)
+            return mock_proc
+
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_mock_run):
+            success, msg = cleanup_git_branch(action, ctx)
+        assert success is False
+        assert "Failed to delete" in msg
 
 
 # ─── reset_issue_status ─────────────────────────────────────────────────────
@@ -5928,8 +5994,9 @@ class TestCleanupGitBranchTimeout:
         subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
         ctx = _make_tick_context(target)
         with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)):
-            success, _msg = cleanup_git_branch(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
-        assert success is True
+            success, msg = cleanup_git_branch(ActionSpec(type=ActionType.CUSTOM, params={"task_branch": "task-branch"}), ctx)
+        assert success is False
+        assert "Failed to delete" in msg
 
 
 class TestRunLintAutofixUnlinkOSError:
