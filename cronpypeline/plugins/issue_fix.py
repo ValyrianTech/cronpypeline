@@ -39,6 +39,7 @@ from cronpypeline.plugins.swe_plugin import (
     PHASE_A_GIT_AUTHOR_EMAIL,
     PHASE_A_GIT_AUTHOR_NAME,
     SWE_SUBDIR,
+    TASK_BRANCH_PREFIX,
     TASKS_DIR,
     _find_active_task,
     _git,
@@ -54,7 +55,6 @@ TASK_FILE = "task.json"
 DIFF_FILE = "diff.patch"
 FILES_CHANGED_FILE = "files_changed.json"
 
-TASK_BRANCH_PREFIX = "swe-pipeline/task_"
 GIT_AUTHOR_NAME = PHASE_A_GIT_AUTHOR_NAME
 GIT_AUTHOR_EMAIL = PHASE_A_GIT_AUTHOR_EMAIL
 

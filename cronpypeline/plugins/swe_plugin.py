@@ -524,28 +524,57 @@ def detect_agent_forgot_marker(context: dict[str, Any]) -> bool:
     return True
 
 
+TASK_BRANCH_PREFIX = "swe-pipeline/task_"
+
+
 def cleanup_git_branch(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
     """Clean up git branch after failure.
 
-    Runs ``git checkout integration && git branch -D {task_branch}``.
+    The task branch is validated before any destructive command is run: it
+    must start with ``TASK_BRANCH_PREFIX`` (the canonical ``swe-pipeline/task_``
+    prefix produced by ``_task_branch_name``). If it does not, the function
+    returns early with ``(False, "Refusing to delete unexpected branch: ...")``
+    and no git command is run at all. This check prevents accidental
+    force-deletion of unrelated branches — including ``INTEGRATION_BRANCH``
+    itself (which does not carry the task prefix) and option-like names that
+    begin with ``-``.
+
+    Otherwise it runs ``git checkout {INTEGRATION_BRANCH}`` (i.e.
+    ``git checkout swe-pipeline/integration``), ignoring ``TimeoutExpired`` and
+    ``FileNotFoundError``, then ``git branch -D -- {task_branch}`` — the ``--``
+    separator ensures a branch name that looks like an option is not treated as
+    a flag. If the delete command exits non-zero, it returns
+    ``(False, stderr-or-fallback-message)``; on success it returns
+    ``(True, "Cleaned up branch {task_branch}")``.
 
     :param action: Action spec with optional ``task_branch`` param.
     :param context: Tick context with target directory.
     :returns: Tuple of (success, message).
     """
     target_dir = context.target_dir
-    task_branch = action.params.get("task_branch", "task-branch")
+    task_branch = action.params.get("task_branch", f"{TASK_BRANCH_PREFIX}branch")
 
-    commands = [
-        [GIT_BIN, "checkout", INTEGRATION_BRANCH],
-        [GIT_BIN, "branch", "-D", task_branch],
-    ]
+    if not task_branch.startswith(TASK_BRANCH_PREFIX):
+        return False, f"Refusing to delete unexpected branch: {task_branch}"
 
-    for cmd in commands:
-        try:
-            subprocess.run(cmd, cwd=str(target_dir), capture_output=True, timeout=30, check=False)  # nosec B603 - commands are static lists passed without a shell
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
+    try:
+        subprocess.run(  # nosec B603 - commands are static lists passed without a shell
+            [GIT_BIN, "checkout", INTEGRATION_BRANCH],
+            cwd=str(target_dir), capture_output=True, timeout=30, check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    try:
+        result = subprocess.run(  # nosec B603 - commands are static lists passed without a shell
+            [GIT_BIN, "branch", "-D", "--", task_branch],
+            cwd=str(target_dir), capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False, f"Failed to delete branch {task_branch}"
+
+    if result.returncode != 0:
+        return False, result.stderr.strip() or f"Failed to delete branch {task_branch}"
 
     return True, f"Cleaned up branch {task_branch}"
 
