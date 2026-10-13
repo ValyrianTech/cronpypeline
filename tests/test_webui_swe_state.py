@@ -1733,9 +1733,8 @@ class TestBuildApp:
         params = inspect.signature(handler).parameters
         assert "token" not in params
         assert "x_auth_token" in params
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"):
-            with pytest.raises(TypeError):
-                handler(types.SimpleNamespace(enabled=True), config="swe.json", token="secret")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"), pytest.raises(TypeError):
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="secret")
 
     def _write_init_config(self, configs_dir, workspace, name="swe.json", with_init=True):
         data = {
@@ -1828,9 +1827,8 @@ class TestBuildApp:
         params = inspect.signature(handler).parameters
         assert "token" not in params
         assert "x_auth_token" in params
-        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"):
-            with pytest.raises(TypeError):
-                handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="secret")
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"), pytest.raises(TypeError):
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="secret")
 
     def test_init_no_init_action(self, tmp_path):
         """Init returns 409 when the config has no init action."""
