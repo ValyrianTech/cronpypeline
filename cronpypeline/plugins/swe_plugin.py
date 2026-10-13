@@ -2545,7 +2545,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     for rev in reviews:
         state = rev.get("state", "")
         if state in ("APPROVED", "CHANGES_REQUESTED"):
-            if latest_terminal is None or rev.get("submitted_at", "") >= latest_terminal.get("submitted_at", ""):
+            if latest_terminal is None or (rev.get("submitted_at") or "") >= (latest_terminal.get("submitted_at") or ""):
                 latest_terminal = rev
         elif state == "COMMENTED":
             latest_comment = rev
