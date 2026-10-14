@@ -870,3 +870,106 @@ class TestVnnCompositeHooks:
         }
         result = ActionResult(success=False, stderr="err")
         vnn_post_tick(context, result)
+
+
+class TestConversationQueueAgentPathTraversal:
+    """Tests for agent path traversal protection in ConversationQueueHandler."""
+
+    def _execute(self, tmp_path, agent, agent_settings_dir=None):
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir) if agent_settings_dir else None,
+        )
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": agent, "prompt": "hello"},
+        )
+        ctx = TickContext(target="t", workspace_dir=tmp_path, dry_run=False, retry_count=0)
+        result = handler.execute(action, ctx)
+        entry = json.loads(Path(result.data["queue_file"]).read_text())
+        return result, entry, queue_dir
+
+    def test_traversal_agent_does_not_read_outside_file(self, tmp_path):
+        """A traversal agent name must not read a JSON file outside the settings dir."""
+        settings_dir = tmp_path / "agent_settings"
+        settings_dir.mkdir()
+        secret = tmp_path / "secret.json"
+        secret.write_text(json.dumps({"secret_key": "leaked"}))
+
+        result, entry, queue_dir = self._execute(tmp_path, "../secret", settings_dir)
+
+        assert "secret_key" not in entry
+        assert "agent_config" not in entry
+        # Original (unsanitized) agent value is preserved for prompt/entry semantics.
+        assert entry["agent"] == "../secret"
+        # Queue file is written inside the queue directory.
+        assert Path(result.data["queue_file"]).parent == queue_dir
+
+    def test_dot_agent_falls_back_to_default(self, tmp_path):
+        """agent="." sanitizes to "." and must fall back to "default"."""
+        settings_dir = tmp_path / "agent_settings"
+        settings_dir.mkdir()
+        default_file = settings_dir / "default.json"
+        default_file.write_text(json.dumps({"model": "default_model"}))
+
+        result, entry, _ = self._execute(tmp_path, ".", settings_dir)
+
+        assert entry["agent"] == "."
+        assert entry.get("agent_config") == {"model": "default_model"}
+
+    def test_dotdot_agent_falls_back_to_default(self, tmp_path):
+        """agent=".." sanitizes to ".." and must fall back to "default"."""
+        settings_dir = tmp_path / "agent_settings"
+        settings_dir.mkdir()
+        default_file = settings_dir / "default.json"
+        default_file.write_text(json.dumps({"model": "default_model"}))
+
+        result, entry, _ = self._execute(tmp_path, "..", settings_dir)
+
+        assert entry["agent"] == ".."
+        assert entry.get("agent_config") == {"model": "default_model"}
+
+    def test_empty_agent_falls_back_to_default(self, tmp_path):
+        """agent="" sanitizes to "" and must fall back to "default"."""
+        settings_dir = tmp_path / "agent_settings"
+        settings_dir.mkdir()
+        default_file = settings_dir / "default.json"
+        default_file.write_text(json.dumps({"model": "default_model"}))
+
+        result, entry, _ = self._execute(tmp_path, "", settings_dir)
+
+        assert entry["agent"] == ""
+        assert entry.get("agent_config") == {"model": "default_model"}
+
+    def test_valid_agent_loads_its_own_settings(self, tmp_path):
+        """A valid agent name must load settings from <agent_settings_dir>/<agent>.json."""
+        settings_dir = tmp_path / "agent_settings"
+        settings_dir.mkdir()
+        (settings_dir / "WriterAgent.json").write_text(
+            json.dumps({"model": "writer_model", "temperature": 0.7})
+        )
+
+        result, entry, _ = self._execute(tmp_path, "WriterAgent", settings_dir)
+
+        assert entry["agent"] == "WriterAgent"
+        assert entry.get("agent_config") == {"model": "writer_model", "temperature": 0.7}
+
+    def test_traversal_agent_queue_file_inside_queue_dir(self, tmp_path):
+        """The queue file must always be written inside the queue directory."""
+        settings_dir = tmp_path / "agent_settings"
+        settings_dir.mkdir()
+
+        result, entry, queue_dir = self._execute(tmp_path, "../secret", settings_dir)
+
+        queue_file = Path(result.data["queue_file"])
+        assert queue_file.exists()
+        assert queue_file.parent == queue_dir
+
+    def test_slash_agent_is_sanitized_in_filename(self, tmp_path):
+        """A slash in the agent name must not appear in the queue filename."""
+        result, entry, _ = self._execute(tmp_path, "foo/bar")
+
+        queue_filename = result.data["entry_id"]
+        assert "/" not in queue_filename
+        assert queue_filename.startswith("foo_bar_")
