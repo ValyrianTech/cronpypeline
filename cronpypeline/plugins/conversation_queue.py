@@ -81,6 +81,9 @@ class ConversationQueueHandler(ActionHandler):
 
         params = action.params
         agent = params.get("agent", "default")
+        safe_agent = re.sub(r"[^A-Za-z0-9_.-]", "_", agent)
+        if safe_agent in ("", ".", ".."):
+            safe_agent = "default"
         prompt = params.get("prompt", "")
         prompt_template = params.get("prompt_template", "")
         reminder_prompt = params.get("reminder_prompt", "")
@@ -152,7 +155,7 @@ class ConversationQueueHandler(ActionHandler):
         # Load agent settings if configured. Malformed or unreadable settings
         # files fail open (skipped) rather than aborting the whole pipeline tick.
         if self.agent_settings_dir:
-            agent_config_path = self.agent_settings_dir / f"{agent}.json"
+            agent_config_path = self.agent_settings_dir / f"{safe_agent}.json"
             if agent_config_path.exists():
                 try:
                     agent_config = json.loads(
@@ -178,7 +181,6 @@ class ConversationQueueHandler(ActionHandler):
         # matching the format used by the original SWE pipeline runner.
         self.queue_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-        safe_agent = re.sub(r"[^A-Za-z0-9_.-]", "_", agent)
         queue_filename = f"{safe_agent}_{ts}.json"
         queue_file = (self.queue_dir / queue_filename).resolve()
         if not queue_file.is_relative_to(self.queue_dir.resolve()):
