@@ -1,6 +1,7 @@
 """Tests for webui SWE plugin state helpers (_swe_state, _read_json, _swe_issue_counts)."""
 
 import importlib
+import inspect
 import json
 import os
 import sys
@@ -932,6 +933,7 @@ class TestBuildApp:
         fastapi_module.FastAPI = MockFastAPI
         fastapi_module.HTTPException = MockHTTPException
         fastapi_module.Query = lambda default=None, **kw: default
+        fastapi_module.Header = lambda default=None, **kw: default
 
         responses_module = types.ModuleType("fastapi.responses")
         responses_module.FileResponse = mock.Mock()
@@ -1456,7 +1458,7 @@ class TestBuildApp:
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
                 mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="test-token")
         assert excinfo.value.status_code == 409
 
     def test_toggle_write_success(self, tmp_path):
@@ -1473,7 +1475,7 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
-            result = handler(types.SimpleNamespace(enabled=False), config="swe.json", token="test-token")
+            result = handler(types.SimpleNamespace(enabled=False), config="swe.json", x_auth_token="test-token")
         assert result["enabled"] is False
         assert (workspace / "toggle.json").exists()
         assert json.loads((workspace / "toggle.json").read_text())["enabled"] is False
@@ -1493,7 +1495,7 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
-            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="test-token")
         data = json.loads((workspace / "toggle.json").read_text())
         assert data["other"] == "keep"
         assert data["enabled"] is True
@@ -1513,7 +1515,7 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
-            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="test-token")
         data = json.loads((workspace / "toggle.json").read_text())
         assert data == {"enabled": True}
 
@@ -1534,7 +1536,7 @@ class TestBuildApp:
                 mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
                 mock.patch("pathlib.Path.write_text", side_effect=OSError("disk full")), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="test-token")
         assert excinfo.value.status_code == 500
 
     def test_toggle_rejects_path_outside_safe_dirs(self, tmp_path):
@@ -1555,7 +1557,7 @@ class TestBuildApp:
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
                 mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="test-token")
         assert excinfo.value.status_code == 400
 
     def test_toggle_real_world_config(self, tmp_path):
@@ -1574,7 +1576,7 @@ class TestBuildApp:
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
                 mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="test-token")
         assert excinfo.value.status_code == 400
 
     def test_toggle_real_repo_config_outside_safe_dirs(self, tmp_path):
@@ -1599,7 +1601,7 @@ class TestBuildApp:
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
                 mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(enabled=True), config="swe_pipeline.json", token="test-token")
+            handler(types.SimpleNamespace(enabled=True), config="swe_pipeline.json", x_auth_token="test-token")
         assert excinfo.value.status_code == 400
         assert excinfo.value.detail == "Toggle path is outside the workspace or configs directory"
 
@@ -1617,7 +1619,7 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
-            result = handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
+            result = handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="test-token")
         assert result["enabled"] is True
         assert (workspace / ".SWE" / "pipeline_config.json").exists()
         assert json.loads((workspace / ".SWE" / "pipeline_config.json").read_text())["enabled"] is True
@@ -1637,7 +1639,7 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
-            result = handler(types.SimpleNamespace(enabled=False), config="swe.json", token="test-token")
+            result = handler(types.SimpleNamespace(enabled=False), config="swe.json", x_auth_token="test-token")
         assert result["enabled"] is False
         assert (configs_dir / "toggle.json").exists()
         assert json.loads((configs_dir / "toggle.json").read_text())["enabled"] is False
@@ -1656,7 +1658,7 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
-            result = handler(types.SimpleNamespace(enabled=True), config="swe.json", token="test-token")
+            result = handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="test-token")
         assert result["enabled"] is True
         assert (workspace / "toggle.json").exists()
 
@@ -1675,7 +1677,7 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", ""), pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="")
         assert excinfo.value.status_code == 403
 
     def test_toggle_wrong_token(self, tmp_path):
@@ -1693,8 +1695,46 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/toggle"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"), pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="wrong")
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="wrong")
         assert excinfo.value.status_code == 401
+
+    def test_toggle_non_ascii_token_returns_401(self, tmp_path):
+        """Toggle returns 401 (not 500) for a non-ASCII token."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "config_file": "toggle.json",
+            "stages": [],
+        })
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/toggle"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"), pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", x_auth_token="tökén")
+        assert excinfo.value.status_code == 401
+
+    def test_toggle_legacy_token_query_param_ignored(self, tmp_path):
+        """Toggle must not accept the token via the legacy `token` query parameter."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_config(configs_dir, "swe.json", {
+            "name": "swe",
+            "workspace_dir": str(workspace),
+            "config_file": "toggle.json",
+            "stages": [],
+        })
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/toggle"]
+        params = inspect.signature(handler).parameters
+        assert "token" not in params
+        assert "x_auth_token" in params
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"), pytest.raises(TypeError):
+            handler(types.SimpleNamespace(enabled=True), config="swe.json", token="secret")
 
     def _write_init_config(self, configs_dir, workspace, name="swe.json", with_init=True):
         data = {
@@ -1742,7 +1782,7 @@ class TestBuildApp:
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
                 mock.patch.object(app, "WEBUI_TOKEN", ""), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="")
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", x_auth_token="")
         assert excinfo.value.status_code == 403
 
     def test_init_wrong_token(self, tmp_path):
@@ -1757,8 +1797,38 @@ class TestBuildApp:
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
                 mock.patch.object(app, "WEBUI_TOKEN", "secret"), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="wrong")
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", x_auth_token="wrong")
         assert excinfo.value.status_code == 401
+
+    def test_init_non_ascii_token_returns_401(self, tmp_path):
+        """Init returns 401 (not 500) for a non-ASCII token."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace)
+        built, fastapi_module, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/init"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
+                mock.patch.object(app, "WEBUI_TOKEN", "secret"), \
+                pytest.raises(fastapi_module.HTTPException) as excinfo:
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", x_auth_token="tökén")
+        assert excinfo.value.status_code == 401
+
+    def test_init_legacy_token_query_param_ignored(self, tmp_path):
+        """Init must not accept the token via the legacy `token` query parameter."""
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        self._write_init_config(configs_dir, workspace)
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["POST /api/init"]
+        params = inspect.signature(handler).parameters
+        assert "token" not in params
+        assert "x_auth_token" in params
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "secret"), pytest.raises(TypeError):
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="secret")
 
     def test_init_no_init_action(self, tmp_path):
         """Init returns 409 when the config has no init action."""
@@ -1772,7 +1842,7 @@ class TestBuildApp:
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
                 mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="test-token")
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", x_auth_token="test-token")
         assert excinfo.value.status_code == 409
 
     def test_init_runs_action(self, tmp_path):
@@ -1786,7 +1856,7 @@ class TestBuildApp:
         routes = self._get_routes(built)
         handler = routes["POST /api/init"]
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), mock.patch.object(app, "WEBUI_TOKEN", "test-token"):
-            result = handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="test-token")
+            result = handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", x_auth_token="test-token")
         assert result["status"] == "action_executed"
         assert "init-ran" in result["stdout"]
 
@@ -1802,7 +1872,7 @@ class TestBuildApp:
         with mock.patch.object(app, "CONFIGS_DIR", configs_dir), \
                 mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(force=False), config="swe.json", target="../escape", token="test-token")
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="../escape", x_auth_token="test-token")
         assert excinfo.value.status_code == 400
 
     def test_init_pipeline_construction_fails(self, tmp_path):
@@ -1822,7 +1892,7 @@ class TestBuildApp:
                 mock.patch.object(app, "WEBUI_TOKEN", "test-token"), \
                 mock.patch("cronpypeline.pipeline.Pipeline", boom), \
                 pytest.raises(fastapi_module.HTTPException) as excinfo:
-            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", token="test-token")
+            handler(types.SimpleNamespace(force=False), config="swe.json", target="repo1", x_auth_token="test-token")
         assert excinfo.value.status_code == 422
         assert "Failed to build pipeline" in excinfo.value.detail
 
@@ -1853,6 +1923,7 @@ class TestModuleAppFallback:
             sys.modules["fastapi"].FastAPI = _raise_runtime
             sys.modules["fastapi"].HTTPException = type("HTTPException", (Exception,), {})
             sys.modules["fastapi"].Query = lambda *a, **kw: None
+            sys.modules["fastapi"].Header = lambda *a, **kw: None
             sys.modules["fastapi.responses"].FileResponse = _raise_runtime
             sys.modules["fastapi.staticfiles"].StaticFiles = _raise_runtime
             sys.modules["pydantic"].BaseModel = type("BaseModel", (), {})

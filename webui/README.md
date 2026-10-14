@@ -87,11 +87,14 @@ The module can be imported even when the web stack is unavailable or broken — 
 - Stages without markers (custom plugin-managed stages) are shown with a dashed
   "stateless" node.
 - If a pipeline defines no `config_file`, the enable/disable toggle is hidden.
-- The toggle endpoint requires an auth token (configured via `--token` or the
-  `CRONPYPELINE_WEBUI_TOKEN` env var); it returns HTTP 403 if no token is
-  configured and HTTP 401 if an invalid or missing token is supplied. The
-  dashboard stores the token you type in `localStorage` and sends it with each
-  toggle request.
+- The toggle and init endpoints require an auth token (configured via `--token`
+  or the `CRONPYPELINE_WEBUI_TOKEN` env var); they return HTTP 403 if no token
+  is configured and HTTP 401 if an invalid or missing token is supplied. The
+  dashboard stores the token you type in `localStorage` and sends it in the
+  `X-Auth-Token` HTTP request header with each toggle/init request — never as a
+  URL query parameter — so the secret cannot leak into access logs, proxy logs,
+  browser history, or `Referer` headers. The token comparison uses
+  `secrets.compare_digest` to avoid timing side-channels.
 - The toggle endpoint only allows writing to `config_file` paths that resolve
   within the pipeline's `workspace_dir` or the configs directory. Configs whose
   `config_file` points outside these directories return HTTP 400 and need to be
