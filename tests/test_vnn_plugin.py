@@ -913,7 +913,7 @@ class TestConversationQueueAgentPathTraversal:
         default_file = settings_dir / "default.json"
         default_file.write_text(json.dumps({"model": "default_model"}))
 
-        result, entry, _ = self._execute(tmp_path, ".", settings_dir)
+        _result, entry, _ = self._execute(tmp_path, ".", settings_dir)
 
         assert entry["agent"] == "."
         assert entry.get("agent_config") == {"model": "default_model"}
@@ -925,7 +925,7 @@ class TestConversationQueueAgentPathTraversal:
         default_file = settings_dir / "default.json"
         default_file.write_text(json.dumps({"model": "default_model"}))
 
-        result, entry, _ = self._execute(tmp_path, "..", settings_dir)
+        _result, entry, _ = self._execute(tmp_path, "..", settings_dir)
 
         assert entry["agent"] == ".."
         assert entry.get("agent_config") == {"model": "default_model"}
@@ -937,7 +937,7 @@ class TestConversationQueueAgentPathTraversal:
         default_file = settings_dir / "default.json"
         default_file.write_text(json.dumps({"model": "default_model"}))
 
-        result, entry, _ = self._execute(tmp_path, "", settings_dir)
+        _result, entry, _ = self._execute(tmp_path, "", settings_dir)
 
         assert entry["agent"] == ""
         assert entry.get("agent_config") == {"model": "default_model"}
@@ -950,7 +950,7 @@ class TestConversationQueueAgentPathTraversal:
             json.dumps({"model": "writer_model", "temperature": 0.7})
         )
 
-        result, entry, _ = self._execute(tmp_path, "WriterAgent", settings_dir)
+        _result, entry, _ = self._execute(tmp_path, "WriterAgent", settings_dir)
 
         assert entry["agent"] == "WriterAgent"
         assert entry.get("agent_config") == {"model": "writer_model", "temperature": 0.7}
@@ -960,7 +960,7 @@ class TestConversationQueueAgentPathTraversal:
         settings_dir = tmp_path / "agent_settings"
         settings_dir.mkdir()
 
-        result, entry, queue_dir = self._execute(tmp_path, "../secret", settings_dir)
+        result, _entry, queue_dir = self._execute(tmp_path, "../secret", settings_dir)
 
         queue_file = Path(result.data["queue_file"])
         assert queue_file.exists()
@@ -968,7 +968,7 @@ class TestConversationQueueAgentPathTraversal:
 
     def test_slash_agent_is_sanitized_in_filename(self, tmp_path):
         """A slash in the agent name must not appear in the queue filename."""
-        result, entry, _ = self._execute(tmp_path, "foo/bar")
+        result, _entry, _ = self._execute(tmp_path, "foo/bar")
 
         queue_filename = result.data["entry_id"]
         assert "/" not in queue_filename
