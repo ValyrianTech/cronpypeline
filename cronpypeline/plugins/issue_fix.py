@@ -70,9 +70,12 @@ PIPELINE_EXCLUDES = (
     ".pytest_cache/",
     ".mypy_cache/",
     ".ruff_cache/",
+    ".venv/",
 )
 
 _TOOLING_ARTIFACT_PATTERNS = (".coverage",)
+
+_PIPELINE_ARTIFACT_DIRS = (f"{SWE_SUBDIR}/", ".venv/")
 
 
 # ─── Git helpers ─────────────────────────────────────────────────────────────
@@ -140,6 +143,41 @@ def _ensure_tooling_artifacts_untracked(repo_dir: Path, verbose: bool = False) -
             print(f"  [git] WARNING: could not untrack tooling artifacts: {exc.stderr or exc.stdout}")
 
 
+def _ensure_pipeline_artifacts_untracked(repo_dir: Path, verbose: bool = False) -> None:
+    """Untrack pipeline artifacts (``.SWE/``, ``.venv/``) that were committed.
+
+    ``_ensure_pipeline_excludes`` adds these paths to ``.git/info/exclude``, but
+    that only hides *untracked* files. When a repo's ``.gitignore`` does not
+    list them (unlike the pipeline's own repos), the artifacts can be committed
+    before the exclude exists. Tracked ``.SWE/`` files then make the working
+    tree look dirty every time the pipeline deletes a marker (blocking
+    :func:`ensure_integration_branch`), and tracked ``.venv/`` files leak the
+    pipeline's virtualenv into published PRs. Untrack them (keeping the files
+    on disk) so the tree stays clean.
+
+    :param repo_dir: Target repo directory.
+    :param verbose: If True, print progress.
+    """
+    try:
+        tracked = _git(repo_dir, "ls-files", "--", *_PIPELINE_ARTIFACT_DIRS, check=False).stdout.strip()
+    except subprocess.CalledProcessError:
+        return
+    if not tracked:
+        return
+    tracked_files = tracked.splitlines()
+    dirs = [d for d in _PIPELINE_ARTIFACT_DIRS if any(f.startswith(d) for f in tracked_files)]
+    if not dirs:
+        return
+    try:
+        _git(repo_dir, "rm", "-r", "--cached", "--", *dirs)
+        _git(repo_dir, "commit", "-m", "chore(swe): untrack pipeline artifacts", check=False)
+        if verbose:
+            print(f"  [git] untracked {len(tracked_files)} pipeline artifact(s) under {', '.join(dirs)}")
+    except subprocess.CalledProcessError as exc:
+        if verbose:
+            print(f"  [git] WARNING: could not untrack pipeline artifacts: {exc.stderr or exc.stdout}")
+
+
 def ensure_integration_branch(repo_dir: Path, default_branch: str,
                                verbose: bool = False) -> bool:
     """Create and/or check out the integration branch.
@@ -151,7 +189,8 @@ def ensure_integration_branch(repo_dir: Path, default_branch: str,
     :param repo_dir: Target repo directory.
     :param default_branch: Default branch name (e.g. 'main').
     :param verbose: If True, print progress.
-    :returns: True on success, False if not a git repo or working tree is dirty.
+    :returns: True on success, False if not a git repo or the tree has
+        uncommitted tracked changes.
     """
     try:
         _git(repo_dir, "rev-parse", "--git-dir")
@@ -162,12 +201,17 @@ def ensure_integration_branch(repo_dir: Path, default_branch: str,
 
     _ensure_pipeline_excludes(repo_dir, verbose=verbose)
     _ensure_tooling_artifacts_untracked(repo_dir, verbose=verbose)
+    _ensure_pipeline_artifacts_untracked(repo_dir, verbose=verbose)
 
-    dirty = _git(repo_dir, "status", "--porcelain").stdout.strip()
+    # Only *tracked* modifications block branch setup: ``git checkout`` never
+    # clobbers untracked files, and an agent can leave stray untracked files
+    # (e.g. vendored scratch assets) that would otherwise stall the pipeline
+    # forever. Untracked files are left in place.
+    dirty = _git(repo_dir, "status", "--porcelain", "--untracked-files=no").stdout.strip()
     if dirty:
         if verbose:
-            print(f"  [git] working tree at {repo_dir} is dirty; refusing to set up "
-                  f"the integration branch:\n{dirty}")
+            print(f"  [git] working tree at {repo_dir} has uncommitted changes; "
+                  f"refusing to set up the integration branch:\n{dirty}")
         return False
 
     existing = _git(repo_dir, "branch", "--list", INTEGRATION_BRANCH, check=False).stdout.strip()

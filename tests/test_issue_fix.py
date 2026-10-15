@@ -406,6 +406,16 @@ class TestEnsureIntegrationBranch:
         subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], capture_output=True, check=True)
         assert ensure_integration_branch(tmp_path, "main", verbose=True) is False
 
+    def test_untracked_files_do_not_block(self, tmp_path):
+        """A stray untracked file must not stall branch setup forever."""
+        _init_git(tmp_path)
+        (tmp_path / "scratch.js").write_text("x")
+        assert ensure_integration_branch(tmp_path, "main", verbose=True) is True
+        assert INTEGRATION_BRANCH in subprocess.run(
+            ["git", "-C", str(tmp_path), "branch", "--list"],
+            capture_output=True, text=True, check=False,
+        ).stdout
+
 
 class TestMergeIntoIntegration:
     def test_merges(self, tmp_path):
