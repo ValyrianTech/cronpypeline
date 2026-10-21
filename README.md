@@ -28,7 +28,7 @@
 - **Shell-safe command execution**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into commands are shell-quoted with `shlex.quote()`, and commands are executed via an argument list (`shell=False`) rather than a shell, preventing command injection. Template fields are restricted to simple `{name}` identifiers (attribute/item access is rejected, and nested replacement fields inside a format spec are also rejected by recursing into the format spec) to prevent secrets or object internals leaking into commands.
 - **HTTP requests**: Built-in `http_request` action handler with auth token resolution from config, env vars, or context.
 - **SWE pipeline plugins**: Issue store (YAML frontmatter), diagnostic report handlers with output parsers, prompt builders for fix/coder/review agents, GitHub session adapter.
-- **VNN pipeline plugins**: Story state sync, inconsistent state cleanup, global queue-empty gate, completed compilation checks, story discovery, rejection audit trail.
+- **VNN pipeline plugins**: Country-scoped article pipeline — ranking, compilation, research, writing, publishing and revision triggers, prompt builders, country-local `ranking.json` state helpers, global queue-empty gate and rejection audit trail.
 - **Crash-safe**: If a process is killed mid-tick, the next tick re-derives state from whatever markers were already written. State, marker, report, and session files are written atomically (temp file + fsync + atomic `os.replace` via `cronpypeline/io_utils.py`), so a crash mid-write cannot leave a partially-written or corrupt state file.
 - **Execution log**: Optional structured JSONL log (via the `log_file` config option) records every tick and stage evaluation — tick IDs, durations, stage results, and resolved action commands — with automatic rotation.
 - **Minimal dependencies**: Pure Python stdlib. No heavy framework. Python 3.10+.
@@ -907,26 +907,60 @@ The issue-fix plugin's prompt builders (`_build_coder_prompt`, `_build_coverage_
 
 **SWE pipeline config**: A full example config is available at `configs/swe_pipeline.json` with all SWE stages (A1–A9 diagnostics, fix agents, B1, C-select/gate/code/publish/pr-review/pr-status/session-terminal/stale) plus an `init` action (`run_repo_init`) for on-demand repo onboarding/reset.
 
-#### VNN pipeline plugin (`cronpypeline.plugins.vnn_plugin`)
+#### VNN pipeline plugins
 
-Custom hooks for the VNN pipeline:
+The VNN pipeline is **country-scoped**: every target is a country, and all of that country's state lives inside its own target directory.
 
-- `log_rejection` — post_tick hook: appends to `.VNN/rejection_log.json` (append-only audit trail with timestamps, reasons, rejection metadata)
-- `queue_empty_global` — pre_tick hook: returns `False` (skip tick) when conversation queue is not empty (global queue-empty gate)
-- `sync_story_states` — pre_tick hook: syncs `.VNN/ranking.json` with filesystem state (article, published, rejected markers)
-- `cleanup_inconsistent_state` — pre_tick hook: removes stale processing markers when completion marker also exists
-- `check_completed_compilations` — pre_tick hook: checks for `.compilation_complete` markers and updates compilation state
-- `cleanup_stale_compilation_markers` — pre_tick hook: removes compilation markers older than the configured timeout
-- `discover_stories` — pre_tick hook: scans workspace for story directories and writes a registry file
-- `vnn_pre_tick` — composite pre_tick hook: runs all VNN pre_tick hooks in sequence (queue empty gate, story discovery, state sync, cleanup, compilation checks). Returns `False` if any hook returns `False`.
-- `vnn_post_tick` — composite post_tick hook: runs all VNN post_tick hooks in sequence (rejection audit trail)
+```
+<country>/ranking.json              # ranked compiled stories + their state
+<country>/compiled_stories/         # story_<id>.json produced by the compiler
+<country>/stories/<story_id>/       # research.md, article.md, published.json, ...
+<country>/.active_story             # story currently being worked on
+<country>/compilation_metadata.json # written when a compilation finishes
+<country>/news_links/               # archived links waiting to be compiled
+```
+
+`ranking.json` is the authoritative record of the country's stories:
+
+```json
+{
+  "date": "20261021",
+  "country": "belgium",
+  "version": 1,
+  "last_updated": "2026-10-21T09:00:00+00:00",
+  "stories": [
+    {"rank": 1, "story_id": "story_ac03c622", "title_en": "...", "summary_en": "...",
+     "category": "...", "article_count": 3, "file_path": "...", "state": "pending"}
+  ]
+}
+```
+
+Story states: `pending` → `researching` → `writing` → `publishing` → `published`; `discarded` is terminal.
+
+**`cronpypeline.plugins.vnn_plugin`** — triggers, actions and hooks:
+
+- `detect_ranking_needed` — trigger: enough unranked compiled stories (`min_new_stories`, default 2)
+- `detect_compilation_needed` — trigger: enough archived links (`min_links`, default 10; recompilation needs `min_new_links`, default 5)
+- `detect_research_needed` / `detect_writing_needed` / `detect_publishing_needed` / `detect_revision_needed` — triggers: what the active story still needs
+- `claim_story` — action: writes `.active_story` and records the story's new state
+- `release_story` — action: clears `.active_story`
+- `validate_ranking_action` — action: validates the `ranking.json` the agent wrote
+- `sync_story_states` — action: reconciles `ranking.json` with the story directories (never rolls state back)
+- `queue_empty_global` — pre_tick hook: skips the tick while the conversation queue has entries (reads `queue_dir` from the pipeline's `action_handler`)
+- `cleanup_inconsistent_state` — pre_tick hook: resolves stories with both `article.md` and `rejected-article.md` by mtime
+- `log_rejection` — post_tick hook: appends to the active story's `rejection_log.json`
+- `vnn_pre_tick` / `vnn_post_tick` — composite hooks used by the config
+
+**`cronpypeline.plugins.vnn_prompts`** — prompt builders (`build_ranking_prompt`, `build_compile_prompt`, `build_research_prompt`, `build_writing_prompt`, `build_publishing_prompt`, `build_revision_prompt`) and the matching queue actions (`queue_ranking_agent`, `queue_compile_agent`, `queue_research_agent`, `queue_writing_agent`, `queue_publishing_agent`, `queue_revision_agent`).
+
+**`cronpypeline.plugins.vnn_ranking`** — country-local ranking state helpers (`load_ranking`, `ranking_stories`, `unranked_stories`, `load_active_story`, `write_active_story`, `set_story_state`, `derive_story_state`, `validate_ranking`, `today_utc`, ...).
 
 ```json
 "pre_tick": {"callable": "cronpypeline.plugins.vnn_plugin.vnn_pre_tick"},
 "post_tick": {"callable": "cronpypeline.plugins.vnn_plugin.vnn_post_tick"}
 ```
 
-**VNN pipeline config**: A full example config is available at `configs/vnn_pipeline.json` with all VNN story-level stages (research, writing, publishing, revision) in a detector chain that prioritizes revision before publishing, with composite hooks, target locking, registry-based targets, and Serendipity-compatible queue entries.
+**VNN pipeline config**: A full example config is available at `configs/vnn_pipeline.json` with all VNN country-level stages (ranking → compilation → research → writing → publishing → revision), composite hooks, target locking, registry-based country targets, and Serendipity-compatible queue entries. The pipeline date is always today (UTC).
 
 ## Package structure
 
@@ -952,7 +986,9 @@ cronpypeline/
     ├── swe_diagnostics.py     # SWE diagnostic report handler + output parsers
     ├── swe_prompts.py         # SWE prompt builders for fix/coder/review agents
     ├── initialize_repo.py     # Standalone repo clone + venv + Phase A tooling installer
-    └── vnn_plugin.py          # VNN pipeline hooks (rejection log, story sync, etc.)
+    ├── vnn_plugin.py          # VNN triggers, actions and hooks
+    ├── vnn_prompts.py         # VNN prompt builders + queue actions
+    └── vnn_ranking.py         # VNN country-local ranking state helpers
 configs/
 ├── swe_pipeline.json         # Full SWE pipeline example config
 └── vnn_pipeline.json         # Full VNN pipeline example config
@@ -973,13 +1009,15 @@ The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) 
 .venv/bin/python -m pytest tests/test_pipeline.py -v
 ```
 
-The test suite includes **1144 tests** covering:
+The test suite includes **2637 tests** covering:
 - Unit tests for each core class (config parsing, marker resolution, trigger evaluation, lock acquisition, action execution)
 - Integration tests using temp directories as workspaces, simulating multi-tick execution
 - Crash safety tests verifying state recovery from partial filesystem state
 - Plugin tests for conversation queue (Serendipity format, conversation ID continuation, runs_left decrement)
 - SWE plugin tests (issue store, diagnostic parsers, prompt builders, session adapter, pipeline config)
-- VNN plugin tests (rejection audit trail, queue-empty gate, story sync, state cleanup)
+- VNN plugin tests (triggers, claim/release story, ranking validation, state sync, queue gate, rejection audit trail)
+- VNN ranking tests (ranking.json schema, story states, active-story lock, validation)
+- VNN prompt tests (prompt builders, queue actions, queue settings resolution)
 - VNN config tests (stage ordering, markers, hooks, action handler, target lock)
 - E2E migration tests (multi-tick VNN flow, rejection/revision loop, give-up, queue entry format validation, SWE + VNN dry-run validation)
 

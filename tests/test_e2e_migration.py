@@ -16,6 +16,7 @@ from cronpypeline.actions import (
 )
 from cronpypeline.config import ActionSpec, ActionType, PipelineConfig
 from cronpypeline.pipeline import Pipeline, TickResultStatus
+from cronpypeline.plugins.vnn_ranking import write_ranking
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,342 +96,287 @@ class TestMockAgentHandlerUnit:
 # VNN multi-tick simulation
 # ---------------------------------------------------------------------------
 
-class TestVNNMultiTickSimulation:
-    """Simulate multi-tick execution of the VNN story-level pipeline.
+COUNTRY = "belgium"
+VNN_DATE = "20261021"
 
-    Flow: research → writing → publishing → (rejection) → revision → publishing
+
+def _vnn_stage(stage_id: str, agent: str, completion: str, timeout: int = 30, queue_callable: str | None = None) -> dict:
+    """Build a VNN stage config dict for the given stage."""
+    return {
+        "id": stage_id,
+        "name": stage_id.title(),
+        "trigger": {
+            "type": "custom",
+            "callable": f"cronpypeline.plugins.vnn_plugin.detect_{stage_id}_needed",
+        },
+        "action": {
+            "type": "custom",
+            "params": {
+                "callable": queue_callable or f"cronpypeline.plugins.vnn_prompts.queue_{stage_id}_agent",
+                "agent": agent,
+            },
+        },
+        "markers": {
+            "completion": {"type": "file", "name": completion},
+            "processing": {"type": "json", "name": ".processing", "content": {}},
+        },
+        "timeout_minutes": timeout,
+        "max_retries": 3,
+    }
+
+
+def _make_vnn_config(workspace: Path, queue_dir: Path) -> PipelineConfig:
+    """Build a country-scoped VNN pipeline config for testing."""
+    return PipelineConfig.from_dict({
+        "name": "vnn-e2e-test",
+        "workspace_dir": str(workspace),
+        "lock_file": str(workspace / ".VNN" / "pipeline.lock"),
+        "target_lock": True,
+        "post_tick": {"callable": "cronpypeline.plugins.vnn_plugin.vnn_post_tick"},
+        "targets": {"type": "static", "items": [COUNTRY]},
+        "action_handler": {
+            "type": "conversation_queue",
+            "params": {
+                "queue_dir": str(queue_dir),
+                "prompt_field": "content",
+                "default_fields": {
+                    "sender": "VNN_PIPELINE",
+                    "conversation_id": "",
+                    "folder_name": "VNN",
+                    "model_name": "default_model",
+                    "runs_left": 3,
+                },
+                "flatten_agent_settings": True,
+            },
+        },
+        "stages": [
+            _vnn_stage("ranking", "RankingAgent", "ranking.json"),
+            _vnn_stage("compilation", "NewsCompilerAgent", "compilation_metadata.json", timeout=60,
+                       queue_callable="cronpypeline.plugins.vnn_prompts.queue_compile_agent"),
+            _vnn_stage("research", "NewsResearchAgent", "research.md", timeout=60),
+            _vnn_stage("writing", "ArticleWriterAgent", "article.md"),
+            _vnn_stage("publishing", "ArticlePublisherAgent", "published.json"),
+            _vnn_stage("revision", "ArticleRevisionAgent", "article.md"),
+        ],
+    })
+
+
+def _write_ranking(country_dir: Path, stories: list[dict]) -> None:
+    """Write a country-local ranking.json."""
+    write_ranking(country_dir, {
+        "date": VNN_DATE,
+        "country": COUNTRY,
+        "version": 1,
+        "stories": stories,
+    })
+
+
+def _make_story(country_dir: Path, story_id: str, *artefacts: str) -> Path:
+    """Create a story directory with the given artefacts."""
+    path = country_dir / "stories" / story_id
+    path.mkdir(parents=True, exist_ok=True)
+    for name in artefacts:
+        (path / name).write_text("{}", encoding="utf-8")
+    return path
+
+
+def _write_compiled(country_dir: Path, story_id: str) -> None:
+    """Write a compiled story JSON file."""
+    directory = country_dir / "compiled_stories"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{story_id}.json").write_text(
+        json.dumps({"story_id": story_id, "title_en": story_id}), encoding="utf-8"
+    )
+
+
+class TestVNNMultiTickSimulation:
+    """Simulate multi-tick execution of the country-scoped VNN pipeline.
+
+    Flow: ranking → compilation → research → writing → publishing → revision.
     """
 
-    def _make_vnn_config(self, workspace: Path, queue_dir: Path) -> PipelineConfig:
-        """Build a VNN-like pipeline config for testing."""
-        return PipelineConfig.from_dict({
-            "name": "vnn-e2e-test",
+    def _setup(self, tmp_path: Path) -> tuple[Pipeline, Path, Path]:
+        """Create a workspace with one country target and a mock handler."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        country_dir = workspace / COUNTRY
+        country_dir.mkdir()
+        queue_dir = workspace / "queue"
+
+        pipeline = Pipeline(_make_vnn_config(workspace, queue_dir))
+        _make_mock_handler(pipeline, queue_dir)
+        return pipeline, country_dir, queue_dir
+
+    def test_ranking_fires_before_article_work(self, tmp_path):
+        """Two unranked compiled stories trigger the ranking stage first."""
+        pipeline, country_dir, _ = self._setup(tmp_path)
+        _write_compiled(country_dir, "story_1")
+        _write_compiled(country_dir, "story_2")
+
+        result = pipeline.tick(target=COUNTRY)
+
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert result.stage_id == "ranking"
+        assert (country_dir / ".processing").exists()
+
+    def test_compilation_fires_when_links_accumulate(self, tmp_path):
+        """Enough archived links trigger the compilation stage."""
+        pipeline, country_dir, _ = self._setup(tmp_path)
+        links = country_dir / "news_links"
+        links.mkdir()
+        for i in range(10):
+            (links / f"link{i}.json").write_text("{}", encoding="utf-8")
+
+        result = pipeline.tick(target=COUNTRY)
+
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+        assert result.stage_id == "compilation"
+
+    def test_full_research_to_publish_flow(self, tmp_path):
+        """research → writing → publishing → published, one stage per tick."""
+        pipeline, country_dir, _ = self._setup(tmp_path)
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+        story_dir = _make_story(country_dir, "story_1")
+
+        r1 = pipeline.tick(target=COUNTRY)
+        assert r1.status == TickResultStatus.ACTION_EXECUTED
+        assert r1.stage_id == "research"
+        assert (country_dir / ".processing").exists()
+
+        (story_dir / "research.md").write_text("# Research")
+        (country_dir / ".processing").unlink(missing_ok=True)
+
+        r2 = pipeline.tick(target=COUNTRY)
+        assert r2.status == TickResultStatus.ACTION_EXECUTED
+        assert r2.stage_id == "writing"
+
+        (story_dir / "article.md").write_text("# Article")
+        (country_dir / ".processing").unlink(missing_ok=True)
+
+        r3 = pipeline.tick(target=COUNTRY)
+        assert r3.status == TickResultStatus.ACTION_EXECUTED
+        assert r3.stage_id == "publishing"
+
+        (story_dir / "published.json").write_text(json.dumps({"url": "https://example.com"}))
+        (country_dir / ".processing").unlink(missing_ok=True)
+
+        r4 = pipeline.tick(target=COUNTRY)
+        assert r4.status == TickResultStatus.NO_WORK
+
+    def test_rejection_revision_loop(self, tmp_path):
+        """publishing → rejected → revision → publishing → published."""
+        pipeline, country_dir, _ = self._setup(tmp_path)
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "writing"}])
+        story_dir = _make_story(country_dir, "story_1", "research.md")
+
+        r1 = pipeline.tick(target=COUNTRY)
+        assert r1.stage_id == "writing"
+
+        (story_dir / "article.md").write_text("# Article v1")
+        (country_dir / ".processing").unlink(missing_ok=True)
+
+        r2 = pipeline.tick(target=COUNTRY)
+        assert r2.stage_id == "publishing"
+
+        (story_dir / "rejected-article.md").write_text("Rejected: needs improvement")
+        (story_dir / "article.md").unlink()
+        (story_dir / "revision-notes.md").write_text("Add more sources", encoding="utf-8")
+        (country_dir / ".processing").unlink(missing_ok=True)
+
+        r3 = pipeline.tick(target=COUNTRY)
+        assert r3.stage_id == "revision"
+        # The post_tick hook records the rejection in the audit trail.
+        log = json.loads((story_dir / "rejection_log.json").read_text())
+        assert len(log) == 1
+        assert log[0]["reason"] == "Add more sources"
+
+        (story_dir / "article.md").write_text("# Article v2")
+        (story_dir / "rejected-article.md").unlink()
+        (country_dir / ".processing").unlink(missing_ok=True)
+
+        r4 = pipeline.tick(target=COUNTRY)
+        assert r4.stage_id == "publishing"
+
+        (story_dir / "published.json").write_text(json.dumps({"url": "https://example.com"}))
+        (country_dir / ".processing").unlink(missing_ok=True)
+
+        r5 = pipeline.tick(target=COUNTRY)
+        assert r5.status == TickResultStatus.NO_WORK
+
+    def test_revision_gives_up_at_max_rejections(self, tmp_path):
+        """A story rejected max_rejections times is no longer revised."""
+        pipeline, country_dir, _ = self._setup(tmp_path)
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "writing"}])
+        story_dir = _make_story(country_dir, "story_1", "research.md", "rejected-article.md")
+        (story_dir / "rejection_log.json").write_text(
+            json.dumps([{"reason": str(i)} for i in range(5)]), encoding="utf-8"
+        )
+
+        result = pipeline.tick(target=COUNTRY)
+
+        assert result.status == TickResultStatus.NO_WORK
+
+    def test_queue_entry_format_is_serendipity_compatible(self, tmp_path):
+        """Queue entries keep the Serendipity-compatible field set."""
+        pipeline, country_dir, queue_dir = self._setup(tmp_path)
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+        _make_story(country_dir, "story_1")
+
+        result = pipeline.tick(target=COUNTRY)
+        assert result.status == TickResultStatus.ACTION_EXECUTED
+
+        queue_files = list(queue_dir.glob("*.json"))
+        assert len(queue_files) == 1
+        entry = json.loads(queue_files[0].read_text())
+
+        assert "content" in entry
+        assert "sender" in entry
+        assert "conversation_id" in entry
+        assert "folder_name" in entry
+        assert "model_name" in entry
+        assert "runs_left" in entry
+        assert "prompt" not in entry
+        assert entry["agent"] == "NewsResearchAgent"
+        assert "story_1" in entry["content"]
+
+    def test_pre_tick_gate_skips_when_queue_busy(self, tmp_path):
+        """The global queue gate blocks new work while the queue has entries."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        country_dir = workspace / COUNTRY
+        country_dir.mkdir()
+        queue_dir = workspace / "queue"
+        queue_dir.mkdir()
+        (queue_dir / "pending.json").write_text("{}", encoding="utf-8")
+
+        config = PipelineConfig.from_dict({
+            "name": "vnn-pre-tick-test",
             "workspace_dir": str(workspace),
             "lock_file": str(workspace / ".VNN" / "pipeline.lock"),
             "target_lock": True,
-            "targets": {
-                "type": "static",
-                "items": ["story-1"],
-            },
+            "targets": {"type": "static", "items": [COUNTRY]},
             "action_handler": {
                 "type": "conversation_queue",
                 "params": {
                     "queue_dir": str(queue_dir),
                     "prompt_field": "content",
-                    "default_fields": {
-                        "sender": "VNN_PIPELINE",
-                        "conversation_id": "",
-                        "folder_name": "VNN",
-                        "model_name": "default_model",
-                        "runs_left": 3,
-                    },
+                    "default_fields": {"sender": "VNN_PIPELINE", "conversation_id": ""},
                     "flatten_agent_settings": True,
                 },
             },
-            "stages": [
-                {
-                    "id": "revision",
-                    "name": "Revision",
-                    "trigger": {
-                        "type": "and",
-                        "conditions": [
-                            {"type": "file_exists", "path": "rejected-article.md"},
-                            {"type": "file_missing", "path": "article.md"},
-                            {"type": "file_missing", "path": ".processing"},
-                            {"type": "file_missing", "path": ".gave_up"},
-                        ],
-                    },
-                    "action": {
-                        "type": "queue_agent",
-                        "params": {
-                            "agent": "WriterAgent",
-                            "prompt_template": "Revise article for {target}",
-                            "reminder_prompt_template": "Finish revision for {target}",
-                        },
-                    },
-                    "markers": {
-                        "completion": {"type": "file", "name": "article.md"},
-                        "processing": {"type": "json", "name": ".processing", "content": {}},
-                        "rejection": {"type": "json", "name": ".rejection", "content": {}},
-                        "give_up": {"type": "file", "name": ".gave_up"},
-                    },
-                    "timeout_minutes": 30,
-                    "max_retries": 3,
-                    "max_rejections": 5,
-                    "invalidates": [
-                        {"type": "file", "name": "rejected-article.md"},
-                    ],
-                },
-                {
-                    "id": "publishing",
-                    "name": "Publishing",
-                    "trigger": {
-                        "type": "and",
-                        "conditions": [
-                            {"type": "file_exists", "path": "article.md"},
-                            {"type": "file_missing", "path": "published.json"},
-                            {"type": "file_missing", "path": ".processing"},
-                            {"type": "file_missing", "path": ".gave_up"},
-                        ],
-                    },
-                    "action": {
-                        "type": "queue_agent",
-                        "params": {
-                            "agent": "PublishAgent",
-                            "prompt_template": "Publish article for {target}",
-                            "reminder_prompt_template": "Finish publishing for {target}",
-                        },
-                    },
-                    "markers": {
-                        "completion": {"type": "json", "name": "published.json", "content": {}},
-                        "processing": {"type": "json", "name": ".processing", "content": {}},
-                        "rejection": {"type": "json", "name": ".rejection", "content": {}},
-                        "give_up": {"type": "file", "name": ".gave_up"},
-                    },
-                    "timeout_minutes": 30,
-                    "max_retries": 3,
-                    "max_rejections": 3,
-                    "invalidates": [
-                        {"type": "file", "name": "rejected-article.md"},
-                    ],
-                },
-                {
-                    "id": "writing",
-                    "name": "Writing",
-                    "trigger": {
-                        "type": "and",
-                        "conditions": [
-                            {"type": "file_exists", "path": "research.md"},
-                            {"type": "file_missing", "path": "article.md"},
-                            {"type": "file_missing", "path": ".processing"},
-                            {"type": "file_missing", "path": ".gave_up"},
-                        ],
-                    },
-                    "action": {
-                        "type": "queue_agent",
-                        "params": {
-                            "agent": "WriterAgent",
-                            "prompt_template": "Write article for {target}",
-                            "reminder_prompt_template": "Finish writing for {target}",
-                        },
-                    },
-                    "markers": {
-                        "completion": {"type": "file", "name": "article.md"},
-                        "processing": {"type": "json", "name": ".processing", "content": {}},
-                        "give_up": {"type": "file", "name": ".gave_up"},
-                    },
-                    "timeout_minutes": 30,
-                    "max_retries": 3,
-                    "invalidates": [
-                        {"type": "file", "name": "rejected-article.md"},
-                    ],
-                },
-                {
-                    "id": "research",
-                    "name": "Research",
-                    "trigger": {
-                        "type": "and",
-                        "conditions": [
-                            {"type": "file_missing", "path": "research.md"},
-                            {"type": "file_missing", "path": ".processing"},
-                            {"type": "file_missing", "path": ".gave_up"},
-                        ],
-                    },
-                    "action": {
-                        "type": "queue_agent",
-                        "params": {
-                            "agent": "ResearchAgent",
-                            "prompt_template": "Research story {target}",
-                            "reminder_prompt_template": "Finish research for {target}",
-                        },
-                    },
-                    "markers": {
-                        "completion": {"type": "file", "name": "research.md"},
-                        "processing": {"type": "json", "name": ".processing", "content": {}},
-                        "give_up": {"type": "file", "name": ".gave_up"},
-                    },
-                    "timeout_minutes": 60,
-                    "max_retries": 3,
-                },
-            ],
+            "pre_tick": {"callable": "cronpypeline.plugins.vnn_plugin.vnn_pre_tick"},
+            "stages": [_vnn_stage("research", "NewsResearchAgent", "research.md")],
         })
-
-    def test_full_research_to_publish_flow(self, tmp_path):
-        """Simulate: research → writing → publishing → published.
-
-        Each tick either queues an agent or detects a stale marker and re-queues.
-        We simulate agent completion by writing the completion marker and
-        removing the processing marker between ticks.
-        """
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        story_dir = workspace / "story-1"
-        story_dir.mkdir()
-        queue_dir = workspace / "queue"
-
-        config = self._make_vnn_config(workspace, queue_dir)
         pipeline = Pipeline(config)
         _make_mock_handler(pipeline, queue_dir)
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+        _make_story(country_dir, "story_1")
 
-        # Tick 1: research stage fires (research.md missing)
-        r1 = pipeline.tick(target="story-1")
-        assert r1.status == TickResultStatus.ACTION_EXECUTED
-        assert r1.stage_id == "research"
-        assert (story_dir / ".processing").exists()
+        result = pipeline.tick(target=COUNTRY)
 
-        # Simulate agent completing: write research.md, remove .processing
-        (story_dir / "research.md").write_text("# Research")
-        (story_dir / ".processing").unlink(missing_ok=True)
-
-        # Tick 2: writing stage fires (research.md exists, article.md missing)
-        r2 = pipeline.tick(target="story-1")
-        assert r2.status == TickResultStatus.ACTION_EXECUTED
-        assert r2.stage_id == "writing"
-        assert (story_dir / ".processing").exists()
-
-        # Simulate agent completing
-        (story_dir / "article.md").write_text("# Article")
-        (story_dir / ".processing").unlink(missing_ok=True)
-
-        # Tick 3: publishing stage fires (article.md exists, published.json missing)
-        r3 = pipeline.tick(target="story-1")
-        assert r3.status == TickResultStatus.ACTION_EXECUTED
-        assert r3.stage_id == "publishing"
-
-        # Simulate agent completing
-        (story_dir / "published.json").write_text(json.dumps({"url": "https://example.com"}))
-        (story_dir / ".processing").unlink(missing_ok=True)
-
-        # Tick 4: no work — all stages complete
-        r4 = pipeline.tick(target="story-1")
-        assert r4.status == TickResultStatus.NO_WORK
-
-    def test_rejection_revision_loop(self, tmp_path):
-        """Simulate: writing → publishing → rejected → revision → publishing → published.
-
-        Verifies the rejection/revision loop works: publishing creates
-        rejected-article.md, revision stage fires first (earlier in chain),
-        produces new article.md, publishing re-fires.
-        """
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        story_dir = workspace / "story-1"
-        story_dir.mkdir()
-        queue_dir = workspace / "queue"
-
-        config = self._make_vnn_config(workspace, queue_dir)
-        pipeline = Pipeline(config)
-        _make_mock_handler(pipeline, queue_dir)
-
-        # Pre-seed: research already done
-        (story_dir / "research.md").write_text("# Research")
-
-        # Tick 1: writing fires
-        r1 = pipeline.tick(target="story-1")
-        assert r1.status == TickResultStatus.ACTION_EXECUTED
-        assert r1.stage_id == "writing"
-
-        # Simulate agent completing
-        (story_dir / "article.md").write_text("# Article v1")
-        (story_dir / ".processing").unlink(missing_ok=True)
-
-        # Tick 2: publishing fires
-        r2 = pipeline.tick(target="story-1")
-        assert r2.status == TickResultStatus.ACTION_EXECUTED
-        assert r2.stage_id == "publishing"
-
-        # Simulate rejection: publishing agent creates rejected-article.md
-        # and removes article.md (rejection)
-        (story_dir / "rejected-article.md").write_text("Rejected: needs improvement")
-        (story_dir / "article.md").unlink()
-        (story_dir / ".processing").unlink(missing_ok=True)
-
-        # Write rejection marker
-        (story_dir / ".rejection").write_text(json.dumps({"rejection_count": 1}))
-
-        # Tick 3: revision stage fires (rejected-article.md exists, article.md missing)
-        # revision is earlier in the detector chain than publishing
-        r3 = pipeline.tick(target="story-1")
-        assert r3.status == TickResultStatus.ACTION_EXECUTED
-        assert r3.stage_id == "revision"
-
-        # Simulate agent completing: new article.md written,
-        # rejected-article.md invalidated by revision stage
-        (story_dir / "article.md").write_text("# Article v2")
-        (story_dir / ".processing").unlink(missing_ok=True)
-        # revision stage invalidates rejected-article.md
-        assert not (story_dir / "rejected-article.md").exists()
-
-        # Tick 4: publishing fires again (article.md exists, published.json missing)
-        r4 = pipeline.tick(target="story-1")
-        assert r4.status == TickResultStatus.ACTION_EXECUTED
-        assert r4.stage_id == "publishing"
-
-        # Simulate agent completing: published
-        (story_dir / "published.json").write_text(json.dumps({"url": "https://example.com"}))
-        (story_dir / ".processing").unlink(missing_ok=True)
-        # The publishing agent completed successfully, so it clears the rejection
-        # marker (rejection tracking resets once the work is actually completed).
-        (story_dir / ".rejection").unlink()
-
-        # Tick 5: no work
-        r5 = pipeline.tick(target="story-1")
-        assert r5.status == TickResultStatus.NO_WORK
-
-    def test_give_up_after_max_rejections(self, tmp_path):
-        """Verify that after max_rejections, a give_up marker is written."""
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        story_dir = workspace / "story-1"
-        story_dir.mkdir()
-        queue_dir = workspace / "queue"
-
-        config = self._make_vnn_config(workspace, queue_dir)
-        pipeline = Pipeline(config)
-        _make_mock_handler(pipeline, queue_dir)
-
-        # Pre-seed: research and article done
-        (story_dir / "research.md").write_text("# Research")
-        (story_dir / "article.md").write_text("# Article")
-
-        # Set rejection count to max (publishing has max_rejections=3)
-        (story_dir / ".rejection").write_text(json.dumps({"rejection_count": 3}))
-
-        # Tick: publishing stage should detect rejection >= max and give up
-        r = pipeline.tick(target="story-1")
-        assert r.status == TickResultStatus.GAVE_UP
-        assert (story_dir / ".gave_up").exists()
-
-    def test_queue_entry_format_is_serendipity_compatible(self, tmp_path):
-        """Verify that queue entries produced by ConversationQueueHandler
-        have the Serendipity-compatible format (content, sender, etc.)."""
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        story_dir = workspace / "story-1"
-        story_dir.mkdir()
-        queue_dir = workspace / "queue"
-
-        config = self._make_vnn_config(workspace, queue_dir)
-        pipeline = Pipeline(config)
-        _make_mock_handler(pipeline, queue_dir)
-
-        # Tick: research stage queues an agent
-        r = pipeline.tick(target="story-1")
-        assert r.status == TickResultStatus.ACTION_EXECUTED
-
-        # Check the queue entry format
-        queue_files = list(queue_dir.glob("*.json"))
-        assert len(queue_files) == 1
-        entry = json.loads(queue_files[0].read_text())
-
-        # Serendipity-compatible fields
-        assert "content" in entry, "Queue entry should have 'content' field"
-        assert "sender" in entry, "Queue entry should have 'sender' field"
-        assert "conversation_id" in entry, "Queue entry should have 'conversation_id' field"
-        assert "folder_name" in entry, "Queue entry should have 'folder_name' field"
-        assert "model_name" in entry, "Queue entry should have 'model_name' field"
-        assert "runs_left" in entry, "Queue entry should have 'runs_left' field"
-        assert "prompt" not in entry, "Queue entry should NOT have 'prompt' field"
+        assert result.status == TickResultStatus.NO_WORK
+        assert "pre_tick" in result.message
+        assert len(list(queue_dir.glob("*.json"))) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +459,7 @@ class TestVNNDryRunValidation:
             **raw,
             "workspace_dir": str(tmp_path),
             "lock_file": str(tmp_path / ".VNN" / "pipeline.lock"),
-            "targets": {"type": "static", "items": ["story-1"]},
+            "targets": {"type": "static", "items": [COUNTRY]},
             "action_handler": {
                 "type": "conversation_queue",
                 "params": {
@@ -531,14 +477,19 @@ class TestVNNDryRunValidation:
             },
         })
 
-        (tmp_path / "story-1").mkdir()
+        country_dir = tmp_path / COUNTRY
+        country_dir.mkdir()
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+        _make_story(country_dir, "story_1")
+
         pipeline = Pipeline(config)
         _make_mock_handler(pipeline, tmp_path / "queue")
 
         # Dry run should not create any files
-        r = pipeline.tick(target="story-1", dry_run=True)
+        r = pipeline.tick(target=COUNTRY, dry_run=True)
         assert r.status == TickResultStatus.DRY_RUN
-        assert not (tmp_path / "story-1" / ".processing").exists()
+        assert not (country_dir / ".processing").exists()
+        assert not (tmp_path / "queue").exists()
 
     def test_vnn_config_all_stages_have_valid_triggers(self):
         """Verify all VNN stages have well-formed trigger configs."""
@@ -548,12 +499,12 @@ class TestVNNDryRunValidation:
             assert stage.trigger.type is not None, f"Stage {stage.id} trigger has no type"
 
     def test_vnn_config_detector_chain_order(self):
-        """Verify the detector chain order: revision → publishing → writing → research.
+        """Verify the detector chain order.
 
-        This order ensures rejected articles are revised before re-publishing,
-        and writing only fires after research is done.
+        Ranking and compilation run first (they produce the stories the article
+        stages consume), then research → writing → publishing → revision.
         """
         config = PipelineConfig.from_file(self.CONFIG_PATH)
         ids = [s.id for s in config.stages]
-        assert ids == ["revision", "publishing", "writing", "research"], \
-            f"Stage order should be revision→publishing→writing→research, got {ids}"
+        assert ids == ["ranking", "compilation", "research", "writing", "publishing", "revision"], \
+            f"Unexpected stage order: {ids}"

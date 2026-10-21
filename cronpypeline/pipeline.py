@@ -614,6 +614,7 @@ class Pipeline:
             "target_config": target_config,
             "stage_id": None,
             "mode_file": str(self.mode_file) if self.mode_file else None,
+            "queue_dir": self._configured_queue_dir(),
         }
 
         # Pre-tick hook
@@ -656,6 +657,24 @@ class Pipeline:
             return data.get("mode")
         except (json.JSONDecodeError, OSError):
             return None
+
+    def _configured_queue_dir(self) -> str | None:
+        """Return the queue directory configured for the action handler.
+
+        Hooks (e.g. a global queue-empty gate) need to know which queue the
+        stages write to. The value is read from the pipeline's
+        ``action_handler`` config so it always matches the handler the stages
+        actually use.
+
+        :returns: The configured queue directory, or None when unset.
+        """
+        handler_config = self.config.action_handler
+        if handler_config is None:
+            return None
+        queue_dir = handler_config.params.get("queue_dir")
+        if not queue_dir:
+            return None
+        return str(queue_dir)
 
     def _tick_single_inner(
         self,
