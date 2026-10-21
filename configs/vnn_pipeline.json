@@ -2,6 +2,7 @@
   "name": "vnn-pipeline",
   "workspace_dir": "/spellbook_data/Serendipity/vnn/workspace",
   "lock_file": ".VNN/pipeline.lock",
+  "log_file": ".VNN/execution_log.jsonl",
   "target_lock": true,
   "pre_tick": {
     "callable": "cronpypeline.plugins.vnn_plugin.vnn_pre_tick"
