@@ -25,6 +25,7 @@ from cronpypeline.config import PipelineConfig
 from cronpypeline.state import PipelineState
 from cronpypeline.targets import load_targets_with_config
 from cronpypeline.template_safety import matches_credential_key
+from cronpypeline.triggers import resolve_custom_callable
 
 HERE = Path(__file__).resolve().parent
 CONFIGS_DIR = Path(os.environ.get("CRONPYPELINE_CONFIGS_DIR", HERE.parent / "configs")).resolve()
@@ -548,8 +549,19 @@ def _build_app():
         target_configs = {t.name: t.config for t in target_objs}
 
         state = PipelineState(workspace_dir=workspace, stages=stages, target_lock=cfg.target_lock)
+        # Marker paths may use plugin-supplied template variables (e.g. the id
+        # of the record a pipeline is currently working on). Resolve the
+        # configured hook so the dashboard derives state exactly like a tick.
+        marker_context_hook = None
+        if cfg.marker_context is not None:
+            marker_context_hook = resolve_custom_callable(cfg.marker_context.callable)
         # The dashboard is read-only and must not mutate processing markers.
-        state.derive(target_names, target_configs=target_configs, cleanup_orphans=False)
+        state.derive(
+            target_names,
+            target_configs=target_configs,
+            cleanup_orphans=False,
+            marker_context_hook=marker_context_hook,
+        )
 
         result: dict[str, Any] = {}
         n_processing = n_stale = n_given_up = n_complete = n_total = 0

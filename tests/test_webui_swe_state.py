@@ -1208,6 +1208,45 @@ class TestBuildApp:
         assert stage_state["complete"] is False
         assert result["summary"]["tracked_stages"] == 1
 
+    def test_pipeline_status_resolves_marker_context_hook(self, tmp_path):
+        """Templated marker directories must not raise KeyError on /api/status.
+
+        The dashboard derives state directly (not through Pipeline), so it has
+        to resolve the configured marker_context hook itself. Without it a
+        marker directory such as ``stories/{active_story}`` fails to format.
+        """
+        configs_dir = tmp_path / "configs"
+        workspace = tmp_path / "workspace"
+        country = workspace / "belgium"
+        (country / "stories" / "story_1").mkdir(parents=True)
+        (country / "stories" / "story_1" / "research.md").write_text("x")
+        (country / ".active_story").write_text(json.dumps({"story_id": "story_1"}))
+
+        self._write_config(configs_dir, "vnn.json", {
+            "name": "vnn",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["belgium"]},
+            "marker_context": {"callable": "cronpypeline.plugins.vnn_plugin.vnn_marker_context"},
+            "stages": [
+                {"id": "research", "name": "Research",
+                 "trigger": {"type": "file_missing", "path": "never.md"},
+                 "action": {"type": "command", "params": {"command": "echo r"}},
+                 "markers": {"completion": {
+                     "type": "file", "name": "research.md",
+                     "directory": "stories/{active_story}",
+                 }}},
+            ],
+        })
+
+        built, *_ = self._build_app()
+        routes = self._get_routes(built)
+        handler = routes["GET /api/status"]
+        with mock.patch.object(app, "CONFIGS_DIR", configs_dir):
+            result = handler(config="vnn.json")
+
+        assert result["error"] is None
+        assert result["targets"]["belgium"]["stages"]["research"]["complete"] is True
+
     def test_pipeline_status_processing_countdown(self, tmp_path):
         """Processing stage should expose countdown fields on /api/status."""
         configs_dir = tmp_path / "configs"
