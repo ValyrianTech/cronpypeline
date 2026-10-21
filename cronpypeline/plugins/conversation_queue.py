@@ -69,6 +69,27 @@ class ConversationQueueHandler(ActionHandler):
         self.default_fields = dict(default_fields) if default_fields else {}
         self.flatten_agent_settings = flatten_agent_settings
 
+    def _agent_settings_path(self, safe_agent: str) -> Path | None:
+        """Resolve the settings file for an agent.
+
+        Supports both layouts:
+
+        - flat: ``<agent_settings_dir>/<Agent>.json``
+        - nested: ``<agent_settings_dir>/<Agent>/settings.json`` (Serendipity)
+
+        :param safe_agent: Sanitized agent name.
+        :returns: Path to the settings file, or None when neither layout exists.
+        """
+        if self.agent_settings_dir is None:
+            return None
+        flat = self.agent_settings_dir / f"{safe_agent}.json"
+        if flat.exists():
+            return flat
+        nested = self.agent_settings_dir / safe_agent / "settings.json"
+        if nested.exists():
+            return nested
+        return None
+
     def execute(self, action: ActionSpec, context: TickContext) -> ActionResult:
         """Execute the queue action: build a prompt and write a JSON entry.
 
@@ -155,8 +176,8 @@ class ConversationQueueHandler(ActionHandler):
         # Load agent settings if configured. Malformed or unreadable settings
         # files fail open (skipped) rather than aborting the whole pipeline tick.
         if self.agent_settings_dir:
-            agent_config_path = self.agent_settings_dir / f"{safe_agent}.json"
-            if agent_config_path.exists():
+            agent_config_path = self._agent_settings_path(safe_agent)
+            if agent_config_path is not None:
                 try:
                     agent_config = json.loads(
                         agent_config_path.read_text(encoding="utf-8")

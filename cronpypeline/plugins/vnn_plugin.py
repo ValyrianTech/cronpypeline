@@ -65,7 +65,7 @@ REVISION_NOTES_MARKER = "revision-notes.md"
 
 DEFAULT_MIN_LINKS = 10
 DEFAULT_MIN_NEW_LINKS = 5
-DEFAULT_MIN_NEW_STORIES = 2
+DEFAULT_MIN_NEW_STORIES = 1
 DEFAULT_MAX_REJECTIONS = 5
 
 #: Story states that still need article work.

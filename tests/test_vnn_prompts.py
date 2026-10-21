@@ -102,7 +102,7 @@ def _queued_entry(queue_dir: Path) -> dict:
 
 
 class TestBuildRankingPrompt:
-    def test_lists_stories_and_schema(self):
+    def test_lists_stories_and_save_script(self):
         prompt = build_ranking_prompt(
             COUNTRY, DATE,
             [{"story_id": "story_1", "title_en": "One", "category": "politics",
@@ -112,8 +112,17 @@ class TestBuildRankingPrompt:
         assert DATE in prompt
         assert "story_1" in prompt
         assert "One" in prompt
-        assert "ranking.json" in prompt
-        assert '"state": "pending"' in prompt
+        assert "save_ranking.py" in prompt
+        assert f'--country "{COUNTRY}"' in prompt
+
+    def test_does_not_ask_agent_to_write_ranking_json(self):
+        """The agent must go through save_ranking.py, not hand-write the file."""
+        prompt = build_ranking_prompt(
+            COUNTRY, DATE, [{"story_id": "story_1", "title_en": "One"}]
+        )
+        assert '"state": "pending"' not in prompt
+        assert "as JSON with exactly this shape" not in prompt
+        assert f"Do not write `{COUNTRY}/ranking.json` yourself" in prompt
 
     def test_includes_already_ranked_stories(self):
         prompt = build_ranking_prompt(
@@ -140,6 +149,13 @@ class TestBuildCompilePrompt:
         assert DATE in prompt
         assert "12 archived links" in prompt
         assert "compilation_metadata.json" in prompt
+
+    def test_uses_current_load_articles_cli(self):
+        """The prompt must not reference the removed --date/--exclude-compiled flags."""
+        prompt = build_compile_prompt(COUNTRY, DATE, 12)
+        assert f'load_articles.py --country "{COUNTRY}"' in prompt
+        assert "--exclude-compiled" not in prompt
+        assert "load_articles.py --date" not in prompt
 
     def test_extra_instructions(self):
         assert "Extra" in build_compile_prompt(COUNTRY, DATE, 1, extra_instructions="Extra")
@@ -248,6 +264,54 @@ class TestQueueStoryAgents:
         )
         assert result.dry_run is True
         assert not queue_dir.exists()
+
+
+class TestStorySetup:
+    """The research stage must materialise the story before queueing an agent."""
+
+    def test_creates_story_dir_and_copies_story_json(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+        _write_compiled(country_dir, "story_1", title_en="One")
+
+        result = queue_research_agent(_action(agent="NewsResearchAgent"), _tick_context(tmp_path, queue_dir))
+
+        assert result.success is True
+        story_path = country_dir / "stories" / "story_1"
+        assert story_path.is_dir()
+        copied = json.loads((story_path / "story.json").read_text(encoding="utf-8"))
+        assert copied["title_en"] == "One"
+
+    def test_claims_active_story_lock(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+        _write_compiled(country_dir, "story_1", title_en="One")
+
+        queue_research_agent(_action(agent="NewsResearchAgent"), _tick_context(tmp_path, queue_dir))
+
+        lock = json.loads((country_dir / ".active_story").read_text(encoding="utf-8"))
+        assert lock["story_id"] == "story_1"
+        assert lock["stage"] == "research"
+
+    def test_lock_is_reused_on_later_ticks(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _write_ranking(country_dir, [
+            {"rank": 1, "story_id": "story_1", "state": "pending"},
+            {"rank": 2, "story_id": "story_2", "state": "pending"},
+        ])
+        _write_compiled(country_dir, "story_1", title_en="One")
+        _write_compiled(country_dir, "story_2", title_en="Two")
+
+        ctx = _tick_context(tmp_path, queue_dir)
+        queue_research_agent(_action(agent="NewsResearchAgent"), ctx)
+        queue_research_agent(_action(agent="NewsResearchAgent"), ctx)
+
+        lock = json.loads((country_dir / ".active_story").read_text(encoding="utf-8"))
+        assert lock["story_id"] == "story_1"
+        assert not (country_dir / "stories" / "story_2").exists()
 
 
 class TestQueueHandlerConfig:

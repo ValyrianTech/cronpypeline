@@ -939,7 +939,7 @@ Story states: `pending` → `researching` → `writing` → `publishing` → `pu
 
 **`cronpypeline.plugins.vnn_plugin`** — triggers, actions and hooks:
 
-- `detect_ranking_needed` — trigger: enough unranked compiled stories (`min_new_stories`, default 2)
+- `detect_ranking_needed` — trigger: enough unranked compiled stories (`min_new_stories`, default 1)
 - `detect_compilation_needed` — trigger: enough archived links (`min_links`, default 10; recompilation needs `min_new_links`, default 5)
 - `detect_research_needed` / `detect_writing_needed` / `detect_publishing_needed` / `detect_revision_needed` — triggers: what the active story still needs
 - `claim_story` — action: writes `.active_story` and records the story's new state

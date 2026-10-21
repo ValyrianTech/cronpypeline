@@ -14,15 +14,18 @@ Provides:
   custom actions that build the matching prompt and queue it.
 """
 
+import shutil
 from pathlib import Path
 from typing import Any
 
 from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.config import ActionSpec
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
+from cronpypeline.plugins.vnn_plugin import NEWS_LINKS_SUBDIR, _compiled_link_ids
 from cronpypeline.plugins.vnn_ranking import (
     COMPILED_SUBDIR,
     RANKING_FILENAME,
+    compiled_dir,
     load_active_story,
     load_ranking,
     ranking_stories,
@@ -31,6 +34,7 @@ from cronpypeline.plugins.vnn_ranking import (
     story_dir,
     today_utc,
     unranked_stories,
+    write_active_story,
 )
 
 # ─── Prompt builders ────────────────────────────────────────────────────────
@@ -91,40 +95,27 @@ def build_ranking_prompt(
     prompt += f"""
 ## Task
 
-Order every story from most to least newsworthy. Judge by impact, novelty,
+Order the stories from most to least newsworthy. Judge by impact, novelty,
 breadth of coverage, and how many independent sources reported it. Stories
 covering the same event should be adjacent.
 
-Write the result to `{country}/{RANKING_FILENAME}` as JSON with exactly this shape:
+Save the order with the ranking skill's helper script:
 
-```json
-{{
-  "date": "{date}",
-  "country": "{country}",
-  "version": 1,
-  "stories": [
-    {{
-      "rank": 1,
-      "story_id": "<story_id from the list above>",
-      "title_en": "<title>",
-      "summary_en": "<one sentence summary>",
-      "category": "<category>",
-      "article_count": 3,
-      "file_path": "<file path from the list above>",
-      "state": "pending"
-    }}
-  ]
-}}
+```
+RunSkillScript(skill_name="news-ranking", script_name="save_ranking.py",
+               arguments='--country "{country}" --order "<id>,<id>,<id>"')
 ```
 
+Pass the story ids in your chosen order, best first, comma-separated. For long
+lists you can write one id per line to a file and pass `--order-file <path>`
+instead.
+
 Rules:
-- Include **every** story from the list above, exactly once.
-- `rank` starts at 1 and increases by 1 with no gaps.
-- `story_id`, `title_en`, `summary_en`, `category`, `article_count` and
-  `file_path` must be copied verbatim from the list above.
-- Set `state` to `"pending"` for stories that are not already ranked. For
-  stories that were already ranked, keep the `state` value they already have.
-- Do not invent stories and do not drop any.
+- Use every story id from the list above, exactly once.
+- Do not invent story ids and do not drop any — the script rejects both.
+- Do not write `{country}/{RANKING_FILENAME}` yourself. The script validates the
+  order, fills in the metadata and preserves the `state` of stories that were
+  already ranked, so article progress is never reset.
 """
     if extra_instructions:
         prompt += f"\n## Additional Instructions\n\n{extra_instructions}\n"
@@ -147,21 +138,26 @@ def build_compile_prompt(
     """
     prompt = f"""Load the news-compiler skill and compile the news for **{country}** on **{date}**.
 
-There are {link_count} archived links for this country and date.
+There are {link_count} archived links available for this country.
 
 ## Task
 
-1. Use `load_articles.py --date {date} --country "{country}" --exclude-compiled`
-   to read the archived links that have not been compiled yet.
-2. Group related links into stories and save each story with `save_story.py`.
-   Stories are written to `{country}/{COMPILED_SUBDIR}/` and each file is named
-   `story_<id>.json`.
-3. When every story is saved, write the compilation marker
-   `{country}/compilation_metadata.json` with:
+1. Use `load_articles.py --country "{country}"` to read the archived links that
+   have not been compiled yet. Links already covered by an existing compiled
+   story are excluded automatically.
+2. Group related links into stories and save each story with
+   `save_story.py --country "{country}"`. Stories are written to
+   `{country}/{COMPILED_SUBDIR}/` and each file is named `story_<id>.json`.
+3. When every story is saved, mark the compilation complete:
 
-```json
-{{"date": "{date}", "country": "{country}", "link_count": {link_count}}}
 ```
+RunSkillScript(skill_name="news-compiler", script_name="mark_compilation.py",
+               arguments='--country "{country}"')
+```
+
+   This writes `{country}/compilation_metadata.json`, recording which links were
+   compiled so the next run only picks up new ones. Do not write that file
+   yourself.
 
 Do not rank the stories — a separate agent does that.
 """
@@ -386,11 +382,41 @@ def _queue_prompt(action: ActionSpec, context: TickContext, prompt: str) -> Acti
     return result
 
 
+def _ensure_story_dir(
+    target_dir: Path,
+    story_id: str,
+    stage: str,
+) -> Path:
+    """Materialise a story directory and claim the active-story lock.
+
+    The research stage is the first stage that needs a story directory, so it
+    creates ``<country>/stories/<story_id>/`` and copies the compiled
+    ``story.json`` into it. Later stages reuse the existing directory.
+
+    :param target_dir: Country target directory.
+    :param story_id: Story to prepare.
+    :param stage: Pipeline stage claiming the story.
+    :returns: Path to the story directory.
+    """
+    path = story_dir(target_dir, story_id)
+    path.mkdir(parents=True, exist_ok=True)
+
+    story_json = path / "story.json"
+    if not story_json.exists():
+        compiled = compiled_dir(target_dir) / f"{story_id}.json"
+        if compiled.exists():
+            shutil.copyfile(compiled, story_json)
+
+    write_active_story(target_dir, story_id, stage)
+    return path
+
+
 def _resolve_story(context: TickContext) -> tuple[str, Path] | None:
     """Resolve the story this tick should work on.
 
     Prefers the country's ``.active_story`` lock; falls back to the first
-    ranked story that still needs article work.
+    ranked story that still needs article work. The story directory is created
+    and the lock claimed when the story has not been started yet.
 
     :param context: Tick context with target and directories.
     :returns: ``(story_id, story_path)`` or None when there is no story to work on.
@@ -399,12 +425,14 @@ def _resolve_story(context: TickContext) -> tuple[str, Path] | None:
     active = load_active_story(target_dir)
     if active is not None:
         story_id = str(active["story_id"])
-        return story_id, story_dir(target_dir, story_id)
+        return story_id, _ensure_story_dir(
+            target_dir, story_id, str(active.get("stage") or "research")
+        )
 
     for story in ranking_stories(load_ranking(target_dir)):
         if story.get("state") in ("pending", "researching", "writing", "publishing"):
             story_id = str(story["story_id"])
-            return story_id, story_dir(target_dir, story_id)
+            return story_id, _ensure_story_dir(target_dir, story_id, "research")
     return None
 
 
@@ -440,11 +468,24 @@ def queue_ranking_agent(action: ActionSpec, context: TickContext) -> ActionResul
     return _queue_prompt(action, context, prompt)
 
 
+def _pending_link_count(target_dir: Path) -> int:
+    """Count archived links that have not been compiled yet.
+
+    :param target_dir: Country target directory.
+    :returns: Number of link files not recorded in ``compilation_metadata.json``.
+    """
+    links_dir = target_dir / NEWS_LINKS_SUBDIR
+    if not links_dir.is_dir():
+        return 0
+    current = {p.stem for p in links_dir.glob("*.json") if not p.name.startswith(".")}
+    return len(current - _compiled_link_ids(target_dir))
+
+
 def queue_compile_agent(action: ActionSpec, context: TickContext) -> ActionResult:
     """Build a compilation prompt and queue it.
 
     Expected action.params: same queue settings as :func:`queue_ranking_agent`,
-    plus ``link_count`` (optional; defaults to 0).
+    plus an optional ``link_count`` override.
 
     :param action: Action spec with queue params.
     :param context: Tick context with target and directories.
@@ -453,10 +494,14 @@ def queue_compile_agent(action: ActionSpec, context: TickContext) -> ActionResul
     if context.dry_run:
         return ActionResult(success=True, dry_run=True)
 
+    link_count = action.params.get("link_count")
+    if link_count is None:
+        link_count = _pending_link_count(context.target_dir)
+
     prompt = build_compile_prompt(
         country=context.target,
         date=today_utc(),
-        link_count=int(action.params.get("link_count") or 0),
+        link_count=int(link_count),
         extra_instructions=action.params.get("extra_instructions", ""),
     )
     return _queue_prompt(action, context, prompt)

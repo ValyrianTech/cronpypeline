@@ -264,6 +264,59 @@ class TestConversationQueueHandler:
         assert "agent_config" in entry
         assert entry["agent_config"]["system_prompt"] == "You are a coder"
 
+    def test_loads_nested_agent_settings(self, tmp_path):
+        """Serendipity stores settings at <dir>/<Agent>/settings.json."""
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        (agent_settings_dir / "NewsCompilerAgent").mkdir(parents=True)
+        (agent_settings_dir / "NewsCompilerAgent" / "settings.json").write_text(json.dumps({
+            "model_name": "DeepSeek:deepseek-v4-flash",
+            "temperature": 1,
+        }))
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+            prompt_field="content",
+            default_fields={"sender": "VNN_PIPELINE", "model_name": "default_model"},
+            flatten_agent_settings=True,
+        )
+
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": "NewsCompilerAgent", "prompt": "Compile"},
+        )
+        ctx = TickContext(target="belgium", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        handler.execute(action, ctx)
+
+        entry = json.loads(next(queue_dir.glob("*.json")).read_text())
+        assert entry["model_name"] == "DeepSeek:deepseek-v4-flash"
+        assert entry["temperature"] == 1
+        assert entry["sender"] == "VNN_PIPELINE"
+
+    def test_flat_agent_settings_take_precedence_over_nested(self, tmp_path):
+        """When both layouts exist, the flat file wins."""
+        queue_dir = tmp_path / "queue"
+        agent_settings_dir = tmp_path / "agents"
+        (agent_settings_dir / "Agent").mkdir(parents=True)
+        (agent_settings_dir / "Agent" / "settings.json").write_text(json.dumps({"model_name": "nested"}))
+        (agent_settings_dir / "Agent.json").write_text(json.dumps({"model_name": "flat"}))
+
+        handler = ConversationQueueHandler(
+            queue_dir=str(queue_dir),
+            agent_settings_dir=str(agent_settings_dir),
+            prompt_field="content",
+            default_fields={"model_name": "default_model"},
+            flatten_agent_settings=True,
+        )
+        handler.execute(
+            ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "Agent", "prompt": "x"}),
+            TickContext(target="t", workspace_dir=tmp_path, dry_run=False, verbose=False),
+        )
+
+        entry = json.loads(next(queue_dir.glob("*.json")).read_text())
+        assert entry["model_name"] == "flat"
+
     def test_sanitizes_agent_with_path_traversal(self, tmp_path):
         """Path traversal characters in agent name are replaced with underscores."""
         queue_dir = tmp_path / "queue"
