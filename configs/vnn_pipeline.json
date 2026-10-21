@@ -9,6 +9,9 @@
   "post_tick": {
     "callable": "cronpypeline.plugins.vnn_plugin.vnn_post_tick"
   },
+  "marker_context": {
+    "callable": "cronpypeline.plugins.vnn_plugin.vnn_marker_context"
+  },
   "targets": {
     "type": "registry",
     "file": "/spellbook_data/Serendipity/vnn/workspace/countries.json",
@@ -89,7 +92,7 @@
         }
       },
       "markers": {
-        "completion": {"type": "file", "name": "research.md"},
+        "completion": {"type": "file", "name": "research.md", "directory": "stories/{active_story}"},
         "processing": {"type": "json", "name": ".processing", "content": {}}
       },
       "timeout_minutes": 60,
@@ -110,7 +113,7 @@
         }
       },
       "markers": {
-        "completion": {"type": "file", "name": "article.md"},
+        "completion": {"type": "file", "name": "article.md", "directory": "stories/{active_story}"},
         "processing": {"type": "json", "name": ".processing", "content": {}}
       },
       "timeout_minutes": 30,
@@ -131,7 +134,7 @@
         }
       },
       "markers": {
-        "completion": {"type": "file", "name": "published.json"},
+        "completion": {"type": "file", "name": "published.json", "directory": "stories/{active_story}"},
         "processing": {"type": "json", "name": ".processing", "content": {}}
       },
       "timeout_minutes": 30,
@@ -152,7 +155,6 @@
         }
       },
       "markers": {
-        "completion": {"type": "file", "name": "article.md"},
         "processing": {"type": "json", "name": ".processing", "content": {}}
       },
       "timeout_minutes": 30,

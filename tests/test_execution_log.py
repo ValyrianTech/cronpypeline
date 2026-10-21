@@ -716,8 +716,8 @@ class TestNoStateStage:
                     workspace_dir=workspace_dir, stages=stages, target_lock=target_lock
                 )
 
-            def derive(self, targets, target_configs=None):
-                self._real.derive(targets, target_configs)
+            def derive(self, targets, target_configs=None, cleanup_orphans=True, marker_context_hook=None):
+                self._real.derive(targets, target_configs, cleanup_orphans, marker_context_hook)
                 for ts in self._real.target_states.values():
                     ts.stage_states = {}
 

@@ -312,6 +312,16 @@ A pipeline can declare `pre_tick` and `post_tick` hooks — custom Python callab
 "post_tick": {"callable": "my_plugin.log_result"}
 ```
 
+### Marker context hook
+
+Marker paths are templates resolved against the target directory, with `{target}`, `{target_dir}`, `{workspace_dir}`, `{target_config}` and any flattened `target_config` keys available. A pipeline can add its own variables with `marker_context` — a callable that receives the base context dict and returns extra variables to merge in:
+
+```json
+"marker_context": {"callable": "my_plugin.marker_context"}
+```
+
+This lets a plugin point markers at domain-specific subdirectories without the pipeline knowing anything about that domain. For example, a pipeline whose records live in `records/<id>/` can declare a completion marker as `{"type": "file", "name": "done.md", "directory": "records/{record_id}"}` and supply `record_id` from the hook. The hook runs on every state derivation, including `--status`, so tick-time and status-time marker resolution always agree.
+
 ### Marker invalidation
 
 Stages can declare an `invalidates` list — markers from other stages to delete when this stage's action succeeds. This enables cross-stage state cleanup without custom code (e.g. a fix stage deleting upstream report markers to force re-evaluation). When a stage invalidates markers from other stages, the pipeline re-derives the target state (in both the normal execution path and the chaining loop), so the invalidated stages become actionable again during the same tick's chaining phase.
@@ -362,6 +372,7 @@ State derivation is a read-only snapshot for status/dashboard callers. `Pipeline
 | `target_lock` | bool | no | `false` | Cross-stage lock — blocks all stages for a target while any stage is processing |
 | `pre_tick` | object | no | `null` | Pre-tick hook config (`{"callable": "module.func"}`) |
 | `post_tick` | object | no | `null` | Post-tick hook config (`{"callable": "module.func"}`) |
+| `marker_context` | object | no | `null` | Marker-context hook config (`{"callable": "module.func"}`). The callable receives the base marker context dict and returns extra template variables for marker paths |
 | `init` | object | no | `null` | Optional manual target-initialization action (`{"action": {...}, "marker": "..."}`). Run on demand via `--init`/`--reinit` or the dashboard — it is not part of the stage chain |
 
 ### Stage definition

@@ -4178,7 +4178,7 @@ class TestCrossStageTargetLock:
         # exercising the `candidate is None` branch in the target_lock else block.
         original_derive = PipelineState.derive
 
-        def mock_derive(self, targets, target_configs=None):
+        def mock_derive(self, targets, target_configs=None, cleanup_orphans=True, marker_context_hook=None):
             original_derive(self, targets, target_configs)
             for ts in self.target_states.values():
                 ts.stage_states.pop("B0", None)
@@ -6436,7 +6436,7 @@ class TestTickQueueAgentProcessingData:
         # Mock PipelineState.derive to inject processing_data while keeping stage actionable
         original_derive = PipelineState.derive
 
-        def mock_derive(self, targets, target_configs=None):
+        def mock_derive(self, targets, target_configs=None, cleanup_orphans=True, marker_context_hook=None):
             original_derive(self, targets, target_configs)
             for ts in self.target_states.values():
                 for ss in ts.stage_states.values():
@@ -6501,7 +6501,7 @@ class TestTickQueueAgentProcessingData:
         # Mock PipelineState.derive to inject processing_data while keeping stage actionable
         original_derive = PipelineState.derive
 
-        def mock_derive(self, targets, target_configs=None):
+        def mock_derive(self, targets, target_configs=None, cleanup_orphans=True, marker_context_hook=None):
             original_derive(self, targets, target_configs)
             for ts in self.target_states.values():
                 for ss in ts.stage_states.values():
@@ -6725,7 +6725,7 @@ class TestTickTargetStateNoneDefensive:
         pipeline = Pipeline(config)
 
         # Mock derive to not create target_state for the target
-        def mock_derive(self, targets, target_configs=None):
+        def mock_derive(self, targets, target_configs=None, cleanup_orphans=True, marker_context_hook=None):
             self.target_states = {}
 
         with patch.object(PipelineState, "derive", mock_derive):

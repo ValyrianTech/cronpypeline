@@ -352,6 +352,9 @@ class PipelineConfig:
     :ivar mode_file: Path to JSON file with ``{"mode": "..."}`` for mode switching.
     :ivar target_lock: Cross-stage lock — blocks all stages for a target while any stage is processing.
     :ivar init: Optional manual target-initialization action config.
+    :ivar marker_context: Optional hook that contributes extra template variables
+        for marker path substitution. The callable receives the base context dict
+        and returns a dict of additional variables to merge into it.
     """
 
     name: str
@@ -367,6 +370,7 @@ class PipelineConfig:
     mode_file: str | None = None
     target_lock: bool = False
     init: InitConfig | None = None
+    marker_context: HookConfig | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PipelineConfig":
@@ -410,6 +414,10 @@ class PipelineConfig:
         if data.get("init"):
             init = InitConfig.from_dict(data["init"])
 
+        marker_context = None
+        if data.get("marker_context"):
+            marker_context = HookConfig.from_dict(data["marker_context"])
+
         return cls(
             name=data["name"],
             workspace_dir=data["workspace_dir"],
@@ -424,6 +432,7 @@ class PipelineConfig:
             mode_file=data.get("mode_file"),
             target_lock=data.get("target_lock", False),
             init=init,
+            marker_context=marker_context,
         )
 
     @classmethod

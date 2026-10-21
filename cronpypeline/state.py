@@ -276,6 +276,7 @@ class PipelineState:
         targets: list[str],
         target_configs: dict[str, dict[str, Any]] | None = None,
         cleanup_orphans: bool = True,
+        marker_context_hook: Any = None,
     ) -> None:
         """Derive state for all targets.
 
@@ -286,6 +287,9 @@ class PipelineState:
             ``/api/status`` endpoint or ``Pipeline.status()``) must pass
             ``cleanup_orphans=False`` so derivation never mutates the
             filesystem.
+        :param marker_context_hook: Optional callable contributing extra
+            template variables to marker path substitution. It receives the
+            base context dict and returns a dict of additional variables.
         """
         self.target_states = {}
         target_configs = target_configs or {}
@@ -299,6 +303,10 @@ class PipelineState:
                 "target_config": target_config,
             }
             flatten_target_config(ctx, target_config)
+            if marker_context_hook is not None:
+                extra = marker_context_hook(ctx)
+                if isinstance(extra, dict):
+                    ctx.update(extra)
             target_state = TargetState(target=target, stages=self.stages, target_lock=self.target_lock)
             target_state.derive(target_dir, context=ctx, cleanup_orphans=cleanup_orphans)
             self.target_states[target] = target_state

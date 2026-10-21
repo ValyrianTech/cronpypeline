@@ -108,6 +108,10 @@ class TickResult:
         return base
 
 
+#: Sentinel distinguishing "hook not resolved yet" from "resolved to None".
+_UNSET: Any = object()
+
+
 class PipelineTickError(Exception):
     """Raised when _tick_single fails for a specific target, carrying the target name."""
 
@@ -136,7 +140,13 @@ def _instantiate_action_handler(handler_type: str, params: dict[str, Any]) -> Ac
     raise ValueError(f"Unknown action handler type: {handler_type}")
 
 
-def _build_marker_context(target: str, target_dir: Path, workspace_dir: Path, target_config: dict[str, Any]) -> dict[str, Any]:
+def _build_marker_context(
+    target: str,
+    target_dir: Path,
+    workspace_dir: Path,
+    target_config: dict[str, Any],
+    marker_context_hook: Any = None,
+) -> dict[str, Any]:
     """Build context dict for marker template substitution.
 
     Flattens target_config keys into the top-level context so they can be
@@ -147,10 +157,17 @@ def _build_marker_context(target: str, target_dir: Path, workspace_dir: Path, ta
     directories, or logs. The raw ``target_config`` dict remains available
     under the ``target_config`` key for backward compatibility.
 
+    When ``marker_context_hook`` is configured, it is called with the base
+    context and may return a dict of extra template variables. This lets a
+    plugin expose domain-specific values (for example the id of the record it
+    is currently working on) to marker path templates without the pipeline
+    knowing anything about that domain.
+
     :param target: Target name.
     :param target_dir: Full path to target directory.
     :param workspace_dir: Full path to workspace.
     :param target_config: Per-target configuration dict.
+    :param marker_context_hook: Optional callable contributing extra variables.
     :returns: Context dict with flattened keys for template substitution.
     """
     ctx = {
@@ -160,6 +177,10 @@ def _build_marker_context(target: str, target_dir: Path, workspace_dir: Path, ta
         "target_config": target_config,
     }
     flatten_target_config(ctx, target_config)
+    if marker_context_hook is not None:
+        extra = marker_context_hook(ctx)
+        if isinstance(extra, dict):
+            ctx.update(extra)
     return ctx
 
 
@@ -198,6 +219,10 @@ class Pipeline:
         """
         self.config = config
         self.workspace_dir = Path(config.workspace_dir)
+
+        # Cached resolution of the optional marker_context hook. _UNSET means
+        # "not resolved yet"; None means "resolved, but no hook configured".
+        self._marker_context_hook_cached: Any = _UNSET
 
         # Per-pipeline action handler registry. This holds only per-instance
         # overrides (the config-wired action_handler); unset action types fall
@@ -568,7 +593,11 @@ class Pipeline:
                     continue
                 active_stages.append(stage)
             state = PipelineState(workspace_dir=self.workspace_dir, stages=active_stages, target_lock=self.config.target_lock)
-            state.derive(targets, target_configs=target_config_map)
+            state.derive(
+                targets,
+                target_configs=target_config_map,
+                marker_context_hook=self._marker_context_hook(),
+            )
             target = state.get_target_with_work(targets)
             if target is None:
                 result = TickResult(
@@ -676,6 +705,26 @@ class Pipeline:
             return None
         return str(queue_dir)
 
+    def _marker_context_hook(self) -> Any:
+        """Resolve the configured ``marker_context`` hook callable.
+
+        The hook lets a plugin contribute extra template variables to marker
+        paths (for example the id of the record it is currently working on)
+        without the pipeline knowing anything about that domain. The resolved
+        callable is cached on the instance so repeated marker context builds
+        do not re-import the module.
+
+        :returns: The hook callable, or None when no hook is configured.
+        """
+        if self._marker_context_hook_cached is not _UNSET:
+            return self._marker_context_hook_cached
+        hook_config = self.config.marker_context
+        resolved = None
+        if hook_config is not None:
+            resolved = resolve_custom_callable(hook_config.callable)
+        self._marker_context_hook_cached = resolved
+        return resolved
+
     def _tick_single_inner(
         self,
         target: str,
@@ -706,7 +755,11 @@ class Pipeline:
             active_stages.append(stage)
 
         state = PipelineState(workspace_dir=self.workspace_dir, stages=active_stages, target_lock=self.config.target_lock)
-        state.derive([target], target_configs={target: target_config})
+        state.derive(
+            [target],
+            target_configs={target: target_config},
+            marker_context_hook=self._marker_context_hook(),
+        )
         target_state = state.target_states.get(target)
 
         if target_state is None:
@@ -722,7 +775,10 @@ class Pipeline:
         # Check for rejection give-up (rejection_count >= max_rejections)
         for ss in target_state.stage_states.values():
             if ss.is_rejected and ss.stage.max_rejections > 0:
-                marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
+                marker_ctx = _build_marker_context(
+                    target, target_dir, self.workspace_dir, target_config,
+                    self._marker_context_hook(),
+                )
                 if ss.rejection_count >= ss.stage.max_rejections:
                     # Give up
                     if "give_up" in ss.stage.markers:
@@ -844,7 +900,10 @@ class Pipeline:
 
         # Create processing marker for async actions (queue_agent)
         stage = stage_state.stage
-        marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
+        marker_ctx = _build_marker_context(
+            target, target_dir, self.workspace_dir, target_config,
+            self._marker_context_hook(),
+        )
         if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers:
             # Preserve retry count if re-queueing
             retry_count = 0
@@ -1105,7 +1164,10 @@ class Pipeline:
                             stdout=result.stdout, stderr=result.stderr,
                             action_command=result.command, chained=True)
 
-            marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
+            marker_ctx = _build_marker_context(
+                target, target_dir, self.workspace_dir, target_config,
+                self._marker_context_hook(),
+            )
 
             # Create produced markers
             for marker_spec in next_stage.action.produces:
@@ -1203,7 +1265,10 @@ class Pipeline:
             )
 
         # Clean up stale marker
-        marker_ctx = _build_marker_context(target, target_dir, self.workspace_dir, target_config)
+        marker_ctx = _build_marker_context(
+            target, target_dir, self.workspace_dir, target_config,
+            self._marker_context_hook(),
+        )
         if "processing" in stage.markers:
             delete_marker(stage.markers["processing"], target_dir, context=marker_ctx)
 
@@ -1410,7 +1475,11 @@ class Pipeline:
 
         state = PipelineState(workspace_dir=self.workspace_dir, stages=active_stages)
         # Status is a read-only snapshot and must not mutate processing markers.
-        state.derive(targets, cleanup_orphans=False)
+        state.derive(
+            targets,
+            cleanup_orphans=False,
+            marker_context_hook=self._marker_context_hook(),
+        )
 
         result = {}
         for target, ts in state.target_states.items():

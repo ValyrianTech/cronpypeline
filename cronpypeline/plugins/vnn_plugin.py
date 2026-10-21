@@ -444,6 +444,28 @@ def queue_empty_global(context: dict[str, Any]) -> bool:
     return not any(queue_path.glob("*.json"))
 
 
+def vnn_marker_context(context: dict[str, Any]) -> dict[str, Any]:
+    """Marker-context hook: expose the active story id to marker templates.
+
+    Story-scoped stages keep their artifacts inside
+    ``<country>/stories/<story_id>/``, so their completion markers need the
+    story id to resolve the right directory. This hook supplies it as
+    ``{active_story}``, letting the config declare e.g.
+    ``"directory": "stories/{active_story}"``.
+
+    When no story is claimed the id is an empty string, which makes such a
+    marker resolve to a path that cannot exist, so a stale country-level file
+    is never mistaken for story completion.
+
+    :param context: Base marker context dict with ``target_dir``.
+    :returns: Dict with the ``active_story`` template variable.
+    """
+    target_dir = Path(str(context.get("target_dir", "")))
+    active = load_active_story(target_dir) if target_dir else None
+    story_id = str(active["story_id"]) if active else ""
+    return {"active_story": story_id}
+
+
 def cleanup_inconsistent_state(context: dict[str, Any]) -> bool:
     """Pre-tick hook: resolve stories that have both an article and a rejection.
 

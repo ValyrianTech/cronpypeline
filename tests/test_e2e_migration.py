@@ -508,3 +508,101 @@ class TestVNNDryRunValidation:
         ids = [s.id for s in config.stages]
         assert ids == ["ranking", "compilation", "research", "writing", "publishing", "revision"], \
             f"Unexpected stage order: {ids}"
+
+    def test_story_stages_use_active_story_marker_directory(self):
+        """Story-scoped stages must resolve their markers inside the story dir."""
+        config = PipelineConfig.from_file(self.CONFIG_PATH)
+        for stage in config.stages:
+            if stage.id in ("research", "writing", "publishing"):
+                completion = stage.markers["completion"]
+                assert completion.directory == "stories/{active_story}", \
+                    f"Stage {stage.id} completion marker is not story-scoped"
+
+    def test_revision_has_no_completion_marker(self):
+        """Revision is a conditional repair stage, not a lifecycle milestone.
+
+        It shares ``article.md`` with writing, so a completion marker would
+        report revision as done the moment any article exists. The trigger
+        (``detect_revision_needed``) already encodes the real condition.
+        """
+        config = PipelineConfig.from_file(self.CONFIG_PATH)
+        revision = next(s for s in config.stages if s.id == "revision")
+        assert "completion" not in revision.markers
+        assert "processing" in revision.markers
+
+    def test_marker_context_hook_is_configured(self):
+        """The VNN config must wire the marker_context hook."""
+        config = PipelineConfig.from_file(self.CONFIG_PATH)
+        assert config.marker_context is not None
+        assert config.marker_context.callable == \
+            "cronpypeline.plugins.vnn_plugin.vnn_marker_context"
+
+
+class TestVNNMarkerContextHook:
+    """The marker_context hook exposes the active story id to marker templates."""
+
+    def test_returns_active_story_id(self, tmp_path):
+        from cronpypeline.plugins.vnn_plugin import vnn_marker_context
+        from cronpypeline.plugins.vnn_ranking import write_active_story
+
+        country_dir = tmp_path / COUNTRY
+        country_dir.mkdir()
+        write_active_story(country_dir, "story_abc", "research")
+
+        result = vnn_marker_context({"target_dir": str(country_dir)})
+        assert result == {"active_story": "story_abc"}
+
+    def test_returns_empty_string_without_active_story(self, tmp_path):
+        from cronpypeline.plugins.vnn_plugin import vnn_marker_context
+
+        country_dir = tmp_path / COUNTRY
+        country_dir.mkdir()
+
+        result = vnn_marker_context({"target_dir": str(country_dir)})
+        assert result == {"active_story": ""}
+
+    def test_story_completion_detected_in_story_dir(self, tmp_path):
+        """A story artifact marks its stage complete; a country-level file does not."""
+        raw = json.loads(TestVNNDryRunValidation.CONFIG_PATH.read_text())
+        config = PipelineConfig.from_dict({
+            **raw,
+            "workspace_dir": str(tmp_path),
+            "lock_file": str(tmp_path / ".VNN" / "pipeline.lock"),
+            "targets": {"type": "static", "items": [COUNTRY]},
+        })
+
+        country_dir = tmp_path / COUNTRY
+        country_dir.mkdir()
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+        _make_story(country_dir, "story_1", "research.md")
+
+        from cronpypeline.plugins.vnn_ranking import write_active_story
+        write_active_story(country_dir, "story_1", "research")
+
+        pipeline = Pipeline(config)
+        status = pipeline.status([COUNTRY])[COUNTRY]
+        assert status["research"]["complete"] is True
+        assert status["writing"]["complete"] is False
+
+    def test_country_level_artifact_does_not_mark_story_complete(self, tmp_path):
+        """A stray country-root research.md must not satisfy the story marker."""
+        raw = json.loads(TestVNNDryRunValidation.CONFIG_PATH.read_text())
+        config = PipelineConfig.from_dict({
+            **raw,
+            "workspace_dir": str(tmp_path),
+            "lock_file": str(tmp_path / ".VNN" / "pipeline.lock"),
+            "targets": {"type": "static", "items": [COUNTRY]},
+        })
+
+        country_dir = tmp_path / COUNTRY
+        country_dir.mkdir()
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+        _make_story(country_dir, "story_1")
+        (country_dir / "research.md").write_text("stray", encoding="utf-8")
+
+        from cronpypeline.plugins.vnn_ranking import write_active_story
+        write_active_story(country_dir, "story_1", "research")
+
+        pipeline = Pipeline(config)
+        status = pipeline.status([COUNTRY])[COUNTRY]
+        assert status["research"]["complete"] is False
