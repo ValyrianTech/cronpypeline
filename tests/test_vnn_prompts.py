@@ -225,11 +225,14 @@ class TestQueueRankingAgent:
         assert "story_1" in entry["content"]
         assert entry["sender"] == "VNN_PIPELINE"
 
-    def test_fails_without_unranked_stories(self, tmp_path):
+    def test_no_unranked_stories_is_a_noop(self, tmp_path):
+        """The agent may rank between the trigger and the action — not a failure."""
         queue_dir = tmp_path / "queue"
         result = queue_ranking_agent(_action(agent="RankingAgent"), _tick_context(tmp_path, queue_dir))
-        assert result.success is False
-        assert "No unranked" in result.stderr
+        assert result.success is True
+        assert result.data["skipped"] is True
+        assert "No unranked" in result.stdout
+        assert not queue_dir.exists()
 
     def test_dry_run_writes_nothing(self, tmp_path):
         queue_dir = tmp_path / "queue"
@@ -273,11 +276,14 @@ class TestQueueStoryAgents:
         assert entry["agent"] == agent
         assert "story_1" in entry["content"]
 
-    def test_fails_without_story(self, tmp_path):
+    def test_no_story_is_a_noop(self, tmp_path):
+        """The story may finish between the trigger and the action — not a failure."""
         queue_dir = tmp_path / "queue"
         result = queue_research_agent(_action(agent="NewsResearchAgent"), _tick_context(tmp_path, queue_dir))
-        assert result.success is False
-        assert "No story" in result.stderr
+        assert result.success is True
+        assert result.data["skipped"] is True
+        assert "No story" in result.stdout
+        assert not queue_dir.exists()
 
     def test_dry_run_writes_nothing(self, tmp_path):
         queue_dir = tmp_path / "queue"

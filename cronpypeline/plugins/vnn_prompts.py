@@ -469,7 +469,14 @@ def queue_ranking_agent(action: ActionSpec, context: TickContext) -> ActionResul
     date = today_utc()
     stories = unranked_stories(target_dir)
     if not stories:
-        return ActionResult(success=False, stderr="No unranked compiled stories to rank")
+        # The trigger and the action both read the ranking, so the agent may
+        # have written ranking.json between the two. Nothing to do is a no-op,
+        # not a failure: the stage's completion signal is already satisfied.
+        return ActionResult(
+            success=True,
+            stdout="No unranked compiled stories to rank",
+            data={"skipped": True},
+        )
 
     prompt = build_ranking_prompt(
         country=context.target,
@@ -537,7 +544,13 @@ def _queue_story_prompt(
 
     resolved = _resolve_story(context)
     if resolved is None:
-        return ActionResult(success=False, stderr="No story available to work on")
+        # The story may have been published or given up between the trigger
+        # evaluation and this action. Nothing to do is a no-op, not a failure.
+        return ActionResult(
+            success=True,
+            stdout="No story available to work on",
+            data={"skipped": True},
+        )
     story_id, story_path = resolved
 
     prompt = builder(
