@@ -17,6 +17,7 @@ from cronpypeline.actions import (
 from cronpypeline.config import ActionSpec, ActionType, PipelineConfig
 from cronpypeline.pipeline import Pipeline, TickResultStatus
 from cronpypeline.plugins.vnn_ranking import write_ranking
+from cronpypeline.state import PipelineState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -517,6 +518,65 @@ class TestVNNDryRunValidation:
                 completion = stage.markers["completion"]
                 assert completion.directory == "stories/{active_story}", \
                     f"Stage {stage.id} completion marker is not story-scoped"
+
+    def test_recurring_stages_have_no_completion_marker(self):
+        """Recurring stages must stay actionable so their triggers keep firing.
+
+        ``ranking.json`` and ``compilation_metadata.json`` are permanent data
+        records. Using them as completion markers marked the stage complete
+        forever, so ``detect_ranking_needed`` / ``detect_compilation_needed``
+        were never re-evaluated and new links or stories were never picked up.
+        """
+        config = PipelineConfig.from_file(self.CONFIG_PATH)
+        for stage in config.stages:
+            if stage.id in ("ranking", "compilation"):
+                assert "completion" not in stage.markers, \
+                    f"Stage {stage.id} must not have a completion marker"
+                assert "processing" in stage.markers, \
+                    f"Stage {stage.id} must keep its processing marker"
+
+    def test_recurring_stages_refire_for_new_work(self, tmp_path):
+        """A completed compilation must re-fire when new links arrive."""
+        country_dir = tmp_path / COUNTRY
+        country_dir.mkdir()
+        _write_ranking(country_dir, [])
+        (country_dir / "compilation_metadata.json").write_text(
+            json.dumps({"link_ids": ["old1", "old2"]})
+        )
+        links_dir = country_dir / "news_links"
+        links_dir.mkdir()
+        for link_id in ("old1", "old2", "new1", "new2", "new3", "new4", "new5"):
+            (links_dir / f"{link_id}.json").write_text(json.dumps({"link": link_id}))
+
+        config = PipelineConfig.from_dict({
+            "name": "vnn-recurring-test",
+            "workspace_dir": str(tmp_path),
+            "targets": {"type": "static", "items": [COUNTRY]},
+            "stages": [
+                {
+                    "id": "compilation",
+                    "name": "Compilation",
+                    "trigger": {
+                        "type": "custom",
+                        "callable": "cronpypeline.plugins.vnn_plugin.detect_compilation_needed",
+                    },
+                    "action": {"type": "command", "params": {"command": "echo c"}},
+                    "markers": {
+                        "processing": {"type": "json", "name": ".processing", "content": {}},
+                    },
+                },
+            ],
+        })
+
+        state = PipelineState(workspace_dir=tmp_path, stages=config.stages)
+        state.derive([COUNTRY], target_configs={COUNTRY: {}}, cleanup_orphans=False)
+        target_state = state.target_states[COUNTRY]
+        stage_state = target_state.stage_states["compilation"]
+
+        assert stage_state.is_complete is False
+        assert stage_state.is_actionable is True
+        assert target_state.first_actionable_stage is not None
+        assert target_state.first_actionable_stage.stage.id == "compilation"
 
     def test_revision_has_no_completion_marker(self):
         """Revision is a conditional repair stage, not a lifecycle milestone.
