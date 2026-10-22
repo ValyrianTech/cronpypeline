@@ -125,9 +125,16 @@ class StageState:
     def is_actionable(self) -> bool:
         """Whether this stage can be acted upon (not complete, not processing, not given up).
 
+        A stale processing marker does not block: the agent is gone, so the
+        stage must stay actionable for the stale handler to re-queue or give up
+        on it. Treating it as blocking would make the stage unreachable — the
+        stale handler only runs for a stage that target selection picked.
+
         A rejected stage is actionable unless rejection tracking is enabled (max_rejections > 0).
         """
-        if self.is_complete or self.is_processing or self.is_given_up:
+        if self.is_complete or self.is_given_up:
+            return False
+        if self.is_processing and not self.is_stale:
             return False
         # Rejection only blocks if rejection tracking is enabled
         return not (self.is_rejected and self.stage.max_rejections > 0)

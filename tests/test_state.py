@@ -738,6 +738,62 @@ class TestStageStateProcessingQueueFile:
         assert state.is_stale is False
 
 
+class TestStageStateStaleProcessingActionable:
+    """A stale processing marker must not make the stage unreachable.
+
+    The stale handler only runs for a stage that target selection picked, so a
+    stale marker that blocks ``is_actionable`` would wedge the target forever.
+    """
+
+    def _stage(self) -> Stage:
+        return Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+
+    def test_stale_processing_marker_is_actionable(self, tmp_path):
+        """A processing marker whose queue_file is gone leaves the stage actionable."""
+        (tmp_path / ".processing").write_text(
+            json.dumps({"queue_file": "/nonexistent/queue/entry.json"})
+        )
+
+        state = StageState(stage=self._stage())
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is True
+        assert state.is_actionable is True
+
+    def test_live_processing_marker_is_not_actionable(self, tmp_path):
+        """A live processing marker still blocks the stage."""
+        queue_file = tmp_path / "queue" / "entry.json"
+        queue_file.parent.mkdir()
+        queue_file.touch()
+        (tmp_path / ".processing").write_text(json.dumps({"queue_file": str(queue_file)}))
+
+        state = StageState(stage=self._stage())
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is False
+        assert state.is_actionable is False
+
+    def test_target_with_only_stale_processing_has_work(self, tmp_path):
+        """Target selection must pick a target whose only marker is stale."""
+        (tmp_path / ".processing").write_text(
+            json.dumps({"queue_file": "/nonexistent/queue/entry.json"})
+        )
+        target_state = TargetState(target="t", stages=[self._stage()], target_lock=True)
+        target_state.derive(tmp_path)
+
+        assert target_state.has_active_processing is False
+        assert target_state.first_stage_with_work is not None
+
+
 class TestTargetStateDisabledStage:
     """Tests for disabled stages in TargetState."""
 
@@ -1102,10 +1158,11 @@ class TestPipelineStateFlattenConfig:
         assert ts.stage_states["A0"].is_processing is True
         # has_active_processing should be False (only stale processing)
         assert ts.has_active_processing is False
-        # first_stage_with_work should find B0 (stale doesn't block)
+        # first_stage_with_work should find A0 itself: the stale stage must stay
+        # selectable so the stale handler can re-queue or give up on it.
         fsw = ts.first_stage_with_work
         assert fsw is not None
-        assert fsw.stage.id == "B0"
+        assert fsw.stage.id == "A0"
 
     def test_flatten_target_config_keys_into_context(self, tmp_path):
         """Target config keys should be flattened into the derivation context."""
