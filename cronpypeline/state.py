@@ -240,9 +240,11 @@ class TargetState:
     def first_actionable_stage(self) -> StageState | None:
         """Return the first stage that can be acted upon, or None.
 
-        If target_lock is enabled, no stage is actionable while any stage is processing.
+        If target_lock is enabled, no stage is actionable while any stage is
+        actively processing. Stale-only processing markers do not block, which
+        keeps this consistent with :attr:`first_stage_with_work`.
         """
-        if self.target_lock and self.has_processing:
+        if self.target_lock and self.has_active_processing:
             return None
         for stage in self.stages:
             if not stage.enabled:

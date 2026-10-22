@@ -793,6 +793,19 @@ class TestStageStateStaleProcessingActionable:
         assert target_state.has_active_processing is False
         assert target_state.first_stage_with_work is not None
 
+    def test_first_actionable_stage_agrees_with_first_stage_with_work(self, tmp_path):
+        """Both selectors must ignore stale-only processing markers."""
+        (tmp_path / ".processing").write_text(
+            json.dumps({"queue_file": "/nonexistent/queue/entry.json"})
+        )
+        target_state = TargetState(target="t", stages=[self._stage()], target_lock=True)
+        target_state.derive(tmp_path)
+
+        assert target_state.first_actionable_stage is not None
+        assert target_state.first_actionable_stage.stage.id == "A0"
+        assert target_state.first_stage_with_work is not None
+        assert target_state.first_stage_with_work.stage.id == "A0"
+
 
 class TestTargetStateDisabledStage:
     """Tests for disabled stages in TargetState."""
