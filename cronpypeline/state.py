@@ -107,6 +107,17 @@ class StageState:
                         and any("_reminder_" in f.name for f in queue_dir.iterdir())
                     )
                     self.is_stale = self.is_stale or not has_reminder
+                # Completion-signal staleness: a recurring stage has no permanent
+                # completion marker, so a leftover processing marker would look
+                # like a running agent until the timeout expires. When the stage
+                # declares a ``completion_signal`` artifact and that artifact is
+                # newer than the processing marker, the agent already finished.
+                if "completion_signal" in markers:
+                    signal_age = marker_age_seconds(
+                        markers["completion_signal"], base_dir, context=ctx
+                    )
+                    if signal_age is not None and age is not None and signal_age < age:
+                        self.is_stale = True
             else:
                 self.processing_age_seconds = None
 

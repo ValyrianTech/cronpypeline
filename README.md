@@ -347,10 +347,24 @@ The filesystem is the source of truth — no database, no in-memory state:
 | Marker role | Purpose | Example |
 |---|---|---|
 | **Completion** | Stage is done | `research.md`, `coding_complete.marker` |
+| **Completion signal** | Agent produced its artifact (recurring stages) | `ranking.json`, `compilation_metadata.json` |
 | **Processing** | Task is in progress | `.processing` (JSON with retry_count, queue_file, timestamp) |
 | **Give-up** | Stage exhausted retries or rejections | `.gave_up` |
 | **Rejection** | Stage output was rejected (separate from retries) | `.rejection` (JSON with rejection_count) |
 | **Symlink** | Latest report pointer | `latest.md → 20240101_120000.md` |
+
+### Recurring stages and completion signals
+
+A stage whose completion marker is a permanent data record (e.g. `ranking.json`) would be marked complete forever, so its trigger is never re-evaluated and new work is never picked up. Such stages should declare no `completion` marker at all and let their trigger decide when to fire.
+
+Without a completion marker, a leftover processing marker is indistinguishable from a running agent until `timeout_minutes` expires. Declaring the artifact the agent writes as a `completion_signal` closes that gap: when the signal is newer than the processing marker, the agent has finished and the stage is immediately marked stale, so the next tick cleans up and re-evaluates the trigger. The signal never marks the stage complete, so it keeps re-firing for new work.
+
+```json
+"markers": {
+  "completion_signal": {"type": "file", "name": "compilation_metadata.json"},
+  "processing": {"type": "json", "name": ".processing", "content": {}}
+}
+```
 
 State derivation is a read-only snapshot for status/dashboard callers. `PipelineState.derive()` and `TargetState.derive()` accept a `cleanup_orphans` flag (default `True`); `Pipeline.status()` and the webui `/api/status` endpoint pass `cleanup_orphans=False`, so they derive state without mutating the filesystem. Orphaned-processing-marker cleanup (an explicit `TargetState.cleanup_orphans()` method) still runs on the normal `tick()` path.
 

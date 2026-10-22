@@ -220,6 +220,85 @@ class TestStageState:
         state.derive(tmp_path)
         assert state.is_stale is False
 
+    def _recurring_stage(self) -> Stage:
+        """Build a recurring stage: no completion marker, artifact as signal."""
+        return Stage(
+            id="compilation",
+            name="Compilation",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="never.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo c"}),
+            timeout_minutes=60,
+            markers={
+                "completion_signal": MarkerSpec(name="compilation_metadata.json", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+
+    def test_completion_signal_marks_finished_stage_stale(self, tmp_path):
+        """Artifact newer than the processing marker means the agent finished.
+
+        A recurring stage has no completion marker, so without this signal a
+        leftover processing marker would look like a running agent until the
+        timeout expires.
+        """
+        stage = self._recurring_stage()
+        queue_file = tmp_path / "queue" / "entry.json"
+        queue_file.parent.mkdir()
+        queue_file.touch()
+        (tmp_path / ".processing").write_text(json.dumps({"queue_file": str(queue_file)}))
+        started = time.time() - 300
+        os.utime(tmp_path / ".processing", (started, started))
+        finished = time.time() - 60
+        (tmp_path / "compilation_metadata.json").write_text("{}")
+        os.utime(tmp_path / "compilation_metadata.json", (finished, finished))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is True
+
+    def test_completion_signal_keeps_running_stage_fresh(self, tmp_path):
+        """Artifact older than the processing marker means the agent is still running."""
+        stage = self._recurring_stage()
+        queue_file = tmp_path / "queue" / "entry.json"
+        queue_file.parent.mkdir()
+        queue_file.touch()
+        (tmp_path / ".processing").write_text(json.dumps({"queue_file": str(queue_file)}))
+        started = time.time() - 300
+        os.utime(tmp_path / ".processing", (started, started))
+        previous = started - 100
+        (tmp_path / "compilation_metadata.json").write_text("{}")
+        os.utime(tmp_path / "compilation_metadata.json", (previous, previous))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is False
+
+    def test_completion_signal_absent_keeps_stage_fresh(self, tmp_path):
+        """No artifact yet means the agent has not finished."""
+        stage = self._recurring_stage()
+        queue_file = tmp_path / "queue" / "entry.json"
+        queue_file.parent.mkdir()
+        queue_file.touch()
+        (tmp_path / ".processing").write_text(json.dumps({"queue_file": str(queue_file)}))
+        started = time.time() - 300
+        os.utime(tmp_path / ".processing", (started, started))
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is False
+
+    def test_completion_signal_does_not_mark_stage_complete(self, tmp_path):
+        """The signal must not make the stage permanently complete."""
+        stage = self._recurring_stage()
+        (tmp_path / "compilation_metadata.json").write_text("{}")
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_complete is False
+        assert state.is_actionable is True
+
 
 class TestTargetState:
     """Tests for TargetState — all stages for one target."""
