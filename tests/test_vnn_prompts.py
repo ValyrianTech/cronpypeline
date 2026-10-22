@@ -133,6 +133,28 @@ class TestBuildRankingPrompt:
         assert "Already ranked" in prompt
         assert "story_1" in prompt
 
+    def test_asks_only_for_new_stories_when_ranking_exists(self):
+        """The agent must submit only new ids; save_ranking.py merges the rest.
+
+        Listing already-ranked stories and then saying "use every story id from
+        the list above" made the agent submit the whole ranking, which rewrote
+        the order instead of inserting the new stories.
+        """
+        prompt = build_ranking_prompt(
+            COUNTRY, DATE,
+            [{"story_id": "story_2"}],
+            previous={"stories": [{"rank": 1, "story_id": "story_1", "title_en": "Old"}]},
+        )
+        assert "Do not include ids from **Already ranked**" in prompt
+        assert "Use every story id from **Stories to rank** exactly once." in prompt
+        assert "Use every story id from the list above" not in prompt
+
+    def test_no_partial_order_rule_without_previous_ranking(self):
+        """With no prior ranking the agent ranks everything it was given."""
+        prompt = build_ranking_prompt(COUNTRY, DATE, [{"story_id": "story_1"}])
+        assert "Already ranked" not in prompt
+        assert "Use every story id from **Stories to rank** exactly once." in prompt
+
     def test_empty_story_list(self):
         prompt = build_ranking_prompt(COUNTRY, DATE, [])
         assert "No compiled stories found" in prompt

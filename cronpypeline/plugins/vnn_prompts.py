@@ -60,6 +60,18 @@ def _story_bullets(stories: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _already_ranked_rule(already_ranked: list[dict[str, Any]]) -> str:
+    """Render the rule telling the agent to omit already-ranked ids.
+
+    :param already_ranked: Stories already present in the ranking.
+    :returns: A rule line ending in a newline, or an empty string when there is
+        no previous ranking.
+    """
+    if not already_ranked:
+        return ""
+    return "- Do not include ids from **Already ranked** — they stay where they are.\n"
+
+
 def build_ranking_prompt(
     country: str,
     date: str,
@@ -88,8 +100,9 @@ def build_ranking_prompt(
         for story in already_ranked:
             prompt += f"- {story.get('rank')}. {story['story_id']} — {story.get('title_en', '')}\n"
         prompt += (
-            "\nKeep the existing stories in their current relative order and insert the new "
-            "stories where they belong.\n"
+            "\nThese stories are already in the ranking. Keep them in their current "
+            "relative order and do NOT include them in the order you submit — the "
+            "script merges your new stories into the existing ranking.\n"
         )
 
     prompt += f"""
@@ -111,8 +124,8 @@ lists you can write one id per line to a file and pass `--order-file <path>`
 instead.
 
 Rules:
-- Use every story id from the list above, exactly once.
-- Do not invent story ids and do not drop any — the script rejects both.
+- Use every story id from **Stories to rank** exactly once.
+{_already_ranked_rule(already_ranked)}- Do not invent story ids and do not drop any — the script rejects both.
 - Do not write `{country}/{RANKING_FILENAME}` yourself. The script validates the
   order, fills in the metadata and preserves the `state` of stories that were
   already ranked, so article progress is never reset.
