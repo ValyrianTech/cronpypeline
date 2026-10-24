@@ -216,3 +216,38 @@ class TestActiveStorySkipsFinishedStories:
         _write_ranking(country, [{"story_id": STORY_ID, "state": "pending", "rank": 1}])
 
         assert vnn_plugin._active_story(country) is None
+
+
+class TestMarkerContextSkipsFinishedStories:
+    """The marker context must agree with the triggers and the actions.
+
+    Reading the raw ``.active_story`` lock made the story-scoped completion
+    markers resolve into a completed story's directory, so the stages derived
+    as complete and target selection skipped the country even though its
+    triggers fired.
+    """
+
+    def test_stale_lock_on_published_story_points_at_next_story(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", "research.md", "article.md", "published.json")
+        next_id = "story_9a8b7c6d"
+        _write_ranking(country, [
+            {"story_id": STORY_ID, "state": "publishing", "rank": 1},
+            {"story_id": next_id, "state": "pending", "rank": 2},
+        ])
+
+        result = vnn_plugin.vnn_marker_context({"target_dir": str(country)})
+
+        assert result == {"active_story": next_id}
+
+    def test_empty_when_every_story_is_finished(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", "research.md", "article.md", "published.json")
+        _write_ranking(country, [{"story_id": STORY_ID, "state": "pending", "rank": 1}])
+
+        result = vnn_plugin.vnn_marker_context({"target_dir": str(country)})
+
+        assert result == {"active_story": ""}
+
+    def test_claimed_story_still_reported(self, country: Path):
+        assert vnn_plugin.vnn_marker_context({"target_dir": str(country)}) == {
+            "active_story": STORY_ID
+        }

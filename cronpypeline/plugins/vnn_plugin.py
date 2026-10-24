@@ -529,7 +529,13 @@ def vnn_marker_context(context: dict[str, Any]) -> dict[str, Any]:
     ``{active_story}``, letting the config declare e.g.
     ``"directory": "stories/{active_story}"``.
 
-    When no story is claimed the id is an empty string, which makes such a
+    The id comes from :func:`_active_story` so the markers agree with the
+    triggers and the actions. Reading the ``.active_story`` lock directly let a
+    stale lock on a completed story resolve the completion markers into that
+    story's directory, so the stages derived as complete and target selection
+    skipped the country even though its triggers fired.
+
+    When no story needs work the id is an empty string, which makes such a
     marker resolve to a path that cannot exist, so a stale country-level file
     is never mistaken for story completion.
 
@@ -537,8 +543,8 @@ def vnn_marker_context(context: dict[str, Any]) -> dict[str, Any]:
     :returns: Dict with the ``active_story`` template variable.
     """
     target_dir = Path(str(context.get("target_dir", "")))
-    active = load_active_story(target_dir) if target_dir else None
-    story_id = str(active["story_id"]) if active else ""
+    resolved = _active_story(target_dir) if target_dir else None
+    story_id = resolved[0] if resolved is not None else ""
     return {"active_story": story_id}
 
 

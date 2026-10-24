@@ -672,3 +672,60 @@ class TestVNNMarkerContextHook:
         pipeline = Pipeline(config)
         status = pipeline.status([COUNTRY])[COUNTRY]
         assert status["research"]["complete"] is False
+
+
+class TestVNNStaleLockDoesNotBlockTargetSelection:
+    """A stale lock on a completed story must not make a country look idle.
+
+    Target selection requires a stage to be both actionable and trigger-firing.
+    When the marker context read the raw ``.active_story`` lock, the
+    story-scoped completion markers resolved into the completed story's
+    directory, so the stages derived as complete (not actionable) while their
+    triggers fired — and the country was skipped as ``no_work``.
+    """
+
+    def _config(self, tmp_path):
+        raw = json.loads(TestVNNDryRunValidation.CONFIG_PATH.read_text())
+        return PipelineConfig.from_dict({
+            **raw,
+            "workspace_dir": str(tmp_path),
+            "lock_file": str(tmp_path / ".VNN" / "pipeline.lock"),
+            "targets": {"type": "static", "items": [COUNTRY]},
+        })
+
+    def test_pending_story_behind_published_lock_is_selected(self, tmp_path):
+        from cronpypeline.plugins.vnn_ranking import write_active_story
+
+        country_dir = tmp_path / COUNTRY
+        country_dir.mkdir()
+        _write_ranking(country_dir, [
+            {"rank": 1, "story_id": "story_done", "state": "publishing"},
+            {"rank": 2, "story_id": "story_next", "state": "pending"},
+        ])
+        _make_story(country_dir, "story_done", "research.md", "article.md", "published.json")
+        write_active_story(country_dir, "story_done", "publishing")
+
+        pipeline = Pipeline(self._config(tmp_path))
+        status = pipeline.status([COUNTRY])[COUNTRY]
+
+        assert status["research"]["complete"] is False
+        assert status["writing"]["complete"] is False
+        assert status["publishing"]["complete"] is False
+
+    def test_tick_picks_the_country_with_pending_work(self, tmp_path):
+        from cronpypeline.plugins.vnn_ranking import write_active_story
+
+        country_dir = tmp_path / COUNTRY
+        country_dir.mkdir()
+        _write_ranking(country_dir, [
+            {"rank": 1, "story_id": "story_done", "state": "publishing"},
+            {"rank": 2, "story_id": "story_next", "state": "pending"},
+        ])
+        _make_story(country_dir, "story_done", "research.md", "article.md", "published.json")
+        write_active_story(country_dir, "story_done", "publishing")
+
+        pipeline = Pipeline(self._config(tmp_path))
+        result = pipeline.tick(dry_run=True)
+
+        assert result.status == TickResultStatus.DRY_RUN
+        assert result.stage_id == "research"
