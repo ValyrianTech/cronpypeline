@@ -983,10 +983,12 @@ class Pipeline:
         # Create completion marker for sync actions (command, subprocess, custom)
         # Skip if the marker is a symlink with no target — the action created it
         # (e.g. run_diagnostic creates the symlink as part of its work).
+        # Skip when the action reported it did no work (see _handle_stale).
         if (
             stage.action.type != ActionType.QUEUE_AGENT
             and "completion" in stage.markers
             and not action_result.data.get("async", False)
+            and not action_result.data.get("skipped", False)
             and not (
                 stage.markers["completion"].type == MarkerType.SYMLINK
                 and stage.markers["completion"].target is None
@@ -1176,9 +1178,11 @@ class Pipeline:
 
             # Create completion marker
             # Skip if the marker is a symlink with no target — the action created it.
+            # Skip when the action reported it did no work (see _handle_stale).
             if (
                 "completion" in next_stage.markers
                 and not result.data.get("async", False)
+                and not result.data.get("skipped", False)
                 and not (
                     next_stage.markers["completion"].type == MarkerType.SYMLINK
                     and next_stage.markers["completion"].target is None
@@ -1393,10 +1397,15 @@ class Pipeline:
         # Create completion marker for sync actions (command, subprocess, custom)
         # Skip if the marker is a symlink with no target — the action created it
         # (e.g. run_diagnostic creates the symlink as part of its work).
+        # Skip when the action reported it did no work: a skipped action must not
+        # mark the stage complete, or a stage that correctly declines to run
+        # (e.g. the VNN publisher finding the story needs no publishing) would
+        # still have its completion marker touched into existence.
         if (
             stage.action.type != ActionType.QUEUE_AGENT
             and "completion" in stage.markers
             and not action_result.data.get("async", False)
+            and not action_result.data.get("skipped", False)
             and not (
                 stage.markers["completion"].type == MarkerType.SYMLINK
                 and stage.markers["completion"].target is None

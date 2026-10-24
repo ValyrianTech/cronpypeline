@@ -1826,6 +1826,108 @@ class TestTickStaleHandling:
                 del sys.modules["async_giveup_mod"]
 
 
+    def test_stale_requeue_does_not_create_completion_marker_when_action_skips(self, tmp_path):
+        """Regression test: a skipped action must not create the completion marker.
+
+        The VNN story stages return ``{"skipped": True}`` when the resolved story
+        does not need their work. On the stale re-queue path the action result is
+        a success without an ``async`` flag, so the completion-marker block ran
+        and ``create_marker`` touched a 0-byte ``published.json`` into existence.
+        The story was then recorded as published with no article at all, which is
+        why the dashboard showed fewer stories researched than published.
+        """
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        (target_dir / ".processing").write_text(json.dumps({"retry_count": 2}))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        (tmp_path / "skipping_mod.py").write_text(
+            "def my_action(action, context):\n"
+            "    return {\"success\": True, \"skipped\": True}\n"
+        )
+        sys.path.insert(0, str(tmp_path))
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Skipping Step",
+                        "trigger": {"type": "file_missing", "path": "published.json"},
+                        "action": {"type": "custom", "params": {"callable": "skipping_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "published.json"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                        },
+                        "timeout_minutes": 30,
+                        "max_retries": 3,
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+
+            result = pipeline.tick(target="my-repo")
+
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert not (target_dir / "published.json").exists(), (
+                "a skipped action must not create the completion marker"
+            )
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "skipping_mod" in sys.modules:
+                del sys.modules["skipping_mod"]
+
+    def test_stale_requeue_still_creates_completion_marker_when_action_works(self, tmp_path):
+        """A non-skipped sync action on the stale path must still complete."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        (target_dir / ".processing").write_text(json.dumps({"retry_count": 2}))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        (tmp_path / "working_mod.py").write_text(
+            "def my_action(action, context):\n"
+            "    return {\"success\": True}\n"
+        )
+        sys.path.insert(0, str(tmp_path))
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "A0",
+                        "name": "Working Step",
+                        "trigger": {"type": "file_missing", "path": "done.md"},
+                        "action": {"type": "custom", "params": {"callable": "working_mod.my_action"}},
+                        "markers": {
+                            "completion": {"type": "file", "name": "done.md"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                        },
+                        "timeout_minutes": 30,
+                        "max_retries": 3,
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+
+            result = pipeline.tick(target="my-repo")
+
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert (target_dir / "done.md").exists()
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "working_mod" in sys.modules:
+                del sys.modules["working_mod"]
+
     def _make_stale_sync_stage_with_chain(self, workspace, second_stage, stage_overrides=None):
         target_dir = workspace / "my-repo"
         target_dir.mkdir()
