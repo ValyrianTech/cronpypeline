@@ -7,6 +7,7 @@ are in the expected Serendipity-compatible format.
 
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cronpypeline.actions import (
@@ -186,7 +187,12 @@ def _write_compiled(country_dir: Path, story_id: str) -> None:
     directory = country_dir / "compiled_stories"
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f"{story_id}.json").write_text(
-        json.dumps({"story_id": story_id, "title_en": story_id}), encoding="utf-8"
+        json.dumps({
+            "story_id": story_id,
+            "title_en": story_id,
+            "compilation_timestamp": datetime.now(timezone.utc).isoformat(),
+        }),
+        encoding="utf-8",
     )
 
 

@@ -323,17 +323,39 @@ def load_compiled_stories(target_dir: Path) -> list[dict[str, Any]]:
     return stories
 
 
-def unranked_stories(target_dir: Path) -> list[dict[str, Any]]:
-    """Return compiled stories that do not appear in ``ranking.json`` yet.
+def unranked_stories(target_dir: Path, date: str | None = None) -> list[dict[str, Any]]:
+    """Return today's compiled stories that do not appear in ``ranking.json`` yet.
+
+    The ranking is rebuilt every day from that day's compiled stories, so only
+    stories compiled on ``date`` are candidates. Stories from previous days are
+    never re-ranked.
 
     :param target_dir: Country target directory.
+    :param date: Day to consider as ``YYYYMMDD``. Defaults to today (UTC).
     :returns: Compiled story dicts missing from the ranking, sorted by id.
     """
+    day = (date or datetime.now(timezone.utc).strftime("%Y%m%d")).replace("-", "")
     ranked_ids = {
         str(s.get("story_id"))
         for s in ranking_stories(load_ranking(target_dir))
     }
-    return [s for s in load_compiled_stories(target_dir) if s["story_id"] not in ranked_ids]
+    return [
+        s for s in load_compiled_stories(target_dir)
+        if s["story_id"] not in ranked_ids and _compiled_on(s, day)
+    ]
+
+
+def _compiled_on(story: dict[str, Any], date: str) -> bool:
+    """Return True when a compiled story's timestamp falls on ``date``.
+
+    :param story: Compiled story dict.
+    :param date: Day in ``YYYYMMDD`` form.
+    :returns: True if ``compilation_timestamp`` starts with that day.
+    """
+    timestamp = str(story.get("compilation_timestamp", ""))
+    if not timestamp:
+        return False
+    return timestamp.replace("-", "")[:8] == date
 
 
 def story_artifacts(story_path: Path) -> dict[str, bool]:

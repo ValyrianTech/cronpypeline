@@ -1,6 +1,7 @@
 """Tests for the VNN prompt builders and queue actions."""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,7 @@ def _write_compiled(target_dir: Path, story_id: str, **fields) -> None:
     """Write a compiled story JSON file for the country."""
     directory = target_dir / "compiled_stories"
     directory.mkdir(parents=True, exist_ok=True)
+    fields.setdefault("compilation_timestamp", datetime.now(timezone.utc).isoformat())
     (directory / f"{story_id}.json").write_text(
         json.dumps({"story_id": story_id, **fields}), encoding="utf-8"
     )

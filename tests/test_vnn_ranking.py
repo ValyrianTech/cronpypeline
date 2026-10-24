@@ -1,6 +1,7 @@
 """Tests for the VNN ranking state helpers."""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,7 @@ def _write_compiled(target_dir: Path, story_id: str, **fields) -> Path:
     directory = target_dir / "compiled_stories"
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{story_id}.json"
+    fields.setdefault("compilation_timestamp", datetime.now(timezone.utc).isoformat())
     path.write_text(json.dumps({"story_id": story_id, **fields}), encoding="utf-8")
     return path
 
@@ -201,6 +203,15 @@ class TestCompiledStories:
     def test_unranked_without_ranking(self, tmp_path):
         _write_compiled(tmp_path, "story_1")
         assert [s["story_id"] for s in unranked_stories(tmp_path)] == ["story_1"]
+
+    def test_unranked_ignores_previous_days(self, tmp_path):
+        _write_compiled(tmp_path, "story_old", compilation_timestamp="2026-10-22T09:00:00+00:00")
+        _write_compiled(tmp_path, "story_new")
+        assert [s["story_id"] for s in unranked_stories(tmp_path)] == ["story_new"]
+
+    def test_unranked_ignores_stories_without_timestamp(self, tmp_path):
+        _write_compiled(tmp_path, "story_1", compilation_timestamp="")
+        assert unranked_stories(tmp_path) == []
 
 
 class TestDeriveStoryState:
