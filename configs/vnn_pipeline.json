@@ -52,7 +52,7 @@
       },
       "markers": {
         "completion_signal": {"type": "file", "name": "ranking.json"},
-        "processing": {"type": "json", "name": ".processing", "content": {}}
+        "processing": {"type": "json", "name": ".processing_ranking", "content": {}}
       },
       "timeout_minutes": 20,
       "max_retries": 3
@@ -73,7 +73,7 @@
       },
       "markers": {
         "completion_signal": {"type": "file", "name": "compilation_metadata.json"},
-        "processing": {"type": "json", "name": ".processing", "content": {}}
+        "processing": {"type": "json", "name": ".processing_compilation", "content": {}}
       },
       "timeout_minutes": 20,
       "max_retries": 3
@@ -94,7 +94,7 @@
       },
       "markers": {
         "completion": {"type": "file", "name": "research.md", "directory": "stories/{active_story}"},
-        "processing": {"type": "json", "name": ".processing", "content": {}}
+        "processing": {"type": "json", "name": ".processing_research", "content": {}}
       },
       "timeout_minutes": 20,
       "max_retries": 3
@@ -115,7 +115,7 @@
       },
       "markers": {
         "completion": {"type": "file", "name": "article.md", "directory": "stories/{active_story}"},
-        "processing": {"type": "json", "name": ".processing", "content": {}}
+        "processing": {"type": "json", "name": ".processing_writing", "content": {}}
       },
       "timeout_minutes": 20,
       "max_retries": 3
@@ -136,7 +136,7 @@
       },
       "markers": {
         "completion": {"type": "file", "name": "published.json", "directory": "stories/{active_story}"},
-        "processing": {"type": "json", "name": ".processing", "content": {}}
+        "processing": {"type": "json", "name": ".processing_publishing", "content": {}}
       },
       "timeout_minutes": 20,
       "max_retries": 3
@@ -156,7 +156,7 @@
         }
       },
       "markers": {
-        "processing": {"type": "json", "name": ".processing", "content": {}}
+        "processing": {"type": "json", "name": ".processing_revision", "content": {}}
       },
       "timeout_minutes": 20,
       "max_retries": 3

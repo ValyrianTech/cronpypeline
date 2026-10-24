@@ -3,6 +3,7 @@
 import json
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from cronpypeline.plugins import vnn_plugin
 from cronpypeline.plugins.vnn_plugin import (
     DEFAULT_PROCESSING_TIMEOUT_MINUTES,
     detect_publishing_needed,
+    detect_ranking_needed,
     detect_research_needed,
     detect_revision_needed,
     detect_writing_needed,
@@ -41,9 +43,24 @@ def _make_story(target_dir: Path, story_id: str, *artefacts: str) -> Path:
     return path
 
 
-def _write_processing(target_dir: Path, queue_file: Path | None = None, age_seconds: float = 0) -> Path:
-    """Write the country-level processing marker, optionally aged."""
-    marker = target_dir / vnn_plugin.PROCESSING_MARKER
+def _write_compiled(target_dir: Path, story_id: str, **fields) -> None:
+    """Write a compiled story JSON file for the country."""
+    directory = target_dir / "compiled_stories"
+    directory.mkdir(parents=True, exist_ok=True)
+    fields.setdefault("compilation_timestamp", datetime.now(timezone.utc).isoformat())
+    (directory / f"{story_id}.json").write_text(
+        json.dumps({"story_id": story_id, **fields}), encoding="utf-8"
+    )
+
+
+def _write_processing(
+    target_dir: Path,
+    queue_file: Path | None = None,
+    age_seconds: float = 0,
+    name: str | None = None,
+) -> Path:
+    """Write a processing marker, optionally aged and under a custom name."""
+    marker = target_dir / (name or vnn_plugin.PROCESSING_MARKER)
     content = {"retry_count": 0}
     if queue_file is not None:
         content["queue_file"] = str(queue_file)
@@ -113,6 +130,75 @@ class TestProcessingGate:
     def test_corrupt_marker_is_processing(self, country: Path):
         (country / vnn_plugin.PROCESSING_MARKER).write_text("not json", encoding="utf-8")
         assert vnn_plugin._is_processing(country, 60) is True
+
+
+def _stage(stage_id: str, marker: str):
+    """Build a minimal stage carrying a processing marker spec."""
+    from cronpypeline.config import ActionSpec, ActionType, MarkerSpec, Stage, TriggerCondition, TriggerType
+
+    return Stage(
+        id=stage_id,
+        name=stage_id,
+        trigger=TriggerCondition(type=TriggerType.CUSTOM, callable="x"),
+        action=ActionSpec(type=ActionType.CUSTOM, params={}),
+        markers={"processing": MarkerSpec(name=marker, type="json")},
+    )
+
+
+class TestPerStageProcessingMarkers:
+    """Each stage must own its processing marker.
+
+    All stages previously shared a country-level ``.processing``, so one
+    stage's marker reset another's: ranking saw research's marker and vice
+    versa, and the tick alternated between them forever.
+    """
+
+    def test_reads_the_stage_own_marker(self, country: Path, tmp_path: Path):
+        queue_file = tmp_path / "queue" / "Agent_1.json"
+        queue_file.parent.mkdir()
+        queue_file.write_text("{}", encoding="utf-8")
+        _write_processing(country, queue_file, name=".processing_research")
+
+        assert vnn_plugin._is_processing(country, 60, _stage("research", ".processing_research")) is True
+        assert vnn_plugin._is_processing(country, 60, _stage("ranking", ".processing_ranking")) is False
+
+    def test_one_stage_marker_does_not_gate_another_trigger(self, country: Path, tmp_path: Path):
+        queue_file = tmp_path / "queue" / "Agent_1.json"
+        queue_file.parent.mkdir()
+        queue_file.write_text("{}", encoding="utf-8")
+        _write_processing(country, queue_file, name=".processing_research")
+        _write_compiled(country, "story_new")
+
+        ranking_ctx = {**_context(country), "stage": _stage("ranking", ".processing_ranking")}
+        research_ctx = {**_context(country), "stage": _stage("research", ".processing_research")}
+
+        assert detect_research_needed(research_ctx) is False
+        assert detect_ranking_needed(ranking_ctx) is True
+
+    def test_ranking_trigger_blocked_by_its_own_marker(self, country: Path, tmp_path: Path):
+        queue_file = tmp_path / "queue" / "RankingAgent_1.json"
+        queue_file.parent.mkdir()
+        queue_file.write_text("{}", encoding="utf-8")
+        _write_processing(country, queue_file, name=".processing_ranking")
+        _write_compiled(country, "story_new")
+
+        ctx = {**_context(country), "stage": _stage("ranking", ".processing_ranking")}
+
+        assert detect_ranking_needed(ctx) is False
+
+    def test_shipped_config_gives_every_stage_a_distinct_marker(self):
+        from cronpypeline.config import PipelineConfig
+
+        config = PipelineConfig.from_file(
+            Path(__file__).resolve().parents[1] / "configs" / "vnn_pipeline.json"
+        )
+        names = [
+            stage.markers["processing"].name
+            for stage in config.stages
+            if "processing" in stage.markers
+        ]
+
+        assert len(names) == len(set(names)), f"stages share a processing marker: {names}"
 
 
 class TestStageTimeout:

@@ -686,11 +686,18 @@ class TestVNNStaleLockDoesNotBlockTargetSelection:
 
     def _config(self, tmp_path):
         raw = json.loads(TestVNNDryRunValidation.CONFIG_PATH.read_text())
+        action_handler = dict(raw.get("action_handler") or {})
+        action_handler["params"] = {
+            **(action_handler.get("params") or {}),
+            "queue_dir": str(tmp_path / "queue"),
+            "agent_settings_dir": str(tmp_path / "agents"),
+        }
         return PipelineConfig.from_dict({
             **raw,
             "workspace_dir": str(tmp_path),
             "lock_file": str(tmp_path / ".VNN" / "pipeline.lock"),
             "targets": {"type": "static", "items": [COUNTRY]},
+            "action_handler": action_handler,
         })
 
     def test_pending_story_behind_published_lock_is_selected(self, tmp_path):

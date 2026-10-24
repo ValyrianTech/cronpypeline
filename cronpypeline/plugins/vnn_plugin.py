@@ -140,39 +140,72 @@ def _country(context: dict[str, Any] | TickContext) -> str:
     return str(context.get("target", ""))
 
 
+def _stage(context: dict[str, Any] | TickContext) -> Any:
+    """Return the stage being evaluated, when the context carries one.
+
+    :param context: Trigger context dict or :class:`TickContext`.
+    :returns: The :class:`Stage` object, or None.
+    """
+    return context.get("stage") if isinstance(context, dict) else None
+
+
 def _stage_timeout(context: dict[str, Any] | TickContext) -> int:
     """Return the stale timeout (in minutes) for the stage being evaluated.
 
-    The pipeline's trigger context does not carry the stage, so the timeout is
-    read from the stage definition when available and otherwise falls back to
-    ``DEFAULT_PROCESSING_TIMEOUT_MINUTES``.
+    The timeout is read from the stage definition when the context carries it
+    and otherwise falls back to ``DEFAULT_PROCESSING_TIMEOUT_MINUTES``.
 
     :param context: Trigger context dict or :class:`TickContext`.
     :returns: Timeout in minutes.
     """
-    stage = context.get("stage") if isinstance(context, dict) else None
-    timeout = getattr(stage, "timeout_minutes", None)
+    timeout = getattr(_stage(context), "timeout_minutes", None)
     if isinstance(timeout, int) and timeout > 0:
         return timeout
     return DEFAULT_PROCESSING_TIMEOUT_MINUTES
 
 
-def _is_processing(target_dir: Path, timeout_minutes: int | None = None) -> bool:
+def _processing_marker_name(stage: Any) -> str:
+    """Return the processing marker filename for a stage.
+
+    Every VNN stage declares its own processing marker so that one stage's
+    marker cannot reset another's. The name is read from the stage definition,
+    falling back to the legacy shared ``PROCESSING_MARKER`` when the stage is
+    unavailable (e.g. a trigger evaluated without a stage in its context).
+
+    :param stage: Stage object, or None.
+    :returns: Processing marker filename.
+    """
+    markers = getattr(stage, "markers", None)
+    if isinstance(markers, dict):
+        spec = markers.get("processing")
+        name = getattr(spec, "name", None)
+        if isinstance(name, str) and name:
+            return name
+    return PROCESSING_MARKER
+
+
+def _is_processing(
+    target_dir: Path,
+    timeout_minutes: int | None = None,
+    stage: Any = None,
+) -> bool:
     """Return True when a stage is currently running for this country.
 
-    The country-level processing marker is shared by every stage, so a marker
-    left behind by an agent that died without clearing it would otherwise gate
-    all story triggers forever. Mirroring the core pipeline's staleness rules,
-    the marker is treated as stale (not processing) when it is older than
-    ``timeout_minutes`` or when its ``queue_file`` is gone and no reminder file
-    is waiting in the queue directory.
+    Each stage has its own processing marker, so a marker left behind by an
+    agent that died without clearing it only gates that stage's triggers.
+    Mirroring the core pipeline's staleness rules, the marker is treated as
+    stale (not processing) when it is older than ``timeout_minutes`` or when
+    its ``queue_file`` is gone and no reminder file is waiting in the queue
+    directory.
 
     :param target_dir: Country target directory.
     :param timeout_minutes: Age in minutes after which the marker is stale.
         When None, only the queue-file rule applies.
-    :returns: True if the country's processing marker exists and is not stale.
+    :param stage: Stage whose processing marker to inspect. When None, the
+        legacy shared marker name is used.
+    :returns: True if the stage's processing marker exists and is not stale.
     """
-    marker = target_dir / PROCESSING_MARKER
+    marker = target_dir / _processing_marker_name(stage)
     if not marker.exists():
         return False
     try:
@@ -308,6 +341,8 @@ def detect_ranking_needed(context: dict[str, Any]) -> bool:
         country's ``min_new_stories`` threshold.
     """
     target_dir = _target_dir(context)
+    if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
+        return False
     threshold = _int_option(_config(context), "min_new_stories", DEFAULT_MIN_NEW_STORIES)
     return len(unranked_stories(target_dir)) >= threshold
 
@@ -339,7 +374,7 @@ def detect_research_needed(context: dict[str, Any]) -> bool:
     :returns: True when the active story has no ``research.md`` yet.
     """
     target_dir = _target_dir(context)
-    if _is_processing(target_dir, _stage_timeout(context)):
+    if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
     resolved = _active_story(target_dir)
     if resolved is None:
@@ -354,7 +389,7 @@ def detect_writing_needed(context: dict[str, Any]) -> bool:
     :returns: True when the active story needs an article written.
     """
     target_dir = _target_dir(context)
-    if _is_processing(target_dir, _stage_timeout(context)):
+    if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
     resolved = _active_story(target_dir)
     if resolved is None:
@@ -369,7 +404,7 @@ def detect_publishing_needed(context: dict[str, Any]) -> bool:
     :returns: True when the active story needs publishing.
     """
     target_dir = _target_dir(context)
-    if _is_processing(target_dir, _stage_timeout(context)):
+    if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
     resolved = _active_story(target_dir)
     if resolved is None:
@@ -385,7 +420,7 @@ def detect_revision_needed(context: dict[str, Any]) -> bool:
         count is below the country's ``max_rejections`` threshold.
     """
     target_dir = _target_dir(context)
-    if _is_processing(target_dir, _stage_timeout(context)):
+    if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
     resolved = _active_story(target_dir)
     if resolved is None:

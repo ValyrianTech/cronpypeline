@@ -271,7 +271,11 @@ class TargetState:
             if not stage.enabled:
                 continue
             ss = self.stage_states.get(stage.id)
-            if ss and ss.is_actionable and evaluate_trigger(stage.trigger, self.target_dir, context=self.context):
+            if ss and ss.is_actionable and evaluate_trigger(
+                stage.trigger,
+                self.target_dir,
+                context={**(self.context or {}), "stage": stage},
+            ):
                 return ss
         return None
 

@@ -856,7 +856,7 @@ class Pipeline:
                     else:
                         self._log_stage(stage, "blocked")
                     continue
-                if evaluate_trigger(stage.trigger, target_dir, context=trigger_context):
+                if evaluate_trigger(stage.trigger, target_dir, context={**trigger_context, "stage": stage}):
                     stage_state = candidate
                     self._log_stage(stage, "trigger_fired")
                     break
@@ -1112,6 +1112,7 @@ class Pipeline:
                     "target_dir": str(target_dir),
                     "workspace_dir": str(self.workspace_dir),
                     "target_config": target_config,
+                    "stage": stage,
                 }
                 if not evaluate_trigger(stage.trigger, target_dir, context=trigger_context):
                     continue
