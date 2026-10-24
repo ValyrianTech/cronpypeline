@@ -344,6 +344,61 @@ class TestStorySetup:
         assert not (country_dir / "stories" / "story_2").exists()
 
 
+class TestActionsAgreeWithTriggers:
+    """The queue actions must resolve the same story the triggers selected.
+
+    Resolving independently let the action claim a story the trigger had
+    already rejected, e.g. one whose ``ranking.json`` state lagged behind the
+    filesystem and was in fact already published.
+    """
+
+    def test_skips_published_story_whose_state_lags(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _make_story(country_dir, "story_1", "story.json", "research.md", "article.md", "published.json")
+        _write_ranking(country_dir, [
+            {"rank": 1, "story_id": "story_1", "state": "pending"},
+            {"rank": 2, "story_id": "story_2", "state": "pending"},
+        ])
+        _write_compiled(country_dir, "story_2", title_en="Two")
+
+        result = queue_research_agent(_action(agent="NewsResearchAgent"), _tick_context(tmp_path, queue_dir))
+
+        assert result.success is True
+        lock = json.loads((country_dir / ".active_story").read_text(encoding="utf-8"))
+        assert lock["story_id"] == "story_2"
+        assert "story_2" in _queued_entry(queue_dir)["content"]
+
+    def test_does_not_reuse_lock_on_published_story(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _make_story(country_dir, "story_1", "story.json", "research.md", "article.md", "published.json")
+        write_active_story(country_dir, "story_1", "research")
+        _write_ranking(country_dir, [
+            {"rank": 1, "story_id": "story_1", "state": "publishing"},
+            {"rank": 2, "story_id": "story_2", "state": "pending"},
+        ])
+        _write_compiled(country_dir, "story_2", title_en="Two")
+
+        result = queue_research_agent(_action(agent="NewsResearchAgent"), _tick_context(tmp_path, queue_dir))
+
+        assert result.success is True
+        lock = json.loads((country_dir / ".active_story").read_text(encoding="utf-8"))
+        assert lock["story_id"] == "story_2"
+
+    def test_no_story_available_when_all_are_published(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _make_story(country_dir, "story_1", "story.json", "research.md", "article.md", "published.json")
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+
+        result = queue_research_agent(_action(agent="NewsResearchAgent"), _tick_context(tmp_path, queue_dir))
+
+        assert result.success is True
+        assert result.data == {"skipped": True}
+        assert not list(queue_dir.glob("*.json"))
+
+
 class TestQueueHandlerConfig:
     def test_missing_queue_dir_raises(self, tmp_path):
         ctx = TickContext(target=COUNTRY, workspace_dir=tmp_path)

@@ -236,11 +236,28 @@ def _compiled_link_ids(target_dir: Path) -> set[str]:
     return set()
 
 
+def _is_finished(story_path: Path) -> bool:
+    """Return True when a story needs no further article work.
+
+    A story is finished once it is published or has given up. The check reads
+    the story directory rather than ``ranking.json`` because the ranking can
+    lag behind the filesystem (an agent publishes without updating the state).
+
+    :param story_path: Story directory.
+    :returns: True when the story is published or gave up.
+    """
+    found = story_artifacts(story_path)
+    return found["published"] or found["gave_up"]
+
+
 def _active_story(target_dir: Path) -> tuple[str, Path] | None:
     """Resolve the story the pipeline should work on.
 
     Prefers the ``.active_story`` lock; otherwise the first ranked story that
-    still needs article work.
+    still needs article work. Stories that are already finished are skipped in
+    both branches: a lock left behind by a completed story must not pin the
+    pipeline forever, and a ranking whose ``state`` lags behind the filesystem
+    must not select an already-published story.
 
     :param target_dir: Country target directory.
     :returns: ``(story_id, story_path)`` or None when there is nothing to do.
@@ -248,12 +265,16 @@ def _active_story(target_dir: Path) -> tuple[str, Path] | None:
     active = load_active_story(target_dir)
     if active is not None:
         story_id = str(active["story_id"])
-        return story_id, story_dir(target_dir, story_id)
+        path = story_dir(target_dir, story_id)
+        if not _is_finished(path):
+            return story_id, path
 
     for story in ranking_stories(load_ranking(target_dir)):
         if story.get("state") in _ACTIVE_STATES:
             story_id = str(story["story_id"])
-            return story_id, story_dir(target_dir, story_id)
+            path = story_dir(target_dir, story_id)
+            if not _is_finished(path):
+                return story_id, path
     return None
 
 

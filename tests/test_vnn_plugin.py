@@ -153,3 +153,66 @@ class TestStaleProcessingDoesNotBlockTriggers:
         _make_story(country, STORY_ID, "story.json", "rejected-article.md")
         _write_processing(country, age_seconds=61 * 60)
         assert detect_revision_needed(_context(country)) is True
+
+
+class TestActiveStorySkipsFinishedStories:
+    """A finished story must never pin the pipeline, however it is selected."""
+
+    def test_stale_lock_on_published_story_falls_through_to_ranking(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", "research.md", "article.md", "published.json")
+        next_id = "story_9a8b7c6d"
+        _write_ranking(country, [
+            {"story_id": STORY_ID, "state": "publishing", "rank": 1},
+            {"story_id": next_id, "state": "pending", "rank": 2},
+        ])
+
+        resolved = vnn_plugin._active_story(country)
+
+        assert resolved is not None
+        assert resolved[0] == next_id
+
+    def test_stale_lock_on_given_up_story_falls_through_to_ranking(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", ".gave_up")
+        next_id = "story_9a8b7c6d"
+        _write_ranking(country, [
+            {"story_id": STORY_ID, "state": "pending", "rank": 1},
+            {"story_id": next_id, "state": "pending", "rank": 2},
+        ])
+
+        resolved = vnn_plugin._active_story(country)
+
+        assert resolved is not None
+        assert resolved[0] == next_id
+
+    def test_ranking_state_lagging_behind_filesystem_is_skipped(self, country: Path):
+        (country / ".active_story").unlink()
+        published_id = "story_11111111"
+        pending_id = "story_22222222"
+        _make_story(country, published_id, "story.json", "research.md", "article.md", "published.json")
+        _write_ranking(country, [
+            {"story_id": published_id, "state": "pending", "rank": 1},
+            {"story_id": pending_id, "state": "pending", "rank": 2},
+        ])
+
+        resolved = vnn_plugin._active_story(country)
+
+        assert resolved is not None
+        assert resolved[0] == pending_id
+
+    def test_research_fires_for_unstarted_story_behind_published_one(self, country: Path):
+        (country / ".active_story").unlink()
+        published_id = "story_11111111"
+        pending_id = "story_22222222"
+        _make_story(country, published_id, "story.json", "research.md", "article.md", "published.json")
+        _write_ranking(country, [
+            {"story_id": published_id, "state": "pending", "rank": 1},
+            {"story_id": pending_id, "state": "pending", "rank": 2},
+        ])
+
+        assert detect_research_needed(_context(country)) is True
+
+    def test_returns_none_when_every_story_is_finished(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", "research.md", "article.md", "published.json")
+        _write_ranking(country, [{"story_id": STORY_ID, "state": "pending", "rank": 1}])
+
+        assert vnn_plugin._active_story(country) is None

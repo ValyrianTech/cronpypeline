@@ -21,7 +21,11 @@ from typing import Any
 from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.config import ActionSpec
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
-from cronpypeline.plugins.vnn_plugin import NEWS_LINKS_SUBDIR, _compiled_link_ids
+from cronpypeline.plugins.vnn_plugin import (
+    NEWS_LINKS_SUBDIR,
+    _active_story,
+    _compiled_link_ids,
+)
 from cronpypeline.plugins.vnn_ranking import (
     COMPILED_SUBDIR,
     RANKING_FILENAME,
@@ -431,26 +435,24 @@ def _ensure_story_dir(
 def _resolve_story(context: TickContext) -> tuple[str, Path] | None:
     """Resolve the story this tick should work on.
 
-    Prefers the country's ``.active_story`` lock; falls back to the first
-    ranked story that still needs article work. The story directory is created
-    and the lock claimed when the story has not been started yet.
+    Delegates to :func:`cronpypeline.plugins.vnn_plugin._active_story` so the
+    action and the triggers always agree on which story is active. Resolving
+    independently here let the action claim a story the trigger had already
+    rejected (e.g. one whose ``ranking.json`` state lagged behind the
+    filesystem and was in fact already published). The story directory is
+    created and the lock claimed when the story has not been started yet.
 
     :param context: Tick context with target and directories.
     :returns: ``(story_id, story_path)`` or None when there is no story to work on.
     """
     target_dir = context.target_dir
+    resolved = _active_story(target_dir)
+    if resolved is None:
+        return None
+    story_id = resolved[0]
     active = load_active_story(target_dir)
-    if active is not None:
-        story_id = str(active["story_id"])
-        return story_id, _ensure_story_dir(
-            target_dir, story_id, str(active.get("stage") or "research")
-        )
-
-    for story in ranking_stories(load_ranking(target_dir)):
-        if story.get("state") in ("pending", "researching", "writing", "publishing"):
-            story_id = str(story["story_id"])
-            return story_id, _ensure_story_dir(target_dir, story_id, "research")
-    return None
+    stage = str(active.get("stage") or "research") if active else "research"
+    return story_id, _ensure_story_dir(target_dir, story_id, stage)
 
 
 def queue_ranking_agent(action: ActionSpec, context: TickContext) -> ActionResult:
