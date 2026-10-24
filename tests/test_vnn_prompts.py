@@ -399,6 +399,109 @@ class TestActionsAgreeWithTriggers:
         assert not list(queue_dir.glob("*.json"))
 
 
+class TestStageWorkGuard:
+    """A stage must not queue its agent for a story that needs other work.
+
+    The stale-stage re-queue path re-runs an action without re-evaluating its
+    trigger, and the active story is re-resolved on every call. Once the
+    previous story finished, the publisher was re-queued against the next
+    ranked story, which had no article at all — the agent could only report
+    that it had nothing to load.
+    """
+
+    def test_publisher_not_queued_for_story_without_article(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _make_story(country_dir, "story_1", "story.json")
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+
+        result = queue_publishing_agent(
+            _action(agent="ArticlePublisherAgent"), _tick_context(tmp_path, queue_dir)
+        )
+
+        assert result.success is True
+        assert result.data == {"skipped": True}
+        assert not list(queue_dir.glob("*.json"))
+
+    def test_publisher_queued_for_story_with_article(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _make_story(country_dir, "story_1", "story.json", "research.md", "article.md")
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+
+        result = queue_publishing_agent(
+            _action(agent="ArticlePublisherAgent"), _tick_context(tmp_path, queue_dir)
+        )
+
+        assert result.success is True
+        assert "story_1" in _queued_entry(queue_dir)["content"]
+
+    def test_writer_not_queued_for_story_without_research(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _make_story(country_dir, "story_1", "story.json")
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+
+        result = queue_writing_agent(
+            _action(agent="ArticleWriterAgent"), _tick_context(tmp_path, queue_dir)
+        )
+
+        assert result.data == {"skipped": True}
+        assert not list(queue_dir.glob("*.json"))
+
+    def test_writer_queued_for_story_with_research(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _make_story(country_dir, "story_1", "story.json", "research.md")
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+
+        result = queue_writing_agent(
+            _action(agent="ArticleWriterAgent"), _tick_context(tmp_path, queue_dir)
+        )
+
+        assert result.success is True
+        assert "story_1" in _queued_entry(queue_dir)["content"]
+
+    def test_researcher_not_queued_for_story_with_research(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _make_story(country_dir, "story_1", "story.json", "research.md")
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+
+        result = queue_research_agent(
+            _action(agent="NewsResearchAgent"), _tick_context(tmp_path, queue_dir)
+        )
+
+        assert result.data == {"skipped": True}
+        assert not list(queue_dir.glob("*.json"))
+
+    def test_reviser_not_queued_for_unrejected_story(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _make_story(country_dir, "story_1", "story.json", "research.md", "article.md")
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+
+        result = queue_revision_agent(
+            _action(agent="ArticleRevisionAgent"), _tick_context(tmp_path, queue_dir)
+        )
+
+        assert result.data == {"skipped": True}
+        assert not list(queue_dir.glob("*.json"))
+
+    def test_reviser_queued_for_rejected_story(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _make_story(country_dir, "story_1", "story.json", "research.md", "rejected-article.md")
+        _write_ranking(country_dir, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
+
+        result = queue_revision_agent(
+            _action(agent="ArticleRevisionAgent"), _tick_context(tmp_path, queue_dir)
+        )
+
+        assert result.success is True
+        assert "story_1" in _queued_entry(queue_dir)["content"]
+
+
 class TestQueueHandlerConfig:
     def test_missing_queue_dir_raises(self, tmp_path):
         ctx = TickContext(target=COUNTRY, workspace_dir=tmp_path)

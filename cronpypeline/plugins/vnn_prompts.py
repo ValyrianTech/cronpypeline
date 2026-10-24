@@ -25,6 +25,7 @@ from cronpypeline.plugins.vnn_plugin import (
     NEWS_LINKS_SUBDIR,
     _active_story,
     _compiled_link_ids,
+    _story_needs,
 )
 from cronpypeline.plugins.vnn_ranking import (
     COMPILED_SUBDIR,
@@ -537,12 +538,22 @@ def _queue_story_prompt(
     action: ActionSpec,
     context: TickContext,
     builder: Any,
+    work: str,
 ) -> ActionResult:
     """Resolve the active story and queue a story-scoped prompt.
+
+    The resolved story must still need ``work`` before an agent is queued for
+    it. The stale-stage re-queue path re-runs an action without re-evaluating
+    its trigger, and :func:`_resolve_story` re-resolves the active story each
+    time, so once the previous story finishes it can advance to a different
+    one. Without this check the publisher was queued for a story that had no
+    article at all, and the agent could only report that it had nothing to do.
 
     :param action: Action spec with queue params.
     :param context: Tick context with target and directories.
     :param builder: Prompt builder taking ``(country, story_id, story_path, extra_instructions)``.
+    :param work: ``_story_needs`` key this stage performs (research, writing,
+        publishing or revision).
     :returns: Result from the queue handler.
     """
     if context.dry_run:
@@ -558,6 +569,13 @@ def _queue_story_prompt(
             data={"skipped": True},
         )
     story_id, story_path = resolved
+
+    if not _story_needs(story_path)[work]:
+        return ActionResult(
+            success=True,
+            stdout=f"Story {story_id} does not need {work}",
+            data={"skipped": True},
+        )
 
     prompt = builder(
         context.target,
@@ -575,7 +593,7 @@ def queue_research_agent(action: ActionSpec, context: TickContext) -> ActionResu
     :param context: Tick context with target and directories.
     :returns: Result from the queue handler.
     """
-    return _queue_story_prompt(action, context, build_research_prompt)
+    return _queue_story_prompt(action, context, build_research_prompt, "research")
 
 
 def queue_writing_agent(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -585,7 +603,7 @@ def queue_writing_agent(action: ActionSpec, context: TickContext) -> ActionResul
     :param context: Tick context with target and directories.
     :returns: Result from the queue handler.
     """
-    return _queue_story_prompt(action, context, build_writing_prompt)
+    return _queue_story_prompt(action, context, build_writing_prompt, "writing")
 
 
 def queue_publishing_agent(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -595,7 +613,7 @@ def queue_publishing_agent(action: ActionSpec, context: TickContext) -> ActionRe
     :param context: Tick context with target and directories.
     :returns: Result from the queue handler.
     """
-    return _queue_story_prompt(action, context, build_publishing_prompt)
+    return _queue_story_prompt(action, context, build_publishing_prompt, "publishing")
 
 
 def queue_revision_agent(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -605,7 +623,7 @@ def queue_revision_agent(action: ActionSpec, context: TickContext) -> ActionResu
     :param context: Tick context with target and directories.
     :returns: Result from the queue handler.
     """
-    return _queue_story_prompt(action, context, build_revision_prompt)
+    return _queue_story_prompt(action, context, build_revision_prompt, "revision")
 
 
 __all__ = [
