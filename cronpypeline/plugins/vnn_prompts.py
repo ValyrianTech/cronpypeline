@@ -60,16 +60,24 @@ def _story_bullets(stories: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _already_ranked_rule(already_ranked: list[dict[str, Any]]) -> str:
-    """Render the rule telling the agent to omit already-ranked ids.
+def _already_ranked_note(already_ranked: list[dict[str, Any]]) -> str:
+    """Render the note listing stories that already have a ranking.
+
+    The ranking is rebuilt from scratch on every save, so these stories must be
+    included in the submitted order again; the note only tells the agent where
+    they currently sit so it can keep their relative order.
 
     :param already_ranked: Stories already present in the ranking.
-    :returns: A rule line ending in a newline, or an empty string when there is
-        no previous ranking.
+    :returns: A note block ending in a newline, or an empty string when there
+        is no previous ranking.
     """
     if not already_ranked:
         return ""
-    return "- Do not include ids from **Already ranked** — they stay where they are.\n"
+    return (
+        "\nThese stories are already in the ranking. The ranking is rebuilt from "
+        "scratch on every save, so you MUST include them in the order you submit "
+        "as well — keep them in their current relative order.\n"
+    )
 
 
 def build_ranking_prompt(
@@ -99,11 +107,7 @@ def build_ranking_prompt(
         prompt += "\n## Already ranked\n\n"
         for story in already_ranked:
             prompt += f"- {story.get('rank')}. {story['story_id']} — {story.get('title_en', '')}\n"
-        prompt += (
-            "\nThese stories are already in the ranking. Keep them in their current "
-            "relative order and do NOT include them in the order you submit — the "
-            "script merges your new stories into the existing ranking.\n"
-        )
+        prompt += _already_ranked_note(already_ranked)
 
     prompt += f"""
 ## Task
@@ -125,7 +129,7 @@ instead.
 
 Rules:
 - Use every story id from **Stories to rank** exactly once.
-{_already_ranked_rule(already_ranked)}- Do not invent story ids and do not drop any — the script rejects both.
+- Do not invent story ids and do not drop any — the script rejects both.
 - Do not write `{country}/{RANKING_FILENAME}` yourself. The script validates the
   order, fills in the metadata and preserves the `state` of stories that were
   already ranked, so article progress is never reset.
