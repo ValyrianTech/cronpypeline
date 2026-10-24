@@ -16,8 +16,9 @@ Provides:
 - Actions: `claim_story` (writes `.active_story`), `release_story` (clears it),
   `validate_ranking_action` (checks the ranking the agent wrote),
   `sync_story_states` (reconciles the ranking with the story directories).
-- Hooks: `vnn_pre_tick` (global queue gate + inconsistent-state cleanup) and
-  `vnn_post_tick` (rejection audit trail).
+- Hooks: `vnn_pre_tick` (global queue gate, ranking sync, finished-story lock
+  release, inconsistent-state cleanup) and `vnn_post_tick` (rejection audit
+  trail).
 """
 
 import json
@@ -26,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from cronpypeline.actions import ActionResult, TickContext
-from cronpypeline.config import ActionSpec
+from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.io_utils import write_json_atomic
 from cronpypeline.plugins.vnn_ranking import (
     ACTIVE_STORY_FILENAME,
@@ -667,17 +668,77 @@ def log_rejection(context: dict[str, Any], result: ActionResult | None) -> None:
     write_json_atomic(log_file, existing)
 
 
+def _hook_tick_context(context: dict[str, Any]) -> TickContext:
+    """Adapt a pre/post-tick hook context dict into a :class:`TickContext`.
+
+    Hooks receive a plain dict, but the action callables expect a TickContext.
+    ``target_dir`` is derived from ``workspace_dir``/``target``, so both are
+    taken from the hook context.
+
+    :param context: Hook context dict.
+    :returns: Equivalent TickContext.
+    """
+    return TickContext(
+        target=str(context.get("target", "")),
+        workspace_dir=Path(str(context.get("workspace_dir", ""))),
+        target_config=dict(context.get("target_config") or {}),
+    )
+
+
+def sync_story_states_hook(context: dict[str, Any]) -> bool:
+    """Pre-tick hook: reconcile ``ranking.json`` with the story directories.
+
+    Runs before state is derived so a story whose ``state`` lags behind the
+    filesystem (an agent published without updating the ranking) is corrected
+    before triggers and target selection read it. Never blocks the tick.
+
+    :param context: Hook context dict with ``target_dir``.
+    :returns: Always True.
+    """
+    target_dir = Path(str(context.get("target_dir", "")))
+    if not target_dir:
+        return True
+    sync_story_states(ActionSpec(type=ActionType.CUSTOM, params={}), _hook_tick_context(context))
+    return True
+
+
+def release_finished_story_hook(context: dict[str, Any]) -> bool:
+    """Pre-tick hook: release the active story lock once its story is finished.
+
+    A lock left behind by a completed story is already ignored by
+    :func:`_active_story`, but clearing it keeps ``.active_story`` an accurate
+    record of what the pipeline is working on. Never blocks the tick.
+
+    :param context: Hook context dict with ``target_dir``.
+    :returns: Always True.
+    """
+    target_dir = Path(str(context.get("target_dir", "")))
+    if not target_dir:
+        return True
+    active = load_active_story(target_dir)
+    if active is None:
+        return True
+    story_id = str(active["story_id"])
+    if _is_finished(story_dir(target_dir, story_id)):
+        release_story(ActionSpec(type=ActionType.CUSTOM, params={}), _hook_tick_context(context))
+    return True
+
+
 def vnn_pre_tick(context: dict[str, Any]) -> bool:
     """Composite pre_tick hook.
 
     Runs the global queue gate first (cheapest, and it short-circuits the whole
-    tick), then resolves inconsistent story state.
+    tick), then reconciles the ranking with the filesystem, then releases a
+    lock left behind by a finished story, then resolves inconsistent story
+    state.
 
     :param context: Hook context dict.
     :returns: True if all hooks pass, False if any hook returns False.
     """
     if queue_empty_global(context) is False:
         return False
+    sync_story_states_hook(context)
+    release_finished_story_hook(context)
     return cleanup_inconsistent_state(context)
 
 
@@ -705,8 +766,10 @@ __all__ = [
     "detect_writing_needed",
     "log_rejection",
     "queue_empty_global",
+    "release_finished_story_hook",
     "release_story",
     "sync_story_states",
+    "sync_story_states_hook",
     "validate_ranking_action",
     "vnn_post_tick",
     "vnn_pre_tick",

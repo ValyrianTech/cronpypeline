@@ -17,7 +17,12 @@ from cronpypeline.plugins.vnn_plugin import (
     detect_revision_needed,
     detect_writing_needed,
 )
-from cronpypeline.plugins.vnn_ranking import write_active_story, write_ranking
+from cronpypeline.plugins.vnn_ranking import (
+    load_active_story,
+    load_ranking,
+    write_active_story,
+    write_ranking,
+)
 
 COUNTRY = "china"
 DATE = "20261022"
@@ -337,3 +342,71 @@ class TestMarkerContextSkipsFinishedStories:
         assert vnn_plugin.vnn_marker_context({"target_dir": str(country)}) == {
             "active_story": STORY_ID
         }
+
+
+def _hook_context(target_dir: Path) -> dict:
+    """Build a pre_tick hook context for a country directory."""
+    return {
+        "target": target_dir.name,
+        "target_dir": str(target_dir),
+        "workspace_dir": str(target_dir.parent),
+        "target_config": {},
+        "queue_dir": None,
+    }
+
+
+class TestSyncStoryStatesHook:
+    """The pre_tick hook reconciles ranking.json with the story directories."""
+
+    def test_published_story_state_is_corrected(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", "research.md", "article.md", "published.json")
+        _write_ranking(country, [{"story_id": STORY_ID, "state": "pending", "rank": 1}])
+
+        assert vnn_plugin.sync_story_states_hook(_hook_context(country)) is True
+
+        states = {s["story_id"]: s["state"] for s in load_ranking(country)["stories"]}
+        assert states[STORY_ID] == "published"
+
+    def test_progress_is_never_rolled_back(self, country: Path):
+        _make_story(country, STORY_ID, "story.json")
+        _write_ranking(country, [{"story_id": STORY_ID, "state": "publishing", "rank": 1}])
+
+        vnn_plugin.sync_story_states_hook(_hook_context(country))
+
+        states = {s["story_id"]: s["state"] for s in load_ranking(country)["stories"]}
+        assert states[STORY_ID] == "publishing"
+
+    def test_missing_ranking_is_a_no_op(self, country: Path):
+        (country / "ranking.json").unlink()
+
+        assert vnn_plugin.sync_story_states_hook(_hook_context(country)) is True
+
+
+class TestReleaseFinishedStoryHook:
+    """The pre_tick hook clears a lock left behind by a finished story."""
+
+    def test_releases_lock_on_published_story(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", "research.md", "article.md", "published.json")
+
+        assert vnn_plugin.release_finished_story_hook(_hook_context(country)) is True
+
+        assert load_active_story(country) is None
+
+    def test_releases_lock_on_given_up_story(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", ".gave_up")
+
+        vnn_plugin.release_finished_story_hook(_hook_context(country))
+
+        assert load_active_story(country) is None
+
+    def test_keeps_lock_on_unfinished_story(self, country: Path):
+        vnn_plugin.release_finished_story_hook(_hook_context(country))
+
+        lock = load_active_story(country)
+        assert lock is not None
+        assert lock["story_id"] == STORY_ID
+
+    def test_no_lock_is_a_no_op(self, country: Path):
+        (country / ".active_story").unlink()
+
+        assert vnn_plugin.release_finished_story_hook(_hook_context(country)) is True
