@@ -10,7 +10,9 @@ import pytest
 
 from cronpypeline.plugins import vnn_plugin
 from cronpypeline.plugins.vnn_plugin import (
+    DEFAULT_MIN_LINKS,
     DEFAULT_PROCESSING_TIMEOUT_MINUTES,
+    detect_compilation_needed,
     detect_publishing_needed,
     detect_ranking_needed,
     detect_research_needed,
@@ -46,6 +48,15 @@ def _make_story(target_dir: Path, story_id: str, *artefacts: str) -> Path:
     for name in artefacts:
         (path / name).write_text("{}", encoding="utf-8")
     return path
+
+
+def _write_link(target_dir: Path, link_id: str, **fields) -> None:
+    """Write an archived news link file for the country."""
+    directory = target_dir / "news_links"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{link_id}.json").write_text(
+        json.dumps({"id": link_id, **fields}), encoding="utf-8"
+    )
 
 
 def _write_compiled(target_dir: Path, story_id: str, **fields) -> None:
@@ -190,6 +201,50 @@ class TestPerStageProcessingMarkers:
         ctx = {**_context(country), "stage": _stage("ranking", ".processing_ranking")}
 
         assert detect_ranking_needed(ctx) is False
+
+    def test_compilation_trigger_blocked_by_its_own_marker(self, country: Path, tmp_path: Path):
+        """A running compiler must not be re-queued on the next tick.
+
+        The pending-link count only drops once the agent writes
+        compilation_metadata.json, so without the gate the trigger fired every
+        tick, exhausted the retry budget and gave up mid-compilation.
+        """
+        queue_file = tmp_path / "queue" / "NewsCompilerAgent_1.json"
+        queue_file.parent.mkdir()
+        queue_file.write_text("{}", encoding="utf-8")
+        _write_processing(country, queue_file, name=".processing_compilation")
+        for index in range(DEFAULT_MIN_LINKS):
+            _write_link(country, f"link_{index}")
+
+        ctx = {**_context(country), "stage": _stage("compilation", ".processing_compilation")}
+
+        assert detect_compilation_needed(ctx) is False
+
+    def test_compilation_trigger_fires_without_a_marker(self, country: Path):
+        for index in range(DEFAULT_MIN_LINKS):
+            _write_link(country, f"link_{index}")
+
+        ctx = {**_context(country), "stage": _stage("compilation", ".processing_compilation")}
+
+        assert detect_compilation_needed(ctx) is True
+
+    def test_every_vnn_trigger_honours_the_processing_gate(self):
+        """Guard: a trigger that forgets the gate re-queues its own agent."""
+        import inspect
+
+        from cronpypeline.plugins import vnn_plugin
+
+        triggers = [
+            name
+            for name, value in vars(vnn_plugin).items()
+            if name.startswith("detect_") and name.endswith("_needed") and callable(value)
+        ]
+
+        missing = [
+            name for name in triggers if "_is_processing(" not in inspect.getsource(getattr(vnn_plugin, name))
+        ]
+
+        assert not missing, f"triggers missing the processing gate: {missing}"
 
     def test_shipped_config_gives_every_stage_a_distinct_marker(self):
         from cronpypeline.config import PipelineConfig

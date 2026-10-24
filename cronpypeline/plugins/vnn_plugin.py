@@ -354,10 +354,18 @@ def detect_compilation_needed(context: dict[str, Any]) -> bool:
     A first compilation needs ``min_links`` links; a recompilation needs
     ``min_new_links`` links that were not part of the previous compilation.
 
+    The stage is skipped while its own agent is still running. Without this
+    gate the trigger kept firing on every tick during a compilation: the
+    pending-link count only drops once the agent writes
+    ``compilation_metadata.json``, so the retry budget was exhausted and the
+    stage gave up before the agent could finish.
+
     :param context: Trigger context dict with ``target_dir`` and ``target_config``.
     :returns: True when a compilation should be queued.
     """
     target_dir = _target_dir(context)
+    if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
+        return False
     config = _config(context)
     current = _current_link_ids(target_dir)
     if not current:
