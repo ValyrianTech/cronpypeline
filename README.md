@@ -978,6 +978,8 @@ Story states: `pending` → `researching` → `writing` → `publishing` → `pu
 
 **`cronpypeline.plugins.vnn_prompts`** — prompt builders (`build_ranking_prompt`, `build_compile_prompt`, `build_research_prompt`, `build_writing_prompt`, `build_publishing_prompt`, `build_revision_prompt`) and the matching queue actions (`queue_ranking_agent`, `queue_compile_agent`, `queue_research_agent`, `queue_writing_agent`, `queue_publishing_agent`, `queue_revision_agent`).
 
+The queue actions decline to queue an agent when there is nothing left to do, returning `data: {"skipped": True}` instead of a failure. This matters because the stale re-queue path (`_handle_stale`) re-runs a stage's action **without re-evaluating its trigger**, so a stage whose work is already finished would otherwise be re-dispatched on every tick until `max_retries` is exhausted. `queue_compile_agent` in particular declines when no archived links are pending — the queue monitor deletes the queue file as soon as the conversation finishes, before the agent has written `compilation_metadata.json`, so the compiler stage was previously re-queued several times and gave up before the agent could complete. A `skipped` result also clears the processing marker, so the stage stops re-queueing.
+
 **`cronpypeline.plugins.vnn_ranking`** — country-local ranking state helpers (`load_ranking`, `ranking_stories`, `unranked_stories`, `load_active_story`, `write_active_story`, `set_story_state`, `derive_story_state`, `validate_ranking`, `today_utc`, ...).
 
 ```json

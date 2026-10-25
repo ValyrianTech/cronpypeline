@@ -1882,6 +1882,71 @@ class TestTickStaleHandling:
             if "skipping_mod" in sys.modules:
                 del sys.modules["skipping_mod"]
 
+    def test_stale_requeue_stops_when_async_action_declines_to_queue(self, tmp_path):
+        """Regression test: a stale async stage must not re-queue once its work is done.
+
+        The VNN compiler stage is async and its queue file is deleted by the
+        queue monitor as soon as the conversation finishes — before the agent
+        writes ``compilation_metadata.json``. The stage was therefore stale on
+        every tick and ``_handle_stale`` re-ran the action without re-evaluating
+        the trigger, burning the whole retry budget and giving up before the
+        agent could finish. ``queue_compile_agent`` now returns
+        ``{"skipped": True}`` when no links are pending, which must stop the
+        cascade instead of consuming retries.
+        """
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir()
+
+        (target_dir / ".processing").write_text(json.dumps({"retry_count": 1}))
+        old_time = time.time() - 3600
+        os.utime(target_dir / ".processing", (old_time, old_time))
+
+        (tmp_path / "declining_mod.py").write_text(
+            "def my_action(action, context):\n"
+            "    return {\"success\": True, \"skipped\": True}\n"
+        )
+        sys.path.insert(0, str(tmp_path))
+        try:
+            config = PipelineConfig.from_dict({
+                "name": "test",
+                "workspace_dir": str(workspace),
+                "stages": [
+                    {
+                        "id": "compilation",
+                        "name": "Compilation",
+                        "trigger": {"type": "file_missing", "path": "compilation_metadata.json"},
+                        "action": {"type": "custom", "params": {"callable": "declining_mod.my_action"}},
+                        "markers": {
+                            "completion_signal": {"type": "file", "name": "compilation_metadata.json"},
+                            "processing": {"type": "json", "name": ".processing", "content": {}},
+                            "give_up": {"type": "file", "name": ".gave_up"},
+                        },
+                        "timeout_minutes": 30,
+                        "max_retries": 3,
+                    },
+                ],
+            })
+            pipeline = Pipeline(config)
+
+            result = pipeline.tick(target="my-repo")
+
+            assert result.status == TickResultStatus.ACTION_EXECUTED
+            assert not (target_dir / ".gave_up").exists(), (
+                "a declining action must not consume the retry budget"
+            )
+            assert not (target_dir / ".processing").exists(), (
+                "a declining action must clear the processing marker so the stage stops re-queueing"
+            )
+            assert not (target_dir / "compilation_metadata.json").exists(), (
+                "a skipped action must not create the completion marker"
+            )
+        finally:
+            sys.path.remove(str(tmp_path))
+            if "declining_mod" in sys.modules:
+                del sys.modules["declining_mod"]
+
     def test_stale_requeue_still_creates_completion_marker_when_action_works(self, tmp_path):
         """A non-skipped sync action on the stale path must still complete."""
         workspace = tmp_path / "workspace"

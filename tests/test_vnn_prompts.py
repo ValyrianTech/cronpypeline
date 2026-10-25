@@ -49,6 +49,23 @@ def _write_ranking(target_dir: Path, stories) -> None:
     })
 
 
+def _write_links(target_dir: Path, *link_ids: str) -> None:
+    """Write archived news link files for the country."""
+    directory = target_dir / "news_links"
+    directory.mkdir(parents=True, exist_ok=True)
+    for link_id in link_ids:
+        (directory / f"{link_id}.json").write_text("{}", encoding="utf-8")
+
+
+def _write_compilation_metadata(target_dir: Path, *link_ids: str) -> None:
+    """Write the compilation marker recording the given compiled link ids."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "compilation_metadata.json").write_text(
+        json.dumps({"date": DATE, "country": COUNTRY, "link_ids": list(link_ids)}),
+        encoding="utf-8",
+    )
+
+
 def _make_story(target_dir: Path, story_id: str, *artefacts: str) -> Path:
     """Create a story directory containing the given artefact files."""
     path = target_dir / "stories" / story_id
@@ -290,6 +307,65 @@ class TestQueueCompileAgent:
         entry = _queued_entry(queue_dir)
         assert entry["agent"] == "NewsCompilerAgent"
         assert "11 archived links" in entry["content"]
+
+    def test_no_pending_links_is_a_noop(self, tmp_path):
+        """The agent may compile between the trigger and the action — not a failure."""
+        queue_dir = tmp_path / "queue"
+        result = queue_compile_agent(
+            _action(agent="NewsCompilerAgent"), _tick_context(tmp_path, queue_dir)
+        )
+        assert result.success is True
+        assert result.data["skipped"] is True
+        assert "No archived links" in result.stdout
+        assert not queue_dir.exists()
+
+    def test_all_links_compiled_is_a_noop(self, tmp_path):
+        """A stale re-queue must not re-dispatch the compiler once the work is done."""
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _write_links(country_dir, "link_1", "link_2")
+        _write_compilation_metadata(country_dir, "link_1", "link_2")
+
+        result = queue_compile_agent(
+            _action(agent="NewsCompilerAgent"), _tick_context(tmp_path, queue_dir)
+        )
+
+        assert result.success is True
+        assert result.data["skipped"] is True
+        assert not queue_dir.exists()
+
+    def test_pending_links_still_queue(self, tmp_path):
+        """Links not yet recorded in compilation_metadata.json are still compiled."""
+        queue_dir = tmp_path / "queue"
+        country_dir = tmp_path / COUNTRY
+        _write_links(country_dir, "link_1", "link_2")
+        _write_compilation_metadata(country_dir, "link_1")
+
+        result = queue_compile_agent(
+            _action(agent="NewsCompilerAgent"), _tick_context(tmp_path, queue_dir)
+        )
+
+        assert result.success is True
+        entry = _queued_entry(queue_dir)
+        assert "1 archived links" in entry["content"]
+
+    def test_explicit_link_count_override_bypasses_guard(self, tmp_path):
+        """An explicit link_count is a deliberate override and is queued as-is."""
+        queue_dir = tmp_path / "queue"
+        result = queue_compile_agent(
+            _action(agent="NewsCompilerAgent", link_count=0), _tick_context(tmp_path, queue_dir)
+        )
+        assert result.success is True
+        entry = _queued_entry(queue_dir)
+        assert "0 archived links" in entry["content"]
+
+    def test_dry_run_writes_nothing(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        result = queue_compile_agent(
+            _action(agent="NewsCompilerAgent"), _tick_context(tmp_path, queue_dir, dry_run=True)
+        )
+        assert result.dry_run is True
+        assert not queue_dir.exists()
 
 
 class TestQueueStoryAgents:
@@ -539,11 +615,13 @@ class TestStageWorkGuard:
 
 class TestQueueHandlerConfig:
     def test_missing_queue_dir_raises(self, tmp_path):
+        _write_links(tmp_path / COUNTRY, "link_1")
         ctx = TickContext(target=COUNTRY, workspace_dir=tmp_path)
         with pytest.raises(ValueError, match="queue_dir is required"):
             queue_compile_agent(_action(agent="A"), ctx)
 
     def test_traversal_queue_dir_raises(self, tmp_path):
+        _write_links(tmp_path / COUNTRY, "link_1")
         ctx = TickContext(
             target=COUNTRY,
             workspace_dir=tmp_path,
@@ -558,6 +636,7 @@ class TestQueueHandlerConfig:
 
     def test_relative_agent_settings_dir_is_resolved(self, tmp_path):
         queue_dir = tmp_path / "queue"
+        _write_links(tmp_path / COUNTRY, "link_1")
         ctx = TickContext(
             target=COUNTRY,
             workspace_dir=tmp_path,

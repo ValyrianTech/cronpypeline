@@ -549,6 +549,14 @@ def queue_compile_agent(action: ActionSpec, context: TickContext) -> ActionResul
     Expected action.params: same queue settings as :func:`queue_ranking_agent`,
     plus an optional ``link_count`` override.
 
+    The action declines to queue when no links are pending. The stale-stage
+    re-queue path re-runs an action without re-evaluating its trigger, and the
+    queue monitor deletes the queue file as soon as the conversation finishes —
+    before the agent has written ``compilation_metadata.json``. The stage was
+    therefore re-queued on every tick while the agent was still compiling, and
+    the retry budget was exhausted before the work could complete. Declining
+    once the links are compiled stops that cascade.
+
     :param action: Action spec with queue params.
     :param context: Tick context with target and directories.
     :returns: Result from the queue handler.
@@ -559,6 +567,16 @@ def queue_compile_agent(action: ActionSpec, context: TickContext) -> ActionResul
     link_count = action.params.get("link_count")
     if link_count is None:
         link_count = _pending_link_count(context.target_dir)
+        if link_count <= 0:
+            # Nothing left to compile: the agent finished between the trigger
+            # evaluation and this action (or this is a stale re-queue). A no-op
+            # is not a failure, and ``skipped`` keeps the pipeline from
+            # re-queueing the stage again.
+            return ActionResult(
+                success=True,
+                stdout="No archived links to compile",
+                data={"skipped": True},
+            )
 
     prompt = build_compile_prompt(
         country=context.target,
