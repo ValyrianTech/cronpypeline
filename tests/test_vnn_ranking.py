@@ -24,6 +24,7 @@ from cronpypeline.plugins.vnn_ranking import (
     rejection_count,
     set_story_state,
     state_priority,
+    split_ranked_by_day,
     story_dir,
     today_utc,
     unranked_stories,
@@ -212,6 +213,39 @@ class TestCompiledStories:
     def test_unranked_ignores_stories_without_timestamp(self, tmp_path):
         _write_compiled(tmp_path, "story_1", compilation_timestamp="")
         assert unranked_stories(tmp_path) == []
+
+
+class TestSplitRankedByDay:
+    def test_splits_same_day_from_earlier(self, tmp_path):
+        _write_compiled(tmp_path, "story_today")
+        _write_compiled(tmp_path, "story_old", compilation_timestamp="2026-10-22T09:00:00+00:00")
+        _write_ranking(tmp_path, [
+            {"rank": 1, "story_id": "story_old", "state": "pending"},
+            {"rank": 2, "story_id": "story_today", "state": "pending"},
+        ])
+        same, earlier = split_ranked_by_day(tmp_path)
+        assert [s["story_id"] for s in same] == ["story_today"]
+        assert [s["story_id"] for s in earlier] == ["story_old"]
+
+    def test_no_ranking_yields_empty_lists(self, tmp_path):
+        assert split_ranked_by_day(tmp_path) == ([], [])
+
+    def test_entry_without_compiled_story_is_same_day(self, tmp_path):
+        """A missing compiled story must not silently drop the entry."""
+        _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_gone", "state": "pending"}])
+        same, earlier = split_ranked_by_day(tmp_path)
+        assert [s["story_id"] for s in same] == ["story_gone"]
+        assert earlier == []
+
+    def test_preserves_rank_order(self, tmp_path):
+        _write_compiled(tmp_path, "story_a", compilation_timestamp="2026-10-22T09:00:00+00:00")
+        _write_compiled(tmp_path, "story_b", compilation_timestamp="2026-10-23T09:00:00+00:00")
+        _write_ranking(tmp_path, [
+            {"rank": 1, "story_id": "story_b", "state": "pending"},
+            {"rank": 2, "story_id": "story_a", "state": "pending"},
+        ])
+        _, earlier = split_ranked_by_day(tmp_path)
+        assert [s["story_id"] for s in earlier] == ["story_b", "story_a"]
 
 
 class TestDeriveStoryState:

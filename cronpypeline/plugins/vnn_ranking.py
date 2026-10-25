@@ -358,6 +358,39 @@ def _compiled_on(story: dict[str, Any], date: str) -> bool:
     return timestamp.replace("-", "")[:8] == date
 
 
+def split_ranked_by_day(
+    target_dir: Path,
+    date: str | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split the existing ranking into same-day and earlier-day stories.
+
+    ``save_ranking.py`` only accepts stories compiled on the day being ranked,
+    so a story ranked on an earlier day cannot be resubmitted. Callers need to
+    tell the two apart: the same-day ones must be included in the submitted
+    order, the earlier-day ones must not.
+
+    A ranking entry carries no compilation timestamp, so each one is matched
+    against the compiled stories to find out when it was compiled. An entry
+    whose compiled story is missing is treated as same-day, so it is still
+    offered for resubmission rather than silently dropped.
+
+    :param target_dir: Country target directory.
+    :param date: Day to consider as ``YYYYMMDD``. Defaults to today (UTC).
+    :returns: ``(same_day, earlier)`` ranking entries, each in rank order.
+    """
+    day = (date or datetime.now(timezone.utc).strftime("%Y%m%d")).replace("-", "")
+    compiled = {str(s["story_id"]): s for s in load_compiled_stories(target_dir)}
+    same_day: list[dict[str, Any]] = []
+    earlier: list[dict[str, Any]] = []
+    for story in ranking_stories(load_ranking(target_dir)):
+        source = compiled.get(str(story["story_id"]))
+        if source is not None and not _compiled_on(source, day):
+            earlier.append(story)
+        else:
+            same_day.append(story)
+    return same_day, earlier
+
+
 def story_artifacts(story_path: Path) -> dict[str, bool]:
     """Report which pipeline artefacts exist in a story directory.
 

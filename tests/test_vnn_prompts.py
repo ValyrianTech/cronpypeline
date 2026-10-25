@@ -157,6 +157,41 @@ class TestBuildRankingPrompt:
         assert "Already ranked" not in prompt
         assert "Use every story id from **Stories to rank** exactly once." in prompt
 
+    def test_earlier_day_stories_are_excluded_from_the_order(self):
+        """Stories ranked on an earlier day must not be resubmitted.
+
+        save_ranking.py only accepts stories compiled on the day being ranked,
+        so it rejects an earlier-day id as unknown. Telling the agent to include
+        them made the ranking impossible to save: the agent submitted all six
+        ids, the script rejected four, and the retry then dropped them.
+        """
+        prompt = build_ranking_prompt(
+            COUNTRY, DATE,
+            [{"story_id": "story_new"}],
+            previous={"stories": []},
+            earlier_ranked=[{"rank": 1, "story_id": "story_old", "title_en": "Old"}],
+        )
+        assert "Ranked on an earlier day" in prompt
+        assert "story_old" in prompt
+        assert "Do NOT include their ids in the order you submit" in prompt
+        assert "you MUST include them in the order you submit" not in prompt
+
+    def test_earlier_day_note_absent_when_none(self):
+        prompt = build_ranking_prompt(COUNTRY, DATE, [{"story_id": "story_1"}])
+        assert "Ranked on an earlier day" not in prompt
+
+    def test_same_day_and_earlier_day_are_listed_separately(self):
+        prompt = build_ranking_prompt(
+            COUNTRY, DATE,
+            [{"story_id": "story_new"}],
+            previous={"stories": [{"rank": 1, "story_id": "story_today", "title_en": "Today"}]},
+            earlier_ranked=[{"rank": 2, "story_id": "story_old", "title_en": "Old"}],
+        )
+        already = prompt.split("## Already ranked")[1].split("## Ranked on an earlier day")[0]
+        earlier = prompt.split("## Ranked on an earlier day")[1]
+        assert "story_today" in already and "story_old" not in already
+        assert "story_old" in earlier and "story_today" not in earlier
+
     def test_empty_story_list(self):
         prompt = build_ranking_prompt(COUNTRY, DATE, [])
         assert "No compiled stories found" in prompt

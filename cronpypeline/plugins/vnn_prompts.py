@@ -35,6 +35,7 @@ from cronpypeline.plugins.vnn_ranking import (
     load_ranking,
     ranking_stories,
     rejection_count,
+    split_ranked_by_day,
     story_artifacts,
     story_dir,
     today_utc,
@@ -85,12 +86,34 @@ def _already_ranked_note(already_ranked: list[dict[str, Any]]) -> str:
     )
 
 
+def _earlier_ranked_note(earlier_ranked: list[dict[str, Any]]) -> str:
+    """Render the note listing stories ranked on an earlier day.
+
+    ``save_ranking.py`` only accepts stories compiled on the day being ranked,
+    so these cannot be resubmitted. They are listed for context only: telling
+    the agent to include them made it submit ids the script rejects as unknown,
+    which blocked the ranking entirely.
+
+    :param earlier_ranked: Stories in the ranking that were compiled earlier.
+    :returns: A note block ending in a newline, or an empty string.
+    """
+    if not earlier_ranked:
+        return ""
+    return (
+        "\nThese stories were ranked on an earlier day and are NOT part of "
+        "today's ranking. Do NOT include their ids in the order you submit — "
+        "the script only accepts stories compiled today and rejects the rest "
+        "as unknown. They are listed only so you know they already exist.\n"
+    )
+
+
 def build_ranking_prompt(
     country: str,
     date: str,
     stories: list[dict[str, Any]],
     previous: dict[str, Any] | None = None,
     extra_instructions: str = "",
+    earlier_ranked: list[dict[str, Any]] | None = None,
 ) -> str:
     """Build a prompt for the ranking agent.
 
@@ -99,9 +122,14 @@ def build_ranking_prompt(
     :param stories: Compiled stories that need to be ranked.
     :param previous: Existing ranking document, if any.
     :param extra_instructions: Optional additional instructions to append.
+    :param earlier_ranked: Stories already in the ranking that were compiled on
+        an earlier day. They cannot be resubmitted (``save_ranking.py`` only
+        accepts stories compiled on ``date``), so they are listed as context
+        only. Defaults to none.
     :returns: Formatted prompt string.
     """
     already_ranked = ranking_stories(previous)
+    earlier_ranked = earlier_ranked or []
     prompt = f"""You are ranking news stories for **{country}** on **{date}**.
 
 ## Stories to rank
@@ -113,6 +141,11 @@ def build_ranking_prompt(
         for story in already_ranked:
             prompt += f"- {story.get('rank')}. {story['story_id']} — {story.get('title_en', '')}\n"
         prompt += _already_ranked_note(already_ranked)
+    if earlier_ranked:
+        prompt += "\n## Ranked on an earlier day\n\n"
+        for story in earlier_ranked:
+            prompt += f"- {story.get('rank')}. {story['story_id']} — {story.get('title_en', '')}\n"
+        prompt += _earlier_ranked_note(earlier_ranked)
 
     prompt += f"""
 ## Task
@@ -485,12 +518,14 @@ def queue_ranking_agent(action: ActionSpec, context: TickContext) -> ActionResul
             data={"skipped": True},
         )
 
+    same_day_ranked, earlier_ranked = split_ranked_by_day(target_dir, date)
     prompt = build_ranking_prompt(
         country=context.target,
         date=date,
         stories=stories,
-        previous=load_ranking(target_dir),
+        previous={"stories": same_day_ranked},
         extra_instructions=action.params.get("extra_instructions", ""),
+        earlier_ranked=earlier_ranked,
     )
     return _queue_prompt(action, context, prompt)
 
