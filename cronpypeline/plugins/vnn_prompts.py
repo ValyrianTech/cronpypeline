@@ -25,6 +25,7 @@ from cronpypeline.plugins.vnn_plugin import (
     NEWS_LINKS_SUBDIR,
     _active_story,
     _compiled_link_ids,
+    _posts_dir,
     _story_needs,
 )
 from cronpypeline.plugins.vnn_ranking import (
@@ -480,7 +481,7 @@ def _resolve_story(context: TickContext) -> tuple[str, Path] | None:
     :returns: ``(story_id, story_path)`` or None when there is no story to work on.
     """
     target_dir = context.target_dir
-    resolved = _active_story(target_dir)
+    resolved = _active_story(target_dir, _posts_dir(context))
     if resolved is None:
         return None
     story_id = resolved[0]

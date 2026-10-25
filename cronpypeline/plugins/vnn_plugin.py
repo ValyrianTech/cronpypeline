@@ -22,6 +22,7 @@ Provides:
 """
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,9 @@ DEFAULT_MIN_NEW_LINKS = 5
 DEFAULT_MIN_NEW_STORIES = 1
 DEFAULT_MAX_REJECTIONS = 5
 DEFAULT_PROCESSING_TIMEOUT_MINUTES = 20
+
+#: Where the publisher skill copies articles before committing them.
+DEFAULT_POSTS_DIR = Path("/home/wouter/Repos/ValyrianNewsNetwork/src/content/posts")
 
 #: Story states that still need article work.
 _ACTIVE_STATES = ("pending", "researching", "writing", "publishing")
@@ -270,21 +274,94 @@ def _compiled_link_ids(target_dir: Path) -> set[str]:
     return set()
 
 
-def _is_finished(story_path: Path) -> bool:
+def _published_post_exists(story_path: Path, posts_dir: Path) -> bool:
+    """Return True when the story's article is already in the VNN content repo.
+
+    ``publish_article.py`` copies the article into the content repository and
+    only then commits it. When the commit fails (e.g. a DNS failure resolving
+    github.com) the copy survives but ``published.json`` is never written, so
+    every retry fails with a duplicate-slug error and the story is wedged
+    forever. The post file carries the ``story_id`` in its front matter, which
+    is what identifies the story's own article rather than a slug collision.
+
+    :param story_path: Story directory.
+    :param posts_dir: VNN content repository posts directory.
+    :returns: True when a post file for this story exists.
+    """
+    if not posts_dir.is_dir():
+        return False
+    story_id = story_path.name
+    for post in posts_dir.rglob("*.md"):
+        try:
+            text = post.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        match = re.search(r"^story_id:\s*[\"']?([^\"'\n]+)", text, re.MULTILINE)
+        if match and match.group(1).strip() == story_id:
+            return True
+    return False
+
+
+def _posts_dir(context: dict[str, Any] | TickContext) -> Path | None:
+    """Return the VNN content repository posts directory, when configured.
+
+    The publisher skill copies articles into the content repository before
+    committing them, so the posts directory is what reveals a publish whose
+    commit failed. It is read from the country's ``posts_dir`` option and
+    falls back to ``DEFAULT_POSTS_DIR``; the reconciliation is skipped when the
+    directory does not exist.
+
+    :param context: Trigger context dict or :class:`TickContext`.
+    :returns: Path to the posts directory, or None when it does not exist.
+    """
+    configured = _config(context).get("posts_dir")
+    path = Path(str(configured)) if configured else DEFAULT_POSTS_DIR
+    return path if path.is_dir() else None
+
+
+def _is_finished(story_path: Path, posts_dir: Path | None = None) -> bool:
     """Return True when a story needs no further article work.
 
     A story is finished once it is published or has given up. The check reads
     the story directory rather than ``ranking.json`` because the ranking can
     lag behind the filesystem (an agent publishes without updating the state).
 
+    When ``posts_dir`` is given, a story whose article already exists in the
+    content repository also counts as finished, and the missing
+    ``published.json`` marker is written so the pipeline stops re-queueing the
+    publisher.
+
     :param story_path: Story directory.
+    :param posts_dir: Optional VNN content repository posts directory.
     :returns: True when the story is published or gave up.
     """
     found = story_artifacts(story_path)
-    return found["published"] or found["gave_up"]
+    if found["published"] or found["gave_up"]:
+        return True
+    if posts_dir is not None and _published_post_exists(story_path, posts_dir):
+        _write_published_marker(story_path, posts_dir)
+        return True
+    return False
 
 
-def _active_story(target_dir: Path) -> tuple[str, Path] | None:
+def _write_published_marker(story_path: Path, posts_dir: Path) -> None:
+    """Write the ``published.json`` marker for an already-published story.
+
+    :param story_path: Story directory.
+    :param posts_dir: VNN content repository posts directory.
+    """
+    write_json_atomic(story_path / PUBLISHED_MARKER, {
+        "story_id": story_path.name,
+        "reconciled": True,
+        "posts_dir": str(posts_dir),
+        "published_at": utc_now_iso(),
+    })
+
+
+def _active_story(
+    target_dir: Path,
+    posts_dir: Path | None = None,
+) -> tuple[str, Path] | None:
     """Resolve the story the pipeline should work on.
 
     Prefers the ``.active_story`` lock; otherwise the first ranked story that
@@ -294,20 +371,22 @@ def _active_story(target_dir: Path) -> tuple[str, Path] | None:
     must not select an already-published story.
 
     :param target_dir: Country target directory.
+    :param posts_dir: Optional VNN content repository posts directory, used to
+        recognise a story whose article was copied but never committed.
     :returns: ``(story_id, story_path)`` or None when there is nothing to do.
     """
     active = load_active_story(target_dir)
     if active is not None:
         story_id = str(active["story_id"])
         path = story_dir(target_dir, story_id)
-        if not _is_finished(path):
+        if not _is_finished(path, posts_dir):
             return story_id, path
 
     for story in ranking_stories(load_ranking(target_dir)):
         if story.get("state") in _ACTIVE_STATES:
             story_id = str(story["story_id"])
             path = story_dir(target_dir, story_id)
-            if not _is_finished(path):
+            if not _is_finished(path, posts_dir):
                 return story_id, path
     return None
 
@@ -385,7 +464,7 @@ def detect_research_needed(context: dict[str, Any]) -> bool:
     target_dir = _target_dir(context)
     if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
-    resolved = _active_story(target_dir)
+    resolved = _active_story(target_dir, _posts_dir(context))
     if resolved is None:
         return False
     return _story_needs(resolved[1])["research"]
@@ -400,7 +479,7 @@ def detect_writing_needed(context: dict[str, Any]) -> bool:
     target_dir = _target_dir(context)
     if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
-    resolved = _active_story(target_dir)
+    resolved = _active_story(target_dir, _posts_dir(context))
     if resolved is None:
         return False
     return _story_needs(resolved[1])["writing"]
@@ -415,7 +494,7 @@ def detect_publishing_needed(context: dict[str, Any]) -> bool:
     target_dir = _target_dir(context)
     if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
-    resolved = _active_story(target_dir)
+    resolved = _active_story(target_dir, _posts_dir(context))
     if resolved is None:
         return False
     return _story_needs(resolved[1])["publishing"]
@@ -431,7 +510,7 @@ def detect_revision_needed(context: dict[str, Any]) -> bool:
     target_dir = _target_dir(context)
     if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
-    resolved = _active_story(target_dir)
+    resolved = _active_story(target_dir, _posts_dir(context))
     if resolved is None:
         return False
     story_path = resolved[1]
@@ -727,7 +806,7 @@ def release_finished_story_hook(context: dict[str, Any]) -> bool:
     if active is None:
         return True
     story_id = str(active["story_id"])
-    if _is_finished(story_dir(target_dir, story_id)):
+    if _is_finished(story_dir(target_dir, story_id), _posts_dir(context)):
         release_story(ActionSpec(type=ActionType.CUSTOM, params={}), _hook_tick_context(context))
     return True
 

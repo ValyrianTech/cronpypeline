@@ -982,6 +982,8 @@ The queue actions decline to queue an agent when there is nothing left to do, re
 
 **`cronpypeline.plugins.vnn_ranking`** — country-local ranking state helpers (`load_ranking`, `ranking_stories`, `unranked_stories`, `load_active_story`, `write_active_story`, `set_story_state`, `derive_story_state`, `validate_ranking`, `today_utc`, ...).
 
+**Publish reconciliation.** `publish_article.py` copies the article into the VNN content repository and only then commits it. When the commit fails (e.g. a DNS failure resolving `github.com`) the copy survives but `published.json` is never written, so every retry fails with a duplicate-slug error and the story is re-queued until it gives up. Story resolution therefore also treats a story as finished when a post file in the content repository carries its `story_id` in the front matter, and writes the missing `published.json` with `"reconciled": true`. The posts directory is read from the country's `posts_dir` option, falling back to `DEFAULT_POSTS_DIR`; reconciliation is skipped when the directory does not exist.
+
 ```json
 "pre_tick": {"callable": "cronpypeline.plugins.vnn_plugin.vnn_pre_tick"},
 "post_tick": {"callable": "cronpypeline.plugins.vnn_plugin.vnn_post_tick"}

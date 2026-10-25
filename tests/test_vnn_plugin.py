@@ -88,12 +88,16 @@ def _write_processing(
 
 
 def _context(target_dir: Path) -> dict:
-    """Build a trigger context dict for the country."""
+    """Build a trigger context dict for the country.
+
+    ``posts_dir`` points at a path that does not exist so the publish
+    reconciliation never reads the live VNN content repository.
+    """
     return {
         "target": COUNTRY,
         "target_dir": str(target_dir),
         "workspace_dir": str(target_dir.parent),
-        "target_config": {},
+        "target_config": {"posts_dir": str(target_dir.parent / "no-such-posts")},
     }
 
 
@@ -400,12 +404,16 @@ class TestMarkerContextSkipsFinishedStories:
 
 
 def _hook_context(target_dir: Path) -> dict:
-    """Build a pre_tick hook context for a country directory."""
+    """Build a pre_tick hook context for a country directory.
+
+    ``posts_dir`` points at a path that does not exist so the publish
+    reconciliation never reads the live VNN content repository.
+    """
     return {
         "target": target_dir.name,
         "target_dir": str(target_dir),
         "workspace_dir": str(target_dir.parent),
-        "target_config": {},
+        "target_config": {"posts_dir": str(target_dir.parent / "no-such-posts")},
         "queue_dir": None,
     }
 
@@ -435,6 +443,73 @@ class TestSyncStoryStatesHook:
         (country / "ranking.json").unlink()
 
         assert vnn_plugin.sync_story_states_hook(_hook_context(country)) is True
+
+
+class TestPublishReconciliation:
+    """A publish whose git commit failed must not wedge the story forever.
+
+    ``publish_article.py`` copies the article into the content repository and
+    only then commits it. When the commit fails the copy survives but
+    ``published.json`` is never written, so every retry fails with a
+    duplicate-slug error and the story is re-queued until it gives up.
+    """
+
+    def _write_post(self, posts_dir: Path, slug: str, story_id: str) -> Path:
+        """Write a content-repository post file carrying the story id."""
+        day = posts_dir / "2026" / "10" / "25"
+        day.mkdir(parents=True, exist_ok=True)
+        post = day / f"{slug}.md"
+        post.write_text(
+            f'---\nstory_id: {story_id}\ntitle: "T"\nslug: {slug}\n---\n\nBody\n',
+            encoding="utf-8",
+        )
+        return post
+
+    def test_published_post_marks_story_finished(self, country: Path, tmp_path: Path):
+        story = _make_story(country, STORY_ID, "story.json", "research.md", "article.md")
+        posts_dir = tmp_path / "posts"
+        self._write_post(posts_dir, "some-slug", STORY_ID)
+
+        assert vnn_plugin._is_finished(story, posts_dir) is True
+        marker = json.loads((story / "published.json").read_text(encoding="utf-8"))
+        assert marker["story_id"] == STORY_ID
+        assert marker["reconciled"] is True
+
+    def test_post_for_another_story_does_not_finish(self, country: Path, tmp_path: Path):
+        story = _make_story(country, STORY_ID, "story.json", "research.md", "article.md")
+        posts_dir = tmp_path / "posts"
+        self._write_post(posts_dir, "some-slug", "story_other")
+
+        assert vnn_plugin._is_finished(story, posts_dir) is False
+        assert not (story / "published.json").exists()
+
+    def test_missing_posts_dir_does_not_finish(self, country: Path, tmp_path: Path):
+        story = _make_story(country, STORY_ID, "story.json", "research.md", "article.md")
+
+        assert vnn_plugin._is_finished(story, tmp_path / "no-such-posts") is False
+        assert not (story / "published.json").exists()
+
+    def test_release_hook_reconciles_and_releases_lock(self, country: Path, tmp_path: Path):
+        _make_story(country, STORY_ID, "story.json", "research.md", "article.md")
+        posts_dir = tmp_path / "posts"
+        self._write_post(posts_dir, "some-slug", STORY_ID)
+        context = {**_hook_context(country), "target_config": {"posts_dir": str(posts_dir)}}
+
+        assert vnn_plugin.release_finished_story_hook(context) is True
+
+        assert load_active_story(country) is None
+        assert (country / "stories" / STORY_ID / "published.json").exists()
+
+    def test_publishing_trigger_does_not_fire_for_reconciled_story(
+        self, country: Path, tmp_path: Path
+    ):
+        """The wedged story must stop re-queueing the publisher."""
+        _make_story(country, STORY_ID, "story.json", "research.md", "article.md")
+        posts_dir = tmp_path / "posts"
+        self._write_post(posts_dir, "some-slug", STORY_ID)
+        context = {**_context(country), "target_config": {"posts_dir": str(posts_dir)}}
+
+        assert detect_publishing_needed(context) is False
 
 
 class TestReleaseFinishedStoryHook:
