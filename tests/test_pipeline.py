@@ -3779,6 +3779,10 @@ class TestQueueFileStaleDetection:
         config = PipelineConfig.from_dict({
             "name": "test",
             "workspace_dir": str(workspace),
+            "action_handler": {
+                "type": "conversation_queue",
+                "params": {"queue_dir": str(queue_dir)},
+            },
             "stages": [
                 {
                     "id": "A0",
@@ -3858,9 +3862,15 @@ class TestQueueFileStaleDetection:
         old_time = _time.time() - 7200
         _os.utime(proc_path, (old_time, old_time))
 
+        queue_dir = workspace / "queue"
+
         config = PipelineConfig.from_dict({
             "name": "test",
             "workspace_dir": str(workspace),
+            "action_handler": {
+                "type": "conversation_queue",
+                "params": {"queue_dir": str(queue_dir)},
+            },
             "stages": [
                 {
                     "id": "A0",
