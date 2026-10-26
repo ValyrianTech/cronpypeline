@@ -385,7 +385,7 @@ class TestMarkerContextSkipsFinishedStories:
             {"story_id": next_id, "state": "pending", "rank": 2},
         ])
 
-        result = vnn_plugin.vnn_marker_context({"target_dir": str(country)})
+        result = vnn_plugin.vnn_marker_context(_hook_context(country))
 
         assert result == {"active_story": next_id}
 
@@ -393,12 +393,12 @@ class TestMarkerContextSkipsFinishedStories:
         _make_story(country, STORY_ID, "story.json", "research.md", "article.md", "published.json")
         _write_ranking(country, [{"story_id": STORY_ID, "state": "pending", "rank": 1}])
 
-        result = vnn_plugin.vnn_marker_context({"target_dir": str(country)})
+        result = vnn_plugin.vnn_marker_context(_hook_context(country))
 
         assert result == {"active_story": ""}
 
     def test_claimed_story_still_reported(self, country: Path):
-        assert vnn_plugin.vnn_marker_context({"target_dir": str(country)}) == {
+        assert vnn_plugin.vnn_marker_context(_hook_context(country)) == {
             "active_story": STORY_ID
         }
 
@@ -510,6 +510,111 @@ class TestPublishReconciliation:
         context = {**_context(country), "target_config": {"posts_dir": str(posts_dir)}}
 
         assert detect_publishing_needed(context) is False
+
+
+class TestDiscardExhaustedStoriesHook:
+    """A story that needs revision but hit ``max_rejections`` must be terminal.
+
+    ``detect_revision_needed`` refuses to fire at the cap, so without a
+    terminal transition the story keeps the lock forever and pins every story
+    ranked behind it. The pre-tick hook writes ``.gave_up`` so the ranking
+    sync derives ``discarded`` and the lock is released in the same tick.
+    """
+
+    def _write_rejections(self, story: Path, count: int) -> None:
+        """Write a rejection_log.json holding ``count`` entries."""
+        log = [{"reason": f"rejection {i}"} for i in range(count)]
+        (story / "rejection_log.json").write_text(json.dumps(log), encoding="utf-8")
+
+    def test_exhausted_story_is_discarded(self, country: Path):
+        story = _make_story(country, STORY_ID, "story.json", "research.md", "rejected-article.md")
+        self._write_rejections(story, vnn_plugin.DEFAULT_MAX_REJECTIONS)
+
+        assert vnn_plugin.discard_exhausted_stories_hook(_hook_context(country)) is True
+
+        assert (story / ".gave_up").exists()
+        gave_up = json.loads((story / ".gave_up").read_text(encoding="utf-8"))
+        assert gave_up["story_id"] == STORY_ID
+        assert gave_up["rejection_count"] == vnn_plugin.DEFAULT_MAX_REJECTIONS
+
+    def test_story_below_cap_is_kept(self, country: Path):
+        story = _make_story(country, STORY_ID, "story.json", "research.md", "rejected-article.md")
+        self._write_rejections(story, vnn_plugin.DEFAULT_MAX_REJECTIONS - 1)
+
+        vnn_plugin.discard_exhausted_stories_hook(_hook_context(country))
+
+        assert not (story / ".gave_up").exists()
+
+    def test_custom_max_rejections_is_respected(self, country: Path):
+        story = _make_story(country, STORY_ID, "story.json", "research.md", "rejected-article.md")
+        self._write_rejections(story, 3)
+        context = {**_hook_context(country), "target_config": {"max_rejections": 3}}
+
+        vnn_plugin.discard_exhausted_stories_hook(context)
+
+        assert (story / ".gave_up").exists()
+
+    def test_story_needing_publishing_is_not_discarded(self, country: Path):
+        """A story with an article still in flight is not revision-blocked."""
+        story = _make_story(country, STORY_ID, "story.json", "research.md", "article.md")
+        self._write_rejections(story, vnn_plugin.DEFAULT_MAX_REJECTIONS + 2)
+
+        vnn_plugin.discard_exhausted_stories_hook(_hook_context(country))
+
+        assert not (story / ".gave_up").exists()
+
+    def test_finished_story_is_untouched(self, country: Path):
+        story = _make_story(country, STORY_ID, "story.json", "published.json")
+        self._write_rejections(story, vnn_plugin.DEFAULT_MAX_REJECTIONS + 2)
+
+        vnn_plugin.discard_exhausted_stories_hook(_hook_context(country))
+
+        assert not (story / ".gave_up").exists()
+
+    def test_no_stories_dir_is_a_no_op(self, tmp_path: Path):
+        target_dir = tmp_path / "nowhere"
+        target_dir.mkdir()
+        assert vnn_plugin.discard_exhausted_stories_hook(_hook_context(target_dir)) is True
+
+    def test_pre_tick_releases_lock_and_advances(self, country: Path):
+        """The whole transition completes in one pre-tick pass."""
+        next_id = "story_next1234"
+        _write_ranking(country, [
+            {"story_id": STORY_ID, "state": "writing", "rank": 1},
+            {"story_id": next_id, "state": "pending", "rank": 2},
+        ])
+        story = _make_story(country, STORY_ID, "story.json", "research.md", "rejected-article.md")
+        self._write_rejections(story, vnn_plugin.DEFAULT_MAX_REJECTIONS)
+
+        assert vnn_plugin.vnn_pre_tick(_hook_context(country)) is True
+
+        assert (story / ".gave_up").exists()
+        assert load_active_story(country) is None
+        states = {s["story_id"]: s["state"] for s in load_ranking(country)["stories"]}
+        assert states[STORY_ID] == "discarded"
+        resolved = vnn_plugin._active_story(country)
+        assert resolved is not None and resolved[0] == next_id
+
+    def test_exhausted_locked_story_is_finished_during_resolution(self, country: Path):
+        """``_is_finished`` discards the story inside trigger evaluation.
+
+        Target selection evaluates triggers before ``pre_tick`` runs, so a
+        wedged story that suppresses every trigger is never selected at all.
+        ``_is_finished`` must therefore perform the transition itself.
+        """
+        next_id = "story_next1234"
+        _write_ranking(country, [
+            {"story_id": STORY_ID, "state": "writing", "rank": 1},
+            {"story_id": next_id, "state": "pending", "rank": 2},
+        ])
+        story = _make_story(country, STORY_ID, "story.json", "research.md", "rejected-article.md")
+        self._write_rejections(story, vnn_plugin.DEFAULT_MAX_REJECTIONS)
+        context = _context(country)
+
+        assert detect_research_needed(context) is True
+        assert (story / ".gave_up").exists()
+        resolved = vnn_plugin._active_story(country)
+        assert resolved is not None and resolved[0] == next_id
 
 
 class TestReleaseFinishedStoryHook:

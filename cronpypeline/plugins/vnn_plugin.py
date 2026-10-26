@@ -319,7 +319,33 @@ def _posts_dir(context: dict[str, Any] | TickContext) -> Path | None:
     return path if path.is_dir() else None
 
 
-def _is_finished(story_path: Path, posts_dir: Path | None = None) -> bool:
+def _max_rejections(context: dict[str, Any] | TickContext) -> int:
+    """Return the country's ``max_rejections`` option.
+
+    :param context: Trigger context dict or :class:`TickContext`.
+    :returns: Configured value, or ``DEFAULT_MAX_REJECTIONS``.
+    """
+    return _int_option(_config(context), "max_rejections", DEFAULT_MAX_REJECTIONS)
+
+
+def _rejection_exhausted(story_path: Path, max_rejections: int) -> bool:
+    """Return True when a story needs revision beyond the rejection budget.
+
+    :param story_path: Story directory.
+    :param max_rejections: Rejection cap.
+    :returns: True when the story needs revision and the cap is reached.
+    """
+    return (
+        _story_needs(story_path)["revision"]
+        and rejection_count(story_path) >= max_rejections
+    )
+
+
+def _is_finished(
+    story_path: Path,
+    posts_dir: Path | None = None,
+    max_rejections: int | None = None,
+) -> bool:
     """Return True when a story needs no further article work.
 
     A story is finished once it is published or has given up. The check reads
@@ -331,8 +357,16 @@ def _is_finished(story_path: Path, posts_dir: Path | None = None) -> bool:
     ``published.json`` marker is written so the pipeline stops re-queueing the
     publisher.
 
+    When ``max_rejections`` is given, a story that needs revision but has
+    reached the cap also counts as finished — ``detect_revision_needed`` can
+    never fire for it again — and ``.gave_up`` is written so the ranking sync
+    derives ``discarded``. This is what unblocks target selection: a wedged
+    story suppresses every trigger, so the transition has to happen inside
+    trigger evaluation rather than in a post-selection hook.
+
     :param story_path: Story directory.
     :param posts_dir: Optional VNN content repository posts directory.
+    :param max_rejections: Optional rejection cap.
     :returns: True when the story is published or gave up.
     """
     found = story_artifacts(story_path)
@@ -341,7 +375,25 @@ def _is_finished(story_path: Path, posts_dir: Path | None = None) -> bool:
     if posts_dir is not None and _published_post_exists(story_path, posts_dir):
         _write_published_marker(story_path, posts_dir)
         return True
+    if max_rejections is not None and _rejection_exhausted(story_path, max_rejections):
+        _write_gave_up_marker(story_path, max_rejections)
+        return True
     return False
+
+
+def _write_gave_up_marker(story_path: Path, max_rejections: int) -> None:
+    """Write the ``.gave_up`` marker for a story out of rejections.
+
+    :param story_path: Story directory.
+    :param max_rejections: Rejection cap that was reached.
+    """
+    count = rejection_count(story_path)
+    write_json_atomic(story_path / GAVE_UP_MARKER, {
+        "story_id": story_path.name,
+        "reason": f"rejection budget exhausted ({count} >= {max_rejections})",
+        "rejection_count": count,
+        "gave_up_at": utc_now_iso(),
+    })
 
 
 def _write_published_marker(story_path: Path, posts_dir: Path) -> None:
@@ -361,6 +413,7 @@ def _write_published_marker(story_path: Path, posts_dir: Path) -> None:
 def _active_story(
     target_dir: Path,
     posts_dir: Path | None = None,
+    max_rejections: int | None = None,
 ) -> tuple[str, Path] | None:
     """Resolve the story the pipeline should work on.
 
@@ -373,20 +426,22 @@ def _active_story(
     :param target_dir: Country target directory.
     :param posts_dir: Optional VNN content repository posts directory, used to
         recognise a story whose article was copied but never committed.
+    :param max_rejections: Optional rejection cap, used to recognise a story
+        whose revision budget is exhausted.
     :returns: ``(story_id, story_path)`` or None when there is nothing to do.
     """
     active = load_active_story(target_dir)
     if active is not None:
         story_id = str(active["story_id"])
         path = story_dir(target_dir, story_id)
-        if not _is_finished(path, posts_dir):
+        if not _is_finished(path, posts_dir, max_rejections):
             return story_id, path
 
     for story in ranking_stories(load_ranking(target_dir)):
         if story.get("state") in _ACTIVE_STATES:
             story_id = str(story["story_id"])
             path = story_dir(target_dir, story_id)
-            if not _is_finished(path, posts_dir):
+            if not _is_finished(path, posts_dir, max_rejections):
                 return story_id, path
     return None
 
@@ -464,7 +519,7 @@ def detect_research_needed(context: dict[str, Any]) -> bool:
     target_dir = _target_dir(context)
     if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
-    resolved = _active_story(target_dir, _posts_dir(context))
+    resolved = _active_story(target_dir, _posts_dir(context), _max_rejections(context))
     if resolved is None:
         return False
     return _story_needs(resolved[1])["research"]
@@ -479,7 +534,7 @@ def detect_writing_needed(context: dict[str, Any]) -> bool:
     target_dir = _target_dir(context)
     if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
-    resolved = _active_story(target_dir, _posts_dir(context))
+    resolved = _active_story(target_dir, _posts_dir(context), _max_rejections(context))
     if resolved is None:
         return False
     return _story_needs(resolved[1])["writing"]
@@ -494,7 +549,7 @@ def detect_publishing_needed(context: dict[str, Any]) -> bool:
     target_dir = _target_dir(context)
     if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
-    resolved = _active_story(target_dir, _posts_dir(context))
+    resolved = _active_story(target_dir, _posts_dir(context), _max_rejections(context))
     if resolved is None:
         return False
     return _story_needs(resolved[1])["publishing"]
@@ -510,14 +565,13 @@ def detect_revision_needed(context: dict[str, Any]) -> bool:
     target_dir = _target_dir(context)
     if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
         return False
-    resolved = _active_story(target_dir, _posts_dir(context))
+    resolved = _active_story(target_dir, _posts_dir(context), _max_rejections(context))
     if resolved is None:
         return False
     story_path = resolved[1]
     if not _story_needs(story_path)["revision"]:
         return False
-    max_rejections = _int_option(_config(context), "max_rejections", DEFAULT_MAX_REJECTIONS)
-    return rejection_count(story_path) < max_rejections
+    return rejection_count(story_path) < _max_rejections(context)
 
 
 # ─── Actions ────────────────────────────────────────────────────────────────
@@ -540,7 +594,9 @@ def claim_story(action: ActionSpec, context: TickContext) -> ActionResult:
     if context.dry_run:
         return ActionResult(success=True, dry_run=True)
 
-    resolved = _active_story(context.target_dir)
+    resolved = _active_story(
+        context.target_dir, _posts_dir(context), _max_rejections(context)
+    )
     if resolved is None:
         return ActionResult(success=False, stderr="No story available to claim")
     story_id = resolved[0]
@@ -666,7 +722,11 @@ def vnn_marker_context(context: dict[str, Any]) -> dict[str, Any]:
     :returns: Dict with the ``active_story`` template variable.
     """
     target_dir = Path(str(context.get("target_dir", "")))
-    resolved = _active_story(target_dir) if target_dir else None
+    resolved = (
+        _active_story(target_dir, _posts_dir(context), _max_rejections(context))
+        if target_dir
+        else None
+    )
     story_id = resolved[0] if resolved is not None else ""
     return {"active_story": story_id}
 
@@ -719,7 +779,9 @@ def log_rejection(context: dict[str, Any], result: ActionResult | None) -> None:
     :param context: Hook context dict with ``target_dir``.
     :param result: Tick result from the completed tick, or None.
     """
-    resolved = _active_story(_target_dir(context))
+    resolved = _active_story(
+        _target_dir(context), _posts_dir(context), _max_rejections(context)
+    )
     if resolved is None:
         return
     story_path = resolved[1]
@@ -806,8 +868,42 @@ def release_finished_story_hook(context: dict[str, Any]) -> bool:
     if active is None:
         return True
     story_id = str(active["story_id"])
-    if _is_finished(story_dir(target_dir, story_id), _posts_dir(context)):
+    if _is_finished(
+        story_dir(target_dir, story_id), _posts_dir(context), _max_rejections(context)
+    ):
         release_story(ActionSpec(type=ActionType.CUSTOM, params={}), _hook_tick_context(context))
+    return True
+
+
+def discard_exhausted_stories_hook(context: dict[str, Any]) -> bool:
+    """Pre-tick hook: discard stories whose rejection budget is exhausted.
+
+    A story that needs revision can only proceed through
+    :func:`detect_revision_needed`, which refuses to fire once
+    ``rejection_count`` reaches ``max_rejections``. Without a terminal
+    transition such a story keeps the ``.active_story`` lock forever and pins
+    every story ranked behind it. Writing ``.gave_up`` makes the story
+    finished: the ranking sync then derives ``discarded`` and the lock is
+    released, all within the same tick. Never blocks the tick.
+
+    :param context: Hook context dict with ``target_dir``.
+    :returns: Always True.
+    """
+    target_dir = Path(str(context.get("target_dir", "")))
+    stories_root = target_dir / STORIES_SUBDIR
+    if not stories_root.is_dir():
+        return True
+    max_rejections = _max_rejections(context)
+
+    for story_path in sorted(stories_root.iterdir()):
+        if not story_path.is_dir():
+            continue
+        if not _rejection_exhausted(story_path, max_rejections):
+            continue
+        try:
+            _write_gave_up_marker(story_path, max_rejections)
+        except OSError:
+            continue
     return True
 
 
@@ -815,15 +911,16 @@ def vnn_pre_tick(context: dict[str, Any]) -> bool:
     """Composite pre_tick hook.
 
     Runs the global queue gate first (cheapest, and it short-circuits the whole
-    tick), then reconciles the ranking with the filesystem, then releases a
-    lock left behind by a finished story, then resolves inconsistent story
-    state.
+    tick), then discards stories whose rejection budget is exhausted, then
+    reconciles the ranking with the filesystem, then releases a lock left
+    behind by a finished story, then resolves inconsistent story state.
 
     :param context: Hook context dict.
     :returns: True if all hooks pass, False if any hook returns False.
     """
     if queue_empty_global(context) is False:
         return False
+    discard_exhausted_stories_hook(context)
     sync_story_states_hook(context)
     release_finished_story_hook(context)
     return cleanup_inconsistent_state(context)
