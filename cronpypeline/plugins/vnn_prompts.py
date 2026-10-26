@@ -22,7 +22,6 @@ from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.config import ActionSpec
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
 from cronpypeline.plugins.vnn_plugin import (
-    NEWS_LINKS_SUBDIR,
     _active_story,
     _compiled_link_ids,
     _max_rejections,
@@ -32,14 +31,15 @@ from cronpypeline.plugins.vnn_plugin import (
 from cronpypeline.plugins.vnn_ranking import (
     COMPILED_SUBDIR,
     RANKING_FILENAME,
-    compiled_dir,
+    find_compiled_story,
     load_active_story,
     load_ranking,
+    news_links_root,
     ranking_stories,
     rejection_count,
     split_ranked_by_day,
     story_artifacts,
-    story_dir,
+    story_day,
     today_utc,
     unranked_stories,
     write_active_story,
@@ -170,9 +170,10 @@ instead.
 Rules:
 - Use every story id from **Stories to rank** exactly once.
 - Do not invent story ids and do not drop any — the script rejects both.
-- Do not write `{country}/{RANKING_FILENAME}` yourself. The script validates the
-  order, fills in the metadata and preserves the `state` of stories that were
-  already ranked, so article progress is never reset.
+- Do not write `{country}/rankings/<YYYY>/<MM>/<DD>/{RANKING_FILENAME}` yourself.
+  The script validates the order, fills in the metadata and preserves the
+  `state` of stories that were already ranked, so article progress is never
+  reset.
 """
     if extra_instructions:
         prompt += f"\n## Additional Instructions\n\n{extra_instructions}\n"
@@ -204,7 +205,8 @@ There are {link_count} archived links available for this country.
    story are excluded automatically.
 2. Group related links into stories and save each story with
    `save_story.py --country "{country}"`. Stories are written to
-   `{country}/{COMPILED_SUBDIR}/` and each file is named `story_<id>.json`.
+   `{country}/{COMPILED_SUBDIR}/<YYYY>/<MM>/<DD>/` and each file is named
+   `story_<id>.json`.
 3. When every story is saved, mark the compilation complete:
 
 ```
@@ -442,30 +444,36 @@ def _queue_prompt(action: ActionSpec, context: TickContext, prompt: str) -> Acti
 def _ensure_story_dir(
     target_dir: Path,
     story_id: str,
+    story_path: Path,
     stage: str,
 ) -> Path:
     """Materialise a story directory and claim the active-story lock.
 
     The research stage is the first stage that needs a story directory, so it
-    creates ``<country>/stories/<story_id>/`` and copies the compiled
-    ``story.json`` into it. Later stages reuse the existing directory.
+    creates ``<country>/stories/<YYYY>/<MM>/<DD>/<story_id>/`` and copies the
+    compiled ``story.json`` into it. Later stages reuse the existing directory.
 
     :param target_dir: Country target directory.
     :param story_id: Story to prepare.
+    :param story_path: Story directory resolved for the story's own day.
     :param stage: Pipeline stage claiming the story.
     :returns: Path to the story directory.
     """
-    path = story_dir(target_dir, story_id)
-    path.mkdir(parents=True, exist_ok=True)
+    story_path.mkdir(parents=True, exist_ok=True)
 
-    story_json = path / "story.json"
+    story_json = story_path / "story.json"
     if not story_json.exists():
-        compiled = compiled_dir(target_dir) / f"{story_id}.json"
-        if compiled.exists():
+        compiled = find_compiled_story(target_dir, story_id)
+        if compiled is not None:
             shutil.copyfile(compiled, story_json)
 
-    write_active_story(target_dir, story_id, stage)
-    return path
+    write_active_story(
+        target_dir,
+        story_id,
+        stage,
+        story_day(target_dir, story_path) or None,
+    )
+    return story_path
 
 
 def _resolve_story(context: TickContext) -> tuple[str, Path] | None:
@@ -485,10 +493,10 @@ def _resolve_story(context: TickContext) -> tuple[str, Path] | None:
     resolved = _active_story(target_dir, _posts_dir(context), _max_rejections(context))
     if resolved is None:
         return None
-    story_id = resolved[0]
+    story_id, story_path = resolved
     active = load_active_story(target_dir)
     stage = str(active.get("stage") or "research") if active else "research"
-    return story_id, _ensure_story_dir(target_dir, story_id, stage)
+    return story_id, _ensure_story_dir(target_dir, story_id, story_path, stage)
 
 
 def queue_ranking_agent(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -538,10 +546,10 @@ def _pending_link_count(target_dir: Path) -> int:
     :param target_dir: Country target directory.
     :returns: Number of link files not recorded in ``compilation_metadata.json``.
     """
-    links_dir = target_dir / NEWS_LINKS_SUBDIR
-    if not links_dir.is_dir():
+    root = news_links_root(target_dir)
+    if not root.is_dir():
         return 0
-    current = {p.stem for p in links_dir.glob("*.json") if not p.name.startswith(".")}
+    current = {p.stem for p in root.rglob("*.json") if not p.name.startswith(".")}
     return len(current - _compiled_link_ids(target_dir))
 
 

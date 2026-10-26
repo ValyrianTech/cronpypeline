@@ -17,7 +17,7 @@ from cronpypeline.actions import (
 )
 from cronpypeline.config import ActionSpec, ActionType, PipelineConfig
 from cronpypeline.pipeline import Pipeline, TickResultStatus
-from cronpypeline.plugins.vnn_ranking import write_ranking
+from cronpypeline.plugins.vnn_ranking import compiled_dir, story_dir, write_ranking
 from cronpypeline.state import PipelineState
 
 # ---------------------------------------------------------------------------
@@ -169,13 +169,13 @@ def _write_ranking(country_dir: Path, stories: list[dict]) -> None:
         "date": VNN_DATE,
         "country": COUNTRY,
         "version": 1,
-        "stories": stories,
+        "stories": [{"date": VNN_DATE, **story} for story in stories],
     })
 
 
 def _make_story(country_dir: Path, story_id: str, *artefacts: str) -> Path:
     """Create a story directory with the given artefacts."""
-    path = country_dir / "stories" / story_id
+    path = story_dir(country_dir, story_id, VNN_DATE)
     path.mkdir(parents=True, exist_ok=True)
     for name in artefacts:
         (path / name).write_text("{}", encoding="utf-8")
@@ -184,7 +184,7 @@ def _make_story(country_dir: Path, story_id: str, *artefacts: str) -> Path:
 
 def _write_compiled(country_dir: Path, story_id: str) -> None:
     """Write a compiled story JSON file."""
-    directory = country_dir / "compiled_stories"
+    directory = compiled_dir(country_dir, VNN_DATE)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f"{story_id}.json").write_text(
         json.dumps({
@@ -522,8 +522,16 @@ class TestVNNDryRunValidation:
         for stage in config.stages:
             if stage.id in ("research", "writing", "publishing"):
                 completion = stage.markers["completion"]
-                assert completion.directory == "stories/{active_story}", \
+                assert completion.directory == "{active_story_dir}", \
                     f"Stage {stage.id} completion marker is not story-scoped"
+
+    def test_ranking_stage_uses_dated_ranking_directory(self):
+        """The ranking completion signal must follow the per-day ranking file."""
+        config = PipelineConfig.from_file(self.CONFIG_PATH)
+        ranking = next(s for s in config.stages if s.id == "ranking")
+        signal = ranking.markers["completion_signal"]
+        assert signal.directory == "{ranking_dir}", \
+            "Ranking completion signal is not date-scoped"
 
     def test_recurring_stages_have_no_completion_marker(self):
         """Recurring stages must stay actionable so their triggers keep firing.
@@ -609,14 +617,19 @@ class TestVNNMarkerContextHook:
 
     def test_returns_active_story_id(self, tmp_path):
         from cronpypeline.plugins.vnn_plugin import vnn_marker_context
-        from cronpypeline.plugins.vnn_ranking import write_active_story
+        from cronpypeline.plugins.vnn_ranking import today_utc, write_active_story
 
         country_dir = tmp_path / COUNTRY
         country_dir.mkdir()
         write_active_story(country_dir, "story_abc", "research")
 
+        day = today_utc()
         result = vnn_marker_context({"target_dir": str(country_dir)})
-        assert result == {"active_story": "story_abc"}
+        assert result == {
+            "active_story": "story_abc",
+            "active_story_dir": f"stories/{day[:4]}/{day[4:6]}/{day[6:8]}/story_abc",
+            "ranking_dir": f"rankings/{day[:4]}/{day[4:6]}/{day[6:8]}",
+        }
 
     def test_returns_empty_string_without_active_story(self, tmp_path):
         from cronpypeline.plugins.vnn_plugin import vnn_marker_context
@@ -625,7 +638,8 @@ class TestVNNMarkerContextHook:
         country_dir.mkdir()
 
         result = vnn_marker_context({"target_dir": str(country_dir)})
-        assert result == {"active_story": ""}
+        assert result["active_story"] == ""
+        assert result["active_story_dir"] == "stories/.none"
 
     def test_story_completion_detected_in_story_dir(self, tmp_path):
         """A story artifact marks its stage complete; a country-level file does not."""
@@ -643,7 +657,7 @@ class TestVNNMarkerContextHook:
         _make_story(country_dir, "story_1", "research.md")
 
         from cronpypeline.plugins.vnn_ranking import write_active_story
-        write_active_story(country_dir, "story_1", "research")
+        write_active_story(country_dir, "story_1", "research", VNN_DATE)
 
         pipeline = Pipeline(config)
         status = pipeline.status([COUNTRY])[COUNTRY]
@@ -667,7 +681,7 @@ class TestVNNMarkerContextHook:
         (country_dir / "research.md").write_text("stray", encoding="utf-8")
 
         from cronpypeline.plugins.vnn_ranking import write_active_story
-        write_active_story(country_dir, "story_1", "research")
+        write_active_story(country_dir, "story_1", "research", VNN_DATE)
 
         pipeline = Pipeline(config)
         status = pipeline.status([COUNTRY])[COUNTRY]
@@ -710,7 +724,7 @@ class TestVNNStaleLockDoesNotBlockTargetSelection:
             {"rank": 2, "story_id": "story_next", "state": "pending"},
         ])
         _make_story(country_dir, "story_done", "research.md", "article.md", "published.json")
-        write_active_story(country_dir, "story_done", "publishing")
+        write_active_story(country_dir, "story_done", "publishing", VNN_DATE)
 
         pipeline = Pipeline(self._config(tmp_path))
         status = pipeline.status([COUNTRY])[COUNTRY]
@@ -729,7 +743,7 @@ class TestVNNStaleLockDoesNotBlockTargetSelection:
             {"rank": 2, "story_id": "story_next", "state": "pending"},
         ])
         _make_story(country_dir, "story_done", "research.md", "article.md", "published.json")
-        write_active_story(country_dir, "story_done", "publishing")
+        write_active_story(country_dir, "story_done", "publishing", VNN_DATE)
 
         pipeline = Pipeline(self._config(tmp_path))
         result = pipeline.tick(dry_run=True)

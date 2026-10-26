@@ -20,8 +20,13 @@ from cronpypeline.plugins.vnn_plugin import (
     detect_writing_needed,
 )
 from cronpypeline.plugins.vnn_ranking import (
+    compiled_dir,
+    day_from_timestamp,
     load_active_story,
     load_ranking,
+    news_links_dir,
+    ranking_path,
+    story_dir,
     write_active_story,
     write_ranking,
 )
@@ -37,13 +42,13 @@ def _write_ranking(target_dir: Path, stories) -> None:
         "date": DATE,
         "country": COUNTRY,
         "version": 1,
-        "stories": stories,
+        "stories": [{"date": DATE, **story} for story in stories],
     })
 
 
 def _make_story(target_dir: Path, story_id: str, *artefacts: str) -> Path:
     """Create a story directory containing the given artefact files."""
-    path = target_dir / "stories" / story_id
+    path = story_dir(target_dir, story_id, DATE)
     path.mkdir(parents=True, exist_ok=True)
     for name in artefacts:
         (path / name).write_text("{}", encoding="utf-8")
@@ -52,7 +57,7 @@ def _make_story(target_dir: Path, story_id: str, *artefacts: str) -> Path:
 
 def _write_link(target_dir: Path, link_id: str, **fields) -> None:
     """Write an archived news link file for the country."""
-    directory = target_dir / "news_links"
+    directory = news_links_dir(target_dir, DATE)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f"{link_id}.json").write_text(
         json.dumps({"id": link_id, **fields}), encoding="utf-8"
@@ -61,9 +66,10 @@ def _write_link(target_dir: Path, link_id: str, **fields) -> None:
 
 def _write_compiled(target_dir: Path, story_id: str, **fields) -> None:
     """Write a compiled story JSON file for the country."""
-    directory = target_dir / "compiled_stories"
-    directory.mkdir(parents=True, exist_ok=True)
     fields.setdefault("compilation_timestamp", datetime.now(timezone.utc).isoformat())
+    day = day_from_timestamp(fields["compilation_timestamp"]) or DATE
+    directory = compiled_dir(target_dir, day)
+    directory.mkdir(parents=True, exist_ok=True)
     (directory / f"{story_id}.json").write_text(
         json.dumps({"story_id": story_id, **fields}), encoding="utf-8"
     )
@@ -108,7 +114,7 @@ def country(tmp_path: Path) -> Path:
     target_dir.mkdir()
     _write_ranking(target_dir, [{"story_id": STORY_ID, "state": "pending", "rank": 1}])
     _make_story(target_dir, STORY_ID, "story.json")
-    write_active_story(target_dir, STORY_ID, "research")
+    write_active_story(target_dir, STORY_ID, "research", DATE)
     return target_dir
 
 
@@ -387,7 +393,9 @@ class TestMarkerContextSkipsFinishedStories:
 
         result = vnn_plugin.vnn_marker_context(_hook_context(country))
 
-        assert result == {"active_story": next_id}
+        assert result["active_story"] == next_id
+        assert result["active_story_dir"] == f"stories/2026/10/22/{next_id}"
+        assert result["ranking_dir"].startswith("rankings/")
 
     def test_empty_when_every_story_is_finished(self, country: Path):
         _make_story(country, STORY_ID, "story.json", "research.md", "article.md", "published.json")
@@ -395,12 +403,14 @@ class TestMarkerContextSkipsFinishedStories:
 
         result = vnn_plugin.vnn_marker_context(_hook_context(country))
 
-        assert result == {"active_story": ""}
+        assert result["active_story"] == ""
+        assert result["active_story_dir"] == "stories/.none"
 
     def test_claimed_story_still_reported(self, country: Path):
-        assert vnn_plugin.vnn_marker_context(_hook_context(country)) == {
-            "active_story": STORY_ID
-        }
+        result = vnn_plugin.vnn_marker_context(_hook_context(country))
+
+        assert result["active_story"] == STORY_ID
+        assert result["active_story_dir"] == f"stories/2026/10/22/{STORY_ID}"
 
 
 def _hook_context(target_dir: Path) -> dict:
@@ -440,7 +450,7 @@ class TestSyncStoryStatesHook:
         assert states[STORY_ID] == "publishing"
 
     def test_missing_ranking_is_a_no_op(self, country: Path):
-        (country / "ranking.json").unlink()
+        ranking_path(country, DATE).unlink()
 
         assert vnn_plugin.sync_story_states_hook(_hook_context(country)) is True
 
@@ -498,7 +508,7 @@ class TestPublishReconciliation:
         assert vnn_plugin.release_finished_story_hook(context) is True
 
         assert load_active_story(country) is None
-        assert (country / "stories" / STORY_ID / "published.json").exists()
+        assert (story_dir(country, STORY_ID, DATE) / "published.json").exists()
 
     def test_publishing_trigger_does_not_fire_for_reconciled_story(
         self, country: Path, tmp_path: Path

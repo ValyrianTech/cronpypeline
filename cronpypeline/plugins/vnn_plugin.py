@@ -1,13 +1,15 @@
 """VNN pipeline custom triggers, actions and hooks.
 
 The VNN pipeline is country-scoped: every target is a country, and all of that
-country's state lives inside its own target directory::
+country's state lives inside its own target directory. Everything that grows
+without bound is partitioned by day::
 
-    <country>/ranking.json              # ranked compiled stories + their state
-    <country>/compiled_stories/         # story_<id>.json produced by the compiler
-    <country>/stories/<story_id>/       # research.md, article.md, published.json, ...
-    <country>/.active_story             # story currently being worked on
-    <country>/compilation_metadata.json # written when a compilation finishes
+    <country>/rankings/<YYYY>/<MM>/<DD>/ranking.json  # ranked stories + state
+    <country>/compiled_stories/<YYYY>/<MM>/<DD>/      # story_<id>.json from the compiler
+    <country>/stories/<YYYY>/<MM>/<DD>/<story_id>/    # research.md, article.md, published.json, ...
+    <country>/news_links/<YYYY>/<MM>/<DD>/            # archived links awaiting compilation
+    <country>/.active_story                           # story currently being worked on
+    <country>/compilation_metadata.json               # written when a compilation finishes
 
 Provides:
 - Triggers: `detect_ranking_needed`, `detect_compilation_needed`,
@@ -33,30 +35,36 @@ from cronpypeline.io_utils import write_json_atomic
 from cronpypeline.plugins.vnn_ranking import (
     ACTIVE_STORY_FILENAME,
     COMPILED_SUBDIR,
+    NEWS_LINKS_SUBDIR,
     RANKING_FILENAME,
     REJECTION_LOG_FILENAME,
     STATE_PENDING,
+    STORIES_SUBDIR,
     clear_active_story,
     derive_story_state,
+    find_story_dir,
     load_active_story,
     load_ranking,
+    news_links_root,
+    ranking_path,
     ranking_stories,
     rejection_count,
     set_story_state,
     state_priority,
     story_artifacts,
+    story_day,
     story_dir,
+    stories_root,
     today_utc,
     unranked_stories,
     utc_now_iso,
     validate_ranking,
     write_active_story,
+    write_ranking,
 )
 
 VNN_SUBDIR = ".VNN"
 COMPILATION_MARKER = "compilation_metadata.json"
-NEWS_LINKS_SUBDIR = "news_links"
-STORIES_SUBDIR = "stories"
 PROCESSING_MARKER = ".processing"
 RESEARCH_MARKER = "research.md"
 ARTICLE_MARKER = "article.md"
@@ -244,13 +252,15 @@ def _is_processing(
 def _current_link_ids(target_dir: Path) -> set[str]:
     """Return the ids of the archived news links for this country.
 
+    Links are partitioned by day, so the whole tree is walked.
+
     :param target_dir: Country target directory.
     :returns: Set of link ids (file stems).
     """
-    links_dir = target_dir / NEWS_LINKS_SUBDIR
-    if not links_dir.is_dir():
+    root = news_links_root(target_dir)
+    if not root.is_dir():
         return set()
-    return {p.stem for p in links_dir.glob("*.json") if not p.name.startswith(".")}
+    return {p.stem for p in root.rglob("*.json") if not p.name.startswith(".")}
 
 
 def _compiled_link_ids(target_dir: Path) -> set[str]:
@@ -369,6 +379,11 @@ def _is_finished(
     :param max_rejections: Optional rejection cap.
     :returns: True when the story is published or gave up.
     """
+    if not story_path.is_dir():
+        # A story that has not been started cannot be finished. Bailing out
+        # here also avoids scanning the whole content repository for a post
+        # that cannot exist yet.
+        return False
     found = story_artifacts(story_path)
     if found["published"] or found["gave_up"]:
         return True
@@ -410,6 +425,64 @@ def _write_published_marker(story_path: Path, posts_dir: Path) -> None:
     })
 
 
+def _locked_story_path(target_dir: Path, active: dict[str, Any]) -> Path:
+    """Return the story directory recorded in the ``.active_story`` lock.
+
+    The lock stores the absolute path it claimed, which survives the story
+    directory moving into a different day partition. When the recorded path is
+    gone the directory is looked up by id, falling back to the day recorded in
+    the lock and finally to today.
+
+    :param target_dir: Country target directory.
+    :param active: Parsed lock dict.
+    :returns: Path to the story directory.
+    """
+    recorded = active.get("story_dir")
+    if isinstance(recorded, str) and recorded:
+        path = Path(recorded)
+        if path.is_dir():
+            return path
+    story_id = str(active["story_id"])
+    found = find_story_dir(target_dir, story_id)
+    if found is not None:
+        return found
+    return story_dir(target_dir, story_id, active.get("story_date"))
+
+
+def _entry_story_path(target_dir: Path, story: dict[str, Any]) -> Path:
+    """Return the story directory for a ranking entry.
+
+    Ranking entries carry the day their story was compiled, so the directory is
+    resolved without scanning the tree. A story that has not been started yet
+    resolves to the path it will be created at.
+
+    :param target_dir: Country target directory.
+    :param story: Story entry from a ranking document.
+    :returns: Path to the story directory.
+    """
+    story_id = str(story["story_id"])
+    day = story.get("date")
+    found = find_story_dir(target_dir, story_id, day) if day else find_story_dir(target_dir, story_id)
+    return found if found is not None else story_dir(target_dir, story_id, day)
+
+
+def _story_dirs(target_dir: Path) -> list[Path]:
+    """Return every story directory for a country, across all days.
+
+    :param target_dir: Country target directory.
+    :returns: Story directories sorted by path.
+    """
+    root = stories_root(target_dir)
+    if not root.is_dir():
+        return []
+    dated = [path for path in root.glob("*/*/*/*") if path.is_dir()]
+    legacy = [
+        path for path in root.iterdir()
+        if path.is_dir() and not path.name.isdigit()
+    ]
+    return sorted(dated + legacy)
+
+
 def _active_story(
     target_dir: Path,
     posts_dir: Path | None = None,
@@ -433,14 +506,14 @@ def _active_story(
     active = load_active_story(target_dir)
     if active is not None:
         story_id = str(active["story_id"])
-        path = story_dir(target_dir, story_id)
+        path = _locked_story_path(target_dir, active)
         if not _is_finished(path, posts_dir, max_rejections):
             return story_id, path
 
     for story in ranking_stories(load_ranking(target_dir)):
         if story.get("state") in _ACTIVE_STATES:
             story_id = str(story["story_id"])
-            path = story_dir(target_dir, story_id)
+            path = _entry_story_path(target_dir, story)
             if not _is_finished(path, posts_dir, max_rejections):
                 return story_id, path
     return None
@@ -599,10 +672,15 @@ def claim_story(action: ActionSpec, context: TickContext) -> ActionResult:
     )
     if resolved is None:
         return ActionResult(success=False, stderr="No story available to claim")
-    story_id = resolved[0]
+    story_id, story_path = resolved
 
     stage = str(action.params.get("stage") or "pipeline")
-    write_active_story(context.target_dir, story_id, stage)
+    write_active_story(
+        context.target_dir,
+        story_id,
+        stage,
+        story_day(context.target_dir, story_path) or None,
+    )
 
     state = action.params.get("state")
     if isinstance(state, str) and state:
@@ -662,7 +740,7 @@ def sync_story_states(action: ActionSpec, context: TickContext) -> ActionResult:
     updated: list[str] = []
     for story in ranking_stories(ranking):
         story_id = str(story["story_id"])
-        path = story_dir(target_dir, story_id)
+        path = _entry_story_path(target_dir, story)
         if not path.is_dir():
             continue
         derived = derive_story_state(path)
@@ -674,7 +752,7 @@ def sync_story_states(action: ActionSpec, context: TickContext) -> ActionResult:
 
     if updated:
         ranking["last_updated"] = utc_now_iso()
-        write_json_atomic(target_dir / RANKING_FILENAME, ranking)
+        write_ranking(target_dir, ranking)
     return ActionResult(success=True, data={"updated": updated})
 
 
@@ -699,36 +777,70 @@ def queue_empty_global(context: dict[str, Any]) -> bool:
     return not any(queue_path.glob("*.json"))
 
 
+def _relative_to_target(target_dir: Path, path: Path) -> str:
+    """Return ``path`` relative to ``target_dir``, or a non-existent sentinel.
+
+    Marker templates must stay inside the target directory, so a path that
+    cannot be expressed relatively is replaced by a sentinel that can never
+    exist. That keeps a marker from resolving to a country-level file and being
+    mistaken for story completion.
+
+    :param target_dir: Country target directory.
+    :param path: Path to express relatively.
+    :returns: Relative POSIX path, or ``"stories/.none"``.
+    """
+    try:
+        return path.relative_to(target_dir).as_posix()
+    except ValueError:
+        return "stories/.none"
+
+
 def vnn_marker_context(context: dict[str, Any]) -> dict[str, Any]:
-    """Marker-context hook: expose the active story id to marker templates.
+    """Marker-context hook: expose the active story and ranking directories.
 
     Story-scoped stages keep their artifacts inside
-    ``<country>/stories/<story_id>/``, so their completion markers need the
-    story id to resolve the right directory. This hook supplies it as
-    ``{active_story}``, letting the config declare e.g.
-    ``"directory": "stories/{active_story}"``.
+    ``<country>/stories/<YYYY>/<MM>/<DD>/<story_id>/`` and the ranking stage
+    writes ``<country>/rankings/<YYYY>/<MM>/<DD>/ranking.json``, so their
+    markers need the date partitions to resolve the right file. This hook
+    supplies them as relative paths, letting the config declare e.g.
+    ``"directory": "{active_story_dir}"`` and
+    ``"directory": "{ranking_dir}"``.
 
-    The id comes from :func:`_active_story` so the markers agree with the
+    The story comes from :func:`_active_story` so the markers agree with the
     triggers and the actions. Reading the ``.active_story`` lock directly let a
     stale lock on a completed story resolve the completion markers into that
     story's directory, so the stages derived as complete and target selection
     skipped the country even though its triggers fired.
 
-    When no story needs work the id is an empty string, which makes such a
-    marker resolve to a path that cannot exist, so a stale country-level file
-    is never mistaken for story completion.
+    When no story needs work the directory is a sentinel that cannot exist, so
+    a stale country-level file is never mistaken for story completion.
 
     :param context: Base marker context dict with ``target_dir``.
-    :returns: Dict with the ``active_story`` template variable.
+    :returns: Dict with the ``active_story``, ``active_story_dir`` and
+        ``ranking_dir`` template variables.
     """
     target_dir = Path(str(context.get("target_dir", "")))
-    resolved = (
-        _active_story(target_dir, _posts_dir(context), _max_rejections(context))
-        if target_dir
-        else None
-    )
-    story_id = resolved[0] if resolved is not None else ""
-    return {"active_story": story_id}
+    day = str(context.get("date") or today_utc())
+    if not target_dir:
+        return {
+            "active_story": "",
+            "active_story_dir": "stories/.none",
+            "ranking_dir": "rankings/.none",
+        }
+
+    resolved = _active_story(target_dir, _posts_dir(context), _max_rejections(context))
+    if resolved is None:
+        story_id = ""
+        story_dir_rel = "stories/.none"
+    else:
+        story_id, story_path = resolved
+        story_dir_rel = _relative_to_target(target_dir, story_path)
+
+    return {
+        "active_story": story_id,
+        "active_story_dir": story_dir_rel,
+        "ranking_dir": _relative_to_target(target_dir, ranking_path(target_dir, day).parent),
+    }
 
 
 def cleanup_inconsistent_state(context: dict[str, Any]) -> bool:
@@ -742,13 +854,7 @@ def cleanup_inconsistent_state(context: dict[str, Any]) -> bool:
     :param context: Hook context dict with ``target_dir``.
     :returns: True to allow the tick to proceed.
     """
-    stories_root = _target_dir(context) / STORIES_SUBDIR
-    if not stories_root.is_dir():
-        return True
-
-    for story_path in sorted(stories_root.iterdir()):
-        if not story_path.is_dir():
-            continue
+    for story_path in _story_dirs(_target_dir(context)):
         article = story_path / ARTICLE_MARKER
         rejected = story_path / REJECTED_MARKER
         if not (article.exists() and rejected.exists()):
@@ -867,9 +973,8 @@ def release_finished_story_hook(context: dict[str, Any]) -> bool:
     active = load_active_story(target_dir)
     if active is None:
         return True
-    story_id = str(active["story_id"])
     if _is_finished(
-        story_dir(target_dir, story_id), _posts_dir(context), _max_rejections(context)
+        _locked_story_path(target_dir, active), _posts_dir(context), _max_rejections(context)
     ):
         release_story(ActionSpec(type=ActionType.CUSTOM, params={}), _hook_tick_context(context))
     return True
@@ -890,14 +995,11 @@ def discard_exhausted_stories_hook(context: dict[str, Any]) -> bool:
     :returns: Always True.
     """
     target_dir = Path(str(context.get("target_dir", "")))
-    stories_root = target_dir / STORIES_SUBDIR
-    if not stories_root.is_dir():
+    if not target_dir:
         return True
     max_rejections = _max_rejections(context)
 
-    for story_path in sorted(stories_root.iterdir()):
-        if not story_path.is_dir():
-            continue
+    for story_path in _story_dirs(target_dir):
         if not _rejection_exhausted(story_path, max_rejections):
             continue
         try:

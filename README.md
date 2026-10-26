@@ -28,7 +28,7 @@
 - **Shell-safe command execution**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into commands are shell-quoted with `shlex.quote()`, and commands are executed via an argument list (`shell=False`) rather than a shell, preventing command injection. Template fields are restricted to simple `{name}` identifiers (attribute/item access is rejected, and nested replacement fields inside a format spec are also rejected by recursing into the format spec) to prevent secrets or object internals leaking into commands.
 - **HTTP requests**: Built-in `http_request` action handler with auth token resolution from config, env vars, or context.
 - **SWE pipeline plugins**: Issue store (YAML frontmatter), diagnostic report handlers with output parsers, prompt builders for fix/coder/review agents, GitHub session adapter.
-- **VNN pipeline plugins**: Country-scoped article pipeline — ranking, compilation, research, writing, publishing and revision triggers, prompt builders, country-local `ranking.json` state helpers, global queue-empty gate and rejection audit trail.
+- **VNN pipeline plugins**: Country-scoped article pipeline — ranking, compilation, research, writing, publishing and revision triggers, prompt builders, country-local per-day ranking state helpers, global queue-empty gate and rejection audit trail. Stories, compiled stories, news links and rankings are partitioned into `YYYY/MM/DD` directories.
 - **Crash-safe**: If a process is killed mid-tick, the next tick re-derives state from whatever markers were already written. State, marker, report, and session files are written atomically (temp file + fsync + atomic `os.replace` via `cronpypeline/io_utils.py`), so a crash mid-write cannot leave a partially-written or corrupt state file.
 - **Execution log**: Optional structured JSONL log (via the `log_file` config option) records every tick and stage evaluation — tick IDs, durations, stage results, and resolved action commands — with automatic rotation.
 - **Minimal dependencies**: Pure Python stdlib. No heavy framework. Python 3.10+.
@@ -934,18 +934,20 @@ The issue-fix plugin's prompt builders (`_build_coder_prompt`, `_build_coverage_
 
 #### VNN pipeline plugins
 
-The VNN pipeline is **country-scoped**: every target is a country, and all of that country's state lives inside its own target directory.
+The VNN pipeline is **country-scoped**: every target is a country, and all of that country's state lives inside its own target directory. Everything that grows without bound is partitioned by day, so a country directory stays navigable after a year of operation.
 
 ```
-<country>/ranking.json              # ranked compiled stories + their state
-<country>/compiled_stories/         # story_<id>.json produced by the compiler
-<country>/stories/<story_id>/       # research.md, article.md, published.json, ...
-<country>/.active_story             # story currently being worked on
-<country>/compilation_metadata.json # written when a compilation finishes
-<country>/news_links/               # archived links waiting to be compiled
+<country>/rankings/<YYYY>/<MM>/<DD>/ranking.json  # ranked compiled stories + their state
+<country>/compiled_stories/<YYYY>/<MM>/<DD>/      # story_<id>.json produced by the compiler
+<country>/stories/<YYYY>/<MM>/<DD>/<story_id>/    # research.md, article.md, published.json, ...
+<country>/news_links/<YYYY>/<MM>/<DD>/            # archived links waiting to be compiled
+<country>/.active_story                           # story currently being worked on
+<country>/compilation_metadata.json               # written when a compilation finishes
 ```
 
-`ranking.json` is the authoritative record of the country's stories:
+Story ids stay date-free: the day lives in the path, so ids embedded in published article front matter never change. Each ranking entry records the day its story was compiled, which is what lets a story directory be located without scanning the tree. `load_ranking` prefers the requested day and falls back to the most recent earlier ranking, so a story still in progress after midnight is never lost; `set_story_state` updates whichever ranking actually contains the story.
+
+The ranking for a day is the authoritative record of that day's stories:
 
 ```json
 {
@@ -954,8 +956,10 @@ The VNN pipeline is **country-scoped**: every target is a country, and all of th
   "version": 1,
   "last_updated": "2026-10-21T09:00:00+00:00",
   "stories": [
-    {"rank": 1, "story_id": "story_ac03c622", "title_en": "...", "summary_en": "...",
-     "category": "...", "article_count": 3, "file_path": "...", "state": "pending"}
+    {"rank": 1, "story_id": "story_ac03c622", "date": "20261021", "title_en": "...",
+     "summary_en": "...", "category": "...", "article_count": 3,
+     "file_path": "<country>/compiled_stories/2026/10/21/story_ac03c622.json",
+     "state": "pending"}
   ]
 }
 ```
@@ -969,18 +973,19 @@ Story states: `pending` → `researching` → `writing` → `publishing` → `pu
 - `detect_research_needed` / `detect_writing_needed` / `detect_publishing_needed` / `detect_revision_needed` — triggers: what the active story still needs
 - `claim_story` — action: writes `.active_story` and records the story's new state
 - `release_story` — action: clears `.active_story`
-- `validate_ranking_action` — action: validates the `ranking.json` the agent wrote
-- `sync_story_states` — action: reconciles `ranking.json` with the story directories (never rolls state back)
+- `validate_ranking_action` — action: validates the day's `ranking.json` the agent wrote
+- `sync_story_states` — action: reconciles the ranking with the story directories (never rolls state back)
 - `queue_empty_global` — pre_tick hook: skips the tick while the conversation queue has entries (reads `queue_dir` from the pipeline's `action_handler`)
-- `cleanup_inconsistent_state` — pre_tick hook: resolves stories with both `article.md` and `rejected-article.md` by mtime
+- `cleanup_inconsistent_state` — pre_tick hook: resolves stories with both `article.md` and `rejected-article.md` by mtime, across every day partition
 - `log_rejection` — post_tick hook: appends to the active story's `rejection_log.json`
+- `vnn_marker_context` — marker-context hook: exposes `{active_story}`, `{active_story_dir}` and `{ranking_dir}` so stage markers follow the date partitions
 - `vnn_pre_tick` / `vnn_post_tick` — composite hooks used by the config
 
 **`cronpypeline.plugins.vnn_prompts`** — prompt builders (`build_ranking_prompt`, `build_compile_prompt`, `build_research_prompt`, `build_writing_prompt`, `build_publishing_prompt`, `build_revision_prompt`) and the matching queue actions (`queue_ranking_agent`, `queue_compile_agent`, `queue_research_agent`, `queue_writing_agent`, `queue_publishing_agent`, `queue_revision_agent`).
 
 The queue actions decline to queue an agent when there is nothing left to do, returning `data: {"skipped": True}` instead of a failure. This matters because the stale re-queue path (`_handle_stale`) re-runs a stage's action **without re-evaluating its trigger**, so a stage whose work is already finished would otherwise be re-dispatched on every tick until `max_retries` is exhausted. `queue_compile_agent` in particular declines when no archived links are pending — the queue monitor deletes the queue file as soon as the conversation finishes, before the agent has written `compilation_metadata.json`, so the compiler stage was previously re-queued several times and gave up before the agent could complete. A `skipped` result also clears the processing marker, so the stage stops re-queueing.
 
-**`cronpypeline.plugins.vnn_ranking`** — country-local ranking state helpers (`load_ranking`, `ranking_stories`, `unranked_stories`, `load_active_story`, `write_active_story`, `set_story_state`, `derive_story_state`, `validate_ranking`, `today_utc`, ...).
+**`cronpypeline.plugins.vnn_ranking`** — country-local ranking state helpers (`load_ranking`, `ranking_days`, `ranking_stories`, `unranked_stories`, `load_active_story`, `write_active_story`, `set_story_state`, `derive_story_state`, `validate_ranking`, `story_dir`, `find_story_dir`, `find_compiled_story`, `date_dir`, `normalize_day`, `today_utc`, ...).
 
 **Publish reconciliation.** `publish_article.py` copies the article into the VNN content repository and only then commits it. When the commit fails (e.g. a DNS failure resolving `github.com`) the copy survives but `published.json` is never written, so every retry fails with a duplicate-slug error and the story is re-queued until it gives up. Story resolution therefore also treats a story as finished when a post file in the content repository carries its `story_id` in the front matter, and writes the missing `published.json` with `"reconciled": true`. The posts directory is read from the country's `posts_dir` option, falling back to `DEFAULT_POSTS_DIR`; reconciliation is skipped when the directory does not exist.
 

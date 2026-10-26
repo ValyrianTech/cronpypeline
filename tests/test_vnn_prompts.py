@@ -23,7 +23,14 @@ from cronpypeline.plugins.vnn_prompts import (
     queue_revision_agent,
     queue_writing_agent,
 )
-from cronpypeline.plugins.vnn_ranking import write_active_story, write_ranking
+from cronpypeline.plugins.vnn_ranking import (
+    compiled_dir,
+    day_from_timestamp,
+    news_links_dir,
+    story_dir,
+    write_active_story,
+    write_ranking,
+)
 
 COUNTRY = "belgium"
 DATE = "20261021"
@@ -31,9 +38,10 @@ DATE = "20261021"
 
 def _write_compiled(target_dir: Path, story_id: str, **fields) -> None:
     """Write a compiled story JSON file for the country."""
-    directory = target_dir / "compiled_stories"
-    directory.mkdir(parents=True, exist_ok=True)
     fields.setdefault("compilation_timestamp", datetime.now(timezone.utc).isoformat())
+    day = day_from_timestamp(fields["compilation_timestamp"]) or DATE
+    directory = compiled_dir(target_dir, day)
+    directory.mkdir(parents=True, exist_ok=True)
     (directory / f"{story_id}.json").write_text(
         json.dumps({"story_id": story_id, **fields}), encoding="utf-8"
     )
@@ -45,13 +53,13 @@ def _write_ranking(target_dir: Path, stories) -> None:
         "date": DATE,
         "country": COUNTRY,
         "version": 1,
-        "stories": stories,
+        "stories": [{"date": DATE, **story} for story in stories],
     })
 
 
 def _write_links(target_dir: Path, *link_ids: str) -> None:
     """Write archived news link files for the country."""
-    directory = target_dir / "news_links"
+    directory = news_links_dir(target_dir, DATE)
     directory.mkdir(parents=True, exist_ok=True)
     for link_id in link_ids:
         (directory / f"{link_id}.json").write_text("{}", encoding="utf-8")
@@ -68,7 +76,7 @@ def _write_compilation_metadata(target_dir: Path, *link_ids: str) -> None:
 
 def _make_story(target_dir: Path, story_id: str, *artefacts: str) -> Path:
     """Create a story directory containing the given artefact files."""
-    path = target_dir / "stories" / story_id
+    path = story_dir(target_dir, story_id, DATE)
     path.mkdir(parents=True, exist_ok=True)
     for name in artefacts:
         (path / name).write_text("{}", encoding="utf-8")
@@ -141,7 +149,7 @@ class TestBuildRankingPrompt:
         )
         assert '"state": "pending"' not in prompt
         assert "as JSON with exactly this shape" not in prompt
-        assert f"Do not write `{COUNTRY}/ranking.json` yourself" in prompt
+        assert f"Do not write `{COUNTRY}/rankings/<YYYY>/<MM>/<DD>/ranking.json` yourself" in prompt
 
     def test_includes_already_ranked_stories(self):
         prompt = build_ranking_prompt(
@@ -419,7 +427,7 @@ class TestStorySetup:
         result = queue_research_agent(_action(agent="NewsResearchAgent"), _tick_context(tmp_path, queue_dir))
 
         assert result.success is True
-        story_path = country_dir / "stories" / "story_1"
+        story_path = story_dir(country_dir, "story_1", DATE)
         assert story_path.is_dir()
         copied = json.loads((story_path / "story.json").read_text(encoding="utf-8"))
         assert copied["title_en"] == "One"
@@ -452,7 +460,7 @@ class TestStorySetup:
 
         lock = json.loads((country_dir / ".active_story").read_text(encoding="utf-8"))
         assert lock["story_id"] == "story_1"
-        assert not (country_dir / "stories" / "story_2").exists()
+        assert not story_dir(country_dir, "story_2", DATE).exists()
 
 
 class TestActionsAgreeWithTriggers:

@@ -15,16 +15,22 @@ from cronpypeline.plugins.vnn_ranking import (
     STATE_WRITING,
     build_ranking,
     clear_active_story,
+    day_from_timestamp,
     derive_story_state,
+    find_compiled_story,
+    find_story_dir,
     is_valid_story_id,
     load_active_story,
     load_compiled_stories,
     load_ranking,
+    normalize_day,
+    ranking_days,
     ranking_stories,
     rejection_count,
     set_story_state,
     state_priority,
     split_ranked_by_day,
+    story_day,
     story_dir,
     today_utc,
     unranked_stories,
@@ -34,18 +40,26 @@ from cronpypeline.plugins.vnn_ranking import (
 )
 
 
-def _write_compiled(target_dir: Path, story_id: str, **fields) -> Path:
-    """Write a compiled story JSON file into the country's compiled dir."""
-    directory = target_dir / "compiled_stories"
+def _write_compiled(target_dir: Path, story_id: str, date: str | None = None, **fields) -> Path:
+    """Write a compiled story JSON file into the country's dated compiled dir."""
+    fields.setdefault("compilation_timestamp", datetime.now(timezone.utc).isoformat())
+    day = date or day_from_timestamp(fields["compilation_timestamp"]) or today_utc()
+    directory = vnn_ranking.compiled_dir(target_dir, day)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{story_id}.json"
-    fields.setdefault("compilation_timestamp", datetime.now(timezone.utc).isoformat())
     path.write_text(json.dumps({"story_id": story_id, **fields}), encoding="utf-8")
     return path
 
 
+def _ranking_file(target_dir: Path, date: str = "20261021") -> Path:
+    """Return a day's ranking file path, creating its directory."""
+    path = vnn_ranking.ranking_path(target_dir, date)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _write_ranking(target_dir: Path, stories, country="belgium", date="20261021") -> None:
-    """Write a ranking.json document into the country target dir."""
+    """Write a ranking.json document into the country's dated rankings dir."""
     write_ranking(target_dir, {
         "date": date,
         "country": country,
@@ -59,6 +73,39 @@ class TestTodayUtc:
         value = today_utc()
         assert len(value) == 8
         assert value.isdigit()
+
+
+class TestDateHelpers:
+    def test_normalize_day_accepts_both_forms(self):
+        assert normalize_day("2026-10-21") == "20261021"
+        assert normalize_day("20261021") == "20261021"
+
+    def test_normalize_day_defaults_to_today(self):
+        assert normalize_day() == today_utc()
+
+    def test_normalize_day_rejects_garbage(self):
+        with pytest.raises(ValueError):
+            normalize_day("not-a-date")
+
+    def test_day_from_timestamp(self):
+        assert day_from_timestamp("2026-10-21T09:00:00+00:00") == "20261021"
+        assert day_from_timestamp("2026-10-21") == "20261021"
+        assert day_from_timestamp("20261021") == "20261021"
+        assert day_from_timestamp("") == ""
+        assert day_from_timestamp(None) == ""
+
+    def test_date_dir_is_year_month_day(self, tmp_path):
+        assert vnn_ranking.date_dir(tmp_path, "20261021") == tmp_path / "2026" / "10" / "21"
+
+    def test_partitioned_paths(self, tmp_path):
+        assert vnn_ranking.ranking_path(tmp_path, "20261021") == \
+            tmp_path / "rankings" / "2026" / "10" / "21" / "ranking.json"
+        assert vnn_ranking.stories_dir(tmp_path, "20261021") == \
+            tmp_path / "stories" / "2026" / "10" / "21"
+        assert vnn_ranking.compiled_dir(tmp_path, "20261021") == \
+            tmp_path / "compiled_stories" / "2026" / "10" / "21"
+        assert vnn_ranking.news_links_dir(tmp_path, "20261021") == \
+            tmp_path / "news_links" / "2026" / "10" / "21"
 
 
 class TestStoryIds:
@@ -75,7 +122,64 @@ class TestStoryIds:
             story_dir(tmp_path, "../escape")
 
     def test_story_dir_is_country_local(self, tmp_path):
-        assert story_dir(tmp_path, "story_1") == tmp_path / "stories" / "story_1"
+        assert story_dir(tmp_path, "story_1", "20261021") == \
+            tmp_path / "stories" / "2026" / "10" / "21" / "story_1"
+
+    def test_story_dir_defaults_to_today(self, tmp_path):
+        day = today_utc()
+        assert story_dir(tmp_path, "story_1") == \
+            tmp_path / "stories" / day[:4] / day[4:6] / day[6:8] / "story_1"
+
+    def test_story_day_reads_the_partition(self, tmp_path):
+        path = tmp_path / "stories" / "2026" / "10" / "21" / "story_1"
+        assert story_day(tmp_path, path) == "20261021"
+
+    def test_story_day_of_legacy_dir_is_empty(self, tmp_path):
+        assert story_day(tmp_path, tmp_path / "stories" / "story_1") == ""
+
+
+class TestFindStoryDir:
+    def test_missing_returns_none(self, tmp_path):
+        assert find_story_dir(tmp_path, "story_1") is None
+
+    def test_finds_dated_dir_without_date(self, tmp_path):
+        path = tmp_path / "stories" / "2026" / "10" / "21" / "story_1"
+        path.mkdir(parents=True)
+        assert find_story_dir(tmp_path, "story_1") == path
+
+    def test_finds_dated_dir_with_date(self, tmp_path):
+        path = tmp_path / "stories" / "2026" / "10" / "21" / "story_1"
+        path.mkdir(parents=True)
+        assert find_story_dir(tmp_path, "story_1", "20261021") == path
+
+    def test_wrong_date_returns_none(self, tmp_path):
+        (tmp_path / "stories" / "2026" / "10" / "21" / "story_1").mkdir(parents=True)
+        assert find_story_dir(tmp_path, "story_1", "20261022") is None
+
+    def test_finds_legacy_flat_dir(self, tmp_path):
+        path = tmp_path / "stories" / "story_1"
+        path.mkdir(parents=True)
+        assert find_story_dir(tmp_path, "story_1") == path
+
+    def test_rejects_traversal(self, tmp_path):
+        with pytest.raises(ValueError):
+            find_story_dir(tmp_path, "../escape")
+
+
+class TestFindCompiledStory:
+    def test_missing_returns_none(self, tmp_path):
+        assert find_compiled_story(tmp_path, "story_1") is None
+
+    def test_finds_dated_file(self, tmp_path):
+        path = _write_compiled(tmp_path, "story_1", "20261021")
+        assert find_compiled_story(tmp_path, "story_1") == path
+
+    def test_finds_legacy_flat_file(self, tmp_path):
+        directory = tmp_path / "compiled_stories"
+        directory.mkdir()
+        path = directory / "story_1.json"
+        path.write_text(json.dumps({"story_id": "story_1"}), encoding="utf-8")
+        assert find_compiled_story(tmp_path, "story_1") == path
 
 
 class TestLoadRanking:
@@ -83,18 +187,50 @@ class TestLoadRanking:
         assert load_ranking(tmp_path) is None
 
     def test_invalid_json_returns_none(self, tmp_path):
-        (tmp_path / "ranking.json").write_text("{not json", encoding="utf-8")
-        assert load_ranking(tmp_path) is None
+        _ranking_file(tmp_path).write_text("{not json", encoding="utf-8")
+        assert load_ranking(tmp_path, "20261021") is None
 
     def test_non_dict_returns_none(self, tmp_path):
-        (tmp_path / "ranking.json").write_text("[]", encoding="utf-8")
-        assert load_ranking(tmp_path) is None
+        _ranking_file(tmp_path).write_text("[]", encoding="utf-8")
+        assert load_ranking(tmp_path, "20261021") is None
 
     def test_valid_ranking_roundtrip(self, tmp_path):
         _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
-        ranking = load_ranking(tmp_path)
+        ranking = load_ranking(tmp_path, "20261021")
         assert ranking is not None
         assert ranking["country"] == "belgium"
+
+    def test_falls_back_to_most_recent_earlier_day(self, tmp_path):
+        """A story in progress must survive midnight."""
+        _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_old"}], date="20261020")
+        _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_new"}], date="20261021")
+        ranking = load_ranking(tmp_path, "20261022")
+        assert ranking is not None
+        assert ranking["date"] == "20261021"
+
+    def test_does_not_look_into_the_future(self, tmp_path):
+        _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_new"}], date="20261022")
+        assert load_ranking(tmp_path, "20261021") is None
+
+    def test_prefers_the_exact_day(self, tmp_path):
+        _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_old"}], date="20261020")
+        _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_new"}], date="20261021")
+        assert load_ranking(tmp_path, "20261020")["date"] == "20261020"
+
+
+class TestRankingDays:
+    def test_empty(self, tmp_path):
+        assert ranking_days(tmp_path) == []
+
+    def test_newest_first(self, tmp_path):
+        for day in ("20261020", "20261022", "20261021"):
+            _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_1"}], date=day)
+        assert ranking_days(tmp_path) == ["20261022", "20261021", "20261020"]
+
+    def test_upto_filters(self, tmp_path):
+        for day in ("20261020", "20261022"):
+            _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_1"}], date=day)
+        assert ranking_days(tmp_path, upto="20261021") == ["20261020"]
 
 
 class TestRankingStories:
@@ -131,7 +267,15 @@ class TestActiveStory:
         assert lock is not None
         assert lock["story_id"] == "story_1"
         assert lock["stage"] == "research"
-        assert lock["story_dir"].endswith("stories/story_1")
+        day = today_utc()
+        assert lock["story_dir"].endswith(f"stories/{day[:4]}/{day[4:6]}/{day[6:8]}/story_1")
+        assert lock["story_date"] == day
+
+    def test_write_records_explicit_date(self, tmp_path):
+        write_active_story(tmp_path, "story_1", "research", "20261021")
+        lock = load_active_story(tmp_path)
+        assert lock["story_date"] == "20261021"
+        assert lock["story_dir"].endswith("stories/2026/10/21/story_1")
 
     def test_write_rejects_traversal(self, tmp_path):
         with pytest.raises(ValueError):
@@ -158,17 +302,25 @@ class TestActiveStory:
 class TestSetStoryState:
     def test_updates_state(self, tmp_path):
         _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
-        assert set_story_state(tmp_path, "story_1", "writing") is True
-        stories = ranking_stories(load_ranking(tmp_path))
+        assert set_story_state(tmp_path, "story_1", "writing", "20261021") is True
+        stories = ranking_stories(load_ranking(tmp_path, "20261021"))
         assert stories[0]["state"] == "writing"
         assert "state_updated_at" in stories[0]
 
     def test_unknown_story_returns_false(self, tmp_path):
         _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_1", "state": "pending"}])
-        assert set_story_state(tmp_path, "story_2", "writing") is False
+        assert set_story_state(tmp_path, "story_2", "writing", "20261021") is False
 
     def test_missing_ranking_returns_false(self, tmp_path):
         assert set_story_state(tmp_path, "story_1", "writing") is False
+
+    def test_updates_the_ranking_that_contains_the_story(self, tmp_path):
+        """A story ranked yesterday keeps its state in yesterday's ranking."""
+        _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_old", "state": "pending"}], date="20261020")
+        _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_new", "state": "pending"}], date="20261021")
+        assert set_story_state(tmp_path, "story_old", "writing", "20261021") is True
+        assert ranking_stories(load_ranking(tmp_path, "20261020"))[0]["state"] == "writing"
+        assert ranking_stories(load_ranking(tmp_path, "20261021"))[0]["state"] == "pending"
 
 
 class TestCompiledStories:
@@ -194,6 +346,16 @@ class TestCompiledStories:
 
     def test_missing_dir(self, tmp_path):
         assert load_compiled_stories(tmp_path) == []
+
+    def test_date_limits_to_one_day(self, tmp_path):
+        _write_compiled(tmp_path, "story_old", "20261020")
+        _write_compiled(tmp_path, "story_new", "20261021")
+        assert [s["story_id"] for s in load_compiled_stories(tmp_path, "20261021")] == ["story_new"]
+
+    def test_without_date_reads_every_day(self, tmp_path):
+        _write_compiled(tmp_path, "story_old", "20261020")
+        _write_compiled(tmp_path, "story_new", "20261021")
+        assert [s["story_id"] for s in load_compiled_stories(tmp_path)] == ["story_old", "story_new"]
 
     def test_unranked_excludes_ranked(self, tmp_path):
         _write_compiled(tmp_path, "story_1")
@@ -339,6 +501,23 @@ class TestBuildRanking:
         assert story["title_en"] == ""
         assert story["file_path"] == ""
 
+    def test_entry_date_defaults_to_the_ranking_day(self):
+        ranking = build_ranking("belgium", "20261021", [{"story_id": "story_a"}])
+        assert ranking["stories"][0]["date"] == "20261021"
+
+    def test_entry_date_comes_from_the_compiled_story(self):
+        ranking = build_ranking("belgium", "20261021", [
+            {"story_id": "story_a", "compilation_timestamp": "2026-10-19T09:00:00+00:00"},
+        ])
+        assert ranking["stories"][0]["date"] == "20261019"
+
+    def test_entry_date_survives_a_rerank(self):
+        previous = {"stories": [{"rank": 1, "story_id": "story_a", "date": "20261019"}]}
+        ranking = build_ranking(
+            "belgium", "20261021", [{"story_id": "story_a"}], previous=previous
+        )
+        assert ranking["stories"][0]["date"] == "20261019"
+
 
 class TestValidateRanking:
     def test_missing_file(self, tmp_path):
@@ -357,10 +536,21 @@ class TestValidateRanking:
         assert "country" in reason
 
     def test_wrong_date(self, tmp_path):
-        _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_1"}], date="20260101")
+        _ranking_file(tmp_path).write_text(json.dumps({
+            "date": "20260101",
+            "country": "belgium",
+            "stories": [{"rank": 1, "story_id": "story_1"}],
+        }), encoding="utf-8")
         ok, reason = validate_ranking(tmp_path, "belgium", "20261021")
         assert ok is False
         assert "date" in reason
+
+    def test_ignores_other_days(self, tmp_path):
+        """A ranking written for another day must not satisfy this day."""
+        _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_1"}], date="20261020")
+        ok, reason = validate_ranking(tmp_path, "belgium", "20261021")
+        assert ok is False
+        assert "missing" in reason
 
     def test_empty_stories(self, tmp_path):
         _write_ranking(tmp_path, [])
