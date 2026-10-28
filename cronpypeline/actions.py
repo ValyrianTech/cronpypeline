@@ -24,7 +24,7 @@ import urllib.request
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.template_safety import (
@@ -285,7 +285,11 @@ def _validate_ssrf(url: str, params: dict) -> tuple[list[str] | None, str | None
     return None, None
 
 
-_DEFAULT_TIMEOUT = object()
+class _DefaultTimeout:
+    """Sentinel type meaning 'use the socket module's global default timeout'."""
+
+
+_DEFAULT_TIMEOUT: _DefaultTimeout = _DefaultTimeout()
 """Sentinel meaning 'use the socket module's global default timeout'.
 
 The pinned connection classes below deliberately avoid the private
@@ -309,7 +313,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
     :class:`NotImplementedError`).
     """
 
-    def __init__(self, host: str, port: int | None = None, timeout: float | None = _DEFAULT_TIMEOUT,
+    def __init__(self, host: str, port: int | None = None, timeout: float | None | _DefaultTimeout = _DEFAULT_TIMEOUT,
                  source_address: tuple[str, int] | None = None, blocksize: int = 8192, *, validated_ips: list[str] | None = None) -> None:
         """Initialize a pinned HTTP connection.
 
@@ -325,7 +329,8 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
         if timeout is _DEFAULT_TIMEOUT:
             super().__init__(host, port, source_address=source_address, blocksize=blocksize)
         else:
-            super().__init__(host, port, timeout, source_address, blocksize=blocksize)
+            super().__init__(host, port, cast(float | None, timeout), source_address, blocksize=blocksize)
+        self._source_address = source_address
 
     def connect(self) -> None:
         """Connect to a validated IP instead of re-resolving the hostname."""
@@ -335,7 +340,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
         for connect_host in connect_hosts:
             try:
                 self.sock = socket.create_connection(
-                    (connect_host, self.port), self.timeout, self.source_address
+                    (connect_host, self.port), self.timeout, self._source_address
                 )
                 break
             except OSError as e:
@@ -371,7 +376,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     """
 
     def __init__(self, host: str, port: int | None = None,
-                 timeout: float | None = _DEFAULT_TIMEOUT, source_address: tuple[str, int] | None = None,
+                 timeout: float | None | _DefaultTimeout = _DEFAULT_TIMEOUT, source_address: tuple[str, int] | None = None,
                  blocksize: int = 8192, *, context: ssl.SSLContext | None = None, validated_ips: list[str] | None = None) -> None:
         """Initialize a pinned HTTPS connection.
 
@@ -389,7 +394,8 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         if timeout is _DEFAULT_TIMEOUT:
             super().__init__(host, port, source_address=source_address, blocksize=blocksize, context=self.context)
         else:
-            super().__init__(host, port, timeout=timeout, source_address=source_address, blocksize=blocksize, context=self.context)
+            super().__init__(host, port, timeout=cast(float | None, timeout), source_address=source_address, blocksize=blocksize, context=self.context)
+        self._source_address = source_address
 
     def connect(self) -> None:
         """Connect to a validated IP and do TLS with the original hostname."""
@@ -399,7 +405,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         for connect_host in connect_hosts:
             try:
                 self.sock = socket.create_connection(
-                    (connect_host, self.port), self.timeout, self.source_address
+                    (connect_host, self.port), self.timeout, self._source_address
                 )
                 break
             except OSError as e:
