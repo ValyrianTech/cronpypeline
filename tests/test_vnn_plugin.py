@@ -160,7 +160,14 @@ class TestProcessingGate:
 
 def _stage(stage_id: str, marker: str):
     """Build a minimal stage carrying a processing marker spec."""
-    from cronpypeline.config import ActionSpec, ActionType, MarkerSpec, Stage, TriggerCondition, TriggerType
+    from cronpypeline.config import (
+        ActionSpec,
+        ActionType,
+        MarkerSpec,
+        Stage,
+        TriggerCondition,
+        TriggerType,
+    )
 
     return Stage(
         id=stage_id,

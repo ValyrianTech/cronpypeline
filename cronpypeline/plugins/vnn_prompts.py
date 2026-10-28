@@ -33,7 +33,6 @@ from cronpypeline.plugins.vnn_ranking import (
     RANKING_FILENAME,
     find_compiled_story,
     load_active_story,
-    load_ranking,
     news_links_root,
     ranking_stories,
     rejection_count,
