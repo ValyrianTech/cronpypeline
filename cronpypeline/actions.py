@@ -24,7 +24,7 @@ import urllib.request
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.template_safety import (
@@ -285,22 +285,52 @@ def _validate_ssrf(url: str, params: dict) -> tuple[list[str] | None, str | None
     return None, None
 
 
-class _PinnedHTTPConnection(http.client.HTTPConnection):
-    """HTTPConnection that connects to a pre-validated IP address."""
+class _DefaultTimeout:
+    """Sentinel type meaning 'use the socket module's global default timeout'."""
 
-    def __init__(self, host: str, port: int | None = None, timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT,  # type: ignore[attr-defined]
+
+_DEFAULT_TIMEOUT: _DefaultTimeout = _DefaultTimeout()
+"""Sentinel meaning 'use the socket module's global default timeout'.
+
+The pinned connection classes below deliberately avoid the private
+``socket._GLOBAL_DEFAULT_TIMEOUT`` sentinel (and other private ``http.client``
+internals such as ``_create_connection``, ``_tunnel_host``, ``_tunnel`` and
+``_context``). Instead they rely solely on the public ``http.client`` and
+``socket`` API — :func:`socket.create_connection`,
+:meth:`ssl.SSLContext.wrap_socket`, and the public ``HTTPConnection``
+attributes ``host``/``port``/``timeout``/``source_address`` — so that SSRF
+pinning survives CPython internal refactors across the supported 3.10-3.12
+range.
+"""
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """HTTPConnection that connects to a pre-validated IP address.
+
+    Only the public ``http.client``/``socket`` API is used internally so the
+    pinning logic does not depend on CPython private attributes. Proxy
+    tunnelling is intentionally unsupported (:meth:`set_tunnel` raises
+    :class:`NotImplementedError`).
+    """
+
+    def __init__(self, host: str, port: int | None = None, timeout: float | None | _DefaultTimeout = _DEFAULT_TIMEOUT,
                  source_address: tuple[str, int] | None = None, blocksize: int = 8192, *, validated_ips: list[str] | None = None) -> None:
         """Initialize a pinned HTTP connection.
 
         :param host: Hostname to connect to.
         :param port: Port to connect to, or ``None`` for the default.
-        :param timeout: Connection timeout in seconds.
+        :param timeout: Connection timeout in seconds, or ``None`` for the
+            socket module's global default.
         :param source_address: Source address to bind to, or ``None``.
         :param blocksize: Buffer size for file reads in bytes.
         :param validated_ips: Pre-validated IP addresses to pin the connection to, or ``None``.
         """
         self._validated_ips = validated_ips
-        super().__init__(host, port, timeout, source_address, blocksize=blocksize)
+        if timeout is _DEFAULT_TIMEOUT:
+            super().__init__(host, port, source_address=source_address, blocksize=blocksize)
+        else:
+            super().__init__(host, port, cast(float | None, timeout), source_address, blocksize=blocksize)
+        self._source_address = source_address
 
     def connect(self) -> None:
         """Connect to a validated IP instead of re-resolving the hostname."""
@@ -309,8 +339,8 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
         last_err: OSError | None = None
         for connect_host in connect_hosts:
             try:
-                self.sock = self._create_connection(  # type: ignore[attr-defined]
-                    (connect_host, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
+                self.sock = socket.create_connection(
+                    (connect_host, self.port), self.timeout, self._source_address
                 )
                 break
             except OSError as e:
@@ -322,30 +352,50 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
         except OSError as e:
             if e.errno != errno.ENOPROTOOPT:
                 raise
-        if self._tunnel_host:  # type: ignore[attr-defined]
-            self._tunnel()  # type: ignore[attr-defined]
+
+    def set_tunnel(self, *args: Any, **kwargs: Any) -> None:
+        """Reject proxy tunnelling for the pinned SSRF connection.
+
+        Proxy tunnelling is not supported because implementing it would require
+        reaching into private ``http.client`` internals (``_tunnel_host`` and
+        ``_tunnel``), which these classes deliberately avoid to keep SSRF
+        pinning robust across CPython internal refactors.
+        """
+        raise NotImplementedError(
+            "Proxy tunnelling is not supported by the pinned SSRF connection classes"
+        )
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    """HTTPSConnection that connects to a pre-validated IP address."""
+    """HTTPSConnection that connects to a pre-validated IP address.
+
+    Only the public ``http.client``/``socket``/``ssl`` API is used internally
+    so the pinning logic does not depend on CPython private attributes. Proxy
+    tunnelling is intentionally unsupported (:meth:`set_tunnel` raises
+    :class:`NotImplementedError`).
+    """
 
     def __init__(self, host: str, port: int | None = None,
-                 timeout: float | None = socket._GLOBAL_DEFAULT_TIMEOUT, source_address: tuple[str, int] | None = None,  # type: ignore[attr-defined]
+                 timeout: float | None | _DefaultTimeout = _DEFAULT_TIMEOUT, source_address: tuple[str, int] | None = None,
                  blocksize: int = 8192, *, context: ssl.SSLContext | None = None, validated_ips: list[str] | None = None) -> None:
         """Initialize a pinned HTTPS connection.
 
         :param host: Hostname to connect to.
         :param port: Port to connect to, or ``None`` for the default.
-        :param timeout: Connection timeout in seconds.
+        :param timeout: Connection timeout in seconds, or ``None`` for the
+            socket module's global default.
         :param source_address: Source address to bind to, or ``None``.
         :param blocksize: Buffer size for file reads in bytes.
         :param context: SSL context to use for TLS, or ``None`` for the default.
         :param validated_ips: Pre-validated IP addresses to pin the connection to, or ``None``.
         """
         self._validated_ips = validated_ips
-        super().__init__(host, port, timeout=timeout,
-                         source_address=source_address, blocksize=blocksize,
-                         context=context)
+        self.context = context if context is not None else ssl.create_default_context()
+        if timeout is _DEFAULT_TIMEOUT:
+            super().__init__(host, port, source_address=source_address, blocksize=blocksize, context=self.context)
+        else:
+            super().__init__(host, port, timeout=cast(float | None, timeout), source_address=source_address, blocksize=blocksize, context=self.context)
+        self._source_address = source_address
 
     def connect(self) -> None:
         """Connect to a validated IP and do TLS with the original hostname."""
@@ -354,8 +404,8 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         last_err: OSError | None = None
         for connect_host in connect_hosts:
             try:
-                self.sock = self._create_connection(  # type: ignore[attr-defined]
-                    (connect_host, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
+                self.sock = socket.create_connection(
+                    (connect_host, self.port), self.timeout, self._source_address
                 )
                 break
             except OSError as e:
@@ -367,11 +417,20 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         except OSError as e:
             if e.errno != errno.ENOPROTOOPT:
                 raise
-        if self._tunnel_host:  # type: ignore[attr-defined]
-            self._tunnel()  # type: ignore[attr-defined]
-        # Use the original hostname for SNI and certificate validation
-        server_hostname = self._tunnel_host if self._tunnel_host else self.host  # type: ignore[attr-defined]
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)  # type: ignore[attr-defined]
+        # SNI and certificate validation use the original hostname (no proxy tunnel).
+        self.sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
+
+    def set_tunnel(self, *args: Any, **kwargs: Any) -> None:
+        """Reject proxy tunnelling for the pinned SSRF connection.
+
+        Proxy tunnelling is not supported because implementing it would require
+        reaching into private ``http.client`` internals (``_tunnel_host`` and
+        ``_tunnel``), which these classes deliberately avoid to keep SSRF
+        pinning robust across CPython internal refactors.
+        """
+        raise NotImplementedError(
+            "Proxy tunnelling is not supported by the pinned SSRF connection classes"
+        )
 
 
 class _PinnedHTTPHandler(urllib.request.HTTPHandler):
@@ -399,6 +458,28 @@ class _PinnedHTTPHandler(urllib.request.HTTPHandler):
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
     """HTTPSHandler that pins connections to a pre-validated IP address."""
 
+    def __init__(self, debuglevel: int | None = None, context: ssl.SSLContext | None = None,
+                 check_hostname: bool | None = None) -> None:
+        """Initialize the handler, keeping a public copy of the SSL context.
+
+        ``urllib.request.HTTPSHandler`` stores its context in a private
+        ``_context`` attribute, so we build the context ourselves, keep a
+        public ``self.context`` reference to it, and hand the very same
+        object to the parent. This keeps the public copy and the context used
+        for TLS identical (including any ``check_hostname`` override) without
+        reaching into private ``urllib.request`` internals.
+
+        :param debuglevel: Debug level for HTTP client output.
+        :param context: SSL context to use, or ``None`` for a default one.
+        :param check_hostname: Override the context's hostname-checking flag.
+        """
+        if context is None:
+            context = ssl.create_default_context()
+        if check_hostname is not None:
+            context.check_hostname = check_hostname
+        self.context = context
+        super().__init__(debuglevel, context)
+
     def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
         """Open an HTTPS connection pinned to the validated IPs from ``req``.
 
@@ -414,7 +495,7 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
                     host, timeout=timeout, validated_ips=validated_ips, **kwargs
                 ),
                 req,
-                context=self._context,  # type: ignore[attr-defined]
+                context=self.context,
             )
         return super().https_open(req)
 

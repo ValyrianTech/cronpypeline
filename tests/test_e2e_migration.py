@@ -102,7 +102,7 @@ class TestMockAgentHandlerUnit:
 
         assert result.success is True
         assert len(handler.entries) == 1
-        entry_id, queue_file = handler.entries[0]
+        _entry_id, queue_file = handler.entries[0]
         assert queue_file.exists()
         entry = json.loads(queue_file.read_text())
         assert entry["content"] == "hello"
