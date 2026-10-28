@@ -30,6 +30,7 @@ from cronpypeline.plugins.issue_fix import (
     _cleanup_orphaned_task_dirs,
     _cleanup_stale_task,
     _closing_loop_instructions,
+    _ensure_pipeline_artifacts_untracked,
     _ensure_pipeline_excludes,
     _ensure_task_branch,
     _ensure_tooling_artifacts_untracked,
@@ -384,6 +385,62 @@ class TestEnsureToolingArtifactsUntracked:
     def test_git_error(self, tmp_path):
         with patch("cronpypeline.plugins.issue_fix._git", side_effect=subprocess.CalledProcessError(1, "git")):
             _ensure_tooling_artifacts_untracked(tmp_path)
+
+
+class TestEnsurePipelineArtifactsUntracked:
+    def test_git_error_returns(self, tmp_path):
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=subprocess.CalledProcessError(1, "git")):
+            _ensure_pipeline_artifacts_untracked(tmp_path)
+
+    def test_no_tracked_files_returns(self, tmp_path):
+        with patch("cronpypeline.plugins.issue_fix._git", return_value=MagicMock(stdout="")) as git:
+            _ensure_pipeline_artifacts_untracked(tmp_path)
+            git.assert_called_once()
+
+    def test_tracked_files_not_pipeline_artifacts_returns(self, tmp_path):
+        with patch(
+            "cronpypeline.plugins.issue_fix._git",
+            return_value=MagicMock(stdout="README\nfoo.py"),
+        ) as git:
+            _ensure_pipeline_artifacts_untracked(tmp_path)
+            git.assert_called_once()
+
+    def test_untracks_pipeline_artifacts(self, tmp_path):
+        calls = []
+
+        def fake_git(repo_dir, *args, **kwargs):
+            calls.append(args)
+            if args and args[0] == "ls-files":
+                return MagicMock(stdout=".SWE/init_complete.marker\n")
+            return MagicMock(stdout="")
+
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
+            _ensure_pipeline_artifacts_untracked(tmp_path)
+
+        assert any(a[0] == "rm" for a in calls)
+        assert any(a[0] == "commit" for a in calls)
+
+    def test_verbose_prints_success_message(self, tmp_path, capsys):
+        def fake_git(repo_dir, *args, **kwargs):
+            if args and args[0] == "ls-files":
+                return MagicMock(stdout=".SWE/init_complete.marker\n")
+            return MagicMock(stdout="")
+
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
+            _ensure_pipeline_artifacts_untracked(tmp_path, verbose=True)
+
+        assert "untracked" in capsys.readouterr().out
+
+    def test_git_rm_error_warns(self, tmp_path, capsys):
+        def fake_git(repo_dir, *args, **kwargs):
+            if args and args[0] == "ls-files":
+                return MagicMock(stdout=".SWE/x\n")
+            raise subprocess.CalledProcessError(1, "git", stderr="boom")
+
+        with patch("cronpypeline.plugins.issue_fix._git", side_effect=fake_git):
+            _ensure_pipeline_artifacts_untracked(tmp_path, verbose=True)
+
+        assert "WARNING" in capsys.readouterr().out
 
 
 class TestEnsureIntegrationBranch:

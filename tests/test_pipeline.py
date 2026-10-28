@@ -198,6 +198,24 @@ class TestBuildMarkerContext:
         assert ctx["slug"] == "x"
         assert ctx["target_config"] == target_config
 
+    def test_marker_context_hook_returns_dict(self, tmp_path):
+        ctx = _build_marker_context(
+            "repo", tmp_path / "repo", tmp_path / "workspace", {},
+            marker_context_hook=lambda base: {"extra": "value"},
+        )
+        assert ctx["extra"] == "value"
+        assert ctx["target"] == "repo"
+
+    def test_configured_queue_dir_returns_none_when_empty(self, tmp_path):
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(tmp_path),
+            "stages": [],
+            "action_handler": {"type": "conversation_queue", "params": {"queue_dir": ""}},
+        })
+        pipeline = Pipeline(config)
+        assert pipeline._configured_queue_dir() is None
+
 
 class TestTickResultStr:
     """Tests for TickResult.__str__ formatting."""

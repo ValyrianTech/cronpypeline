@@ -820,7 +820,7 @@ def vnn_marker_context(context: dict[str, Any]) -> dict[str, Any]:
     """
     target_dir = Path(str(context.get("target_dir", "")))
     day = str(context.get("date") or today_utc())
-    if not target_dir:
+    if not target_dir:  # pragma: no cover - Path("") resolves to "." which is always truthy
         return {
             "active_story": "",
             "active_story_dir": "stories/.none",
@@ -950,7 +950,7 @@ def sync_story_states_hook(context: dict[str, Any]) -> bool:
     :returns: Always True.
     """
     target_dir = Path(str(context.get("target_dir", "")))
-    if not target_dir:
+    if not target_dir:  # pragma: no cover - Path("") resolves to "." which is always truthy
         return True
     sync_story_states(ActionSpec(type=ActionType.CUSTOM, params={}), _hook_tick_context(context))
     return True
@@ -967,7 +967,7 @@ def release_finished_story_hook(context: dict[str, Any]) -> bool:
     :returns: Always True.
     """
     target_dir = Path(str(context.get("target_dir", "")))
-    if not target_dir:
+    if not target_dir:  # pragma: no cover - Path("") resolves to "." which is always truthy
         return True
     active = load_active_story(target_dir)
     if active is None:
@@ -994,7 +994,7 @@ def discard_exhausted_stories_hook(context: dict[str, Any]) -> bool:
     :returns: Always True.
     """
     target_dir = Path(str(context.get("target_dir", "")))
-    if not target_dir:
+    if not target_dir:  # pragma: no cover - Path("") resolves to "." which is always truthy
         return True
     max_rejections = _max_rejections(context)
 

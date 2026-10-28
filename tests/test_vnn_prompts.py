@@ -225,6 +225,12 @@ class TestBuildRankingPrompt:
         prompt = build_ranking_prompt(COUNTRY, DATE, [], extra_instructions="Be brief")
         assert "Be brief" in prompt
 
+    def test_already_ranked_note_empty(self):
+        assert vnn_prompts._already_ranked_note([]) == ""
+
+    def test_earlier_ranked_note_empty(self):
+        assert vnn_prompts._earlier_ranked_note([]) == ""
+
 
 class TestBuildCompilePrompt:
     def test_mentions_country_date_and_links(self):
@@ -267,6 +273,16 @@ class TestBuildStoryPrompts:
     def test_extra_instructions(self, tmp_path):
         story = _make_story(tmp_path, "story_1")
         assert "Extra" in build_research_prompt(COUNTRY, "story_1", story, extra_instructions="Extra")
+
+    @pytest.mark.parametrize("builder", [
+        build_writing_prompt,
+        build_publishing_prompt,
+        build_revision_prompt,
+    ])
+    def test_extra_instructions_other_builders(self, tmp_path, builder):
+        story = _make_story(tmp_path, "story_1")
+        prompt = builder(COUNTRY, "story_1", story, extra_instructions="Extra")
+        assert "Extra" in prompt
 
 
 # ─── Queue actions ──────────────────────────────────────────────────────────
@@ -657,6 +673,52 @@ class TestQueueHandlerConfig:
         )
         result = queue_compile_agent(_action(agent="A"), ctx)
         assert result.success is True
+
+    def test_blank_queue_dir_raises(self, tmp_path):
+        _write_links(tmp_path / COUNTRY, "link_1")
+        ctx = TickContext(
+            target=COUNTRY,
+            workspace_dir=tmp_path,
+            pipeline=type("P", (), {"config": PipelineConfig.from_dict({
+                "name": "x", "workspace_dir": str(tmp_path), "stages": [],
+                "action_handler": {"type": "conversation_queue",
+                                   "params": {"queue_dir": "   "}},
+            })})(),
+        )
+        with pytest.raises(ValueError, match="queue_dir is required"):
+            queue_compile_agent(_action(agent="A"), ctx)
+
+    def test_blank_agent_settings_dir_raises(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        _write_links(tmp_path / COUNTRY, "link_1")
+        ctx = TickContext(
+            target=COUNTRY,
+            workspace_dir=tmp_path,
+            pipeline=type("P", (), {"config": PipelineConfig.from_dict({
+                "name": "x", "workspace_dir": str(tmp_path), "stages": [],
+                "action_handler": {"type": "conversation_queue",
+                                   "params": {"queue_dir": str(queue_dir),
+                                              "agent_settings_dir": "   "}},
+            })})(),
+        )
+        with pytest.raises(ValueError, match="agent_settings_dir is required"):
+            queue_compile_agent(_action(agent="A"), ctx)
+
+    def test_traversal_agent_settings_dir_raises(self, tmp_path):
+        queue_dir = tmp_path / "queue"
+        _write_links(tmp_path / COUNTRY, "link_1")
+        ctx = TickContext(
+            target=COUNTRY,
+            workspace_dir=tmp_path,
+            pipeline=type("P", (), {"config": PipelineConfig.from_dict({
+                "name": "x", "workspace_dir": str(tmp_path), "stages": [],
+                "action_handler": {"type": "conversation_queue",
+                                   "params": {"queue_dir": str(queue_dir),
+                                              "agent_settings_dir": str(tmp_path / ".." / "escape")}},
+            })})(),
+        )
+        with pytest.raises(ValueError, match="agent_settings_dir contains path traversal"):
+            queue_compile_agent(_action(agent="A"), ctx)
 
 
 class TestModuleExports:
