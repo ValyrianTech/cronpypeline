@@ -1080,6 +1080,25 @@ class TestConversationQueueRetryTemplate:
         # custom_field from agent settings should be added
         assert entry["custom_field"] == "custom_value"
 
+    def test_agent_settings_path_none_when_no_settings_dir(self, tmp_path):
+        handler = ConversationQueueHandler(queue_dir=str(tmp_path / "queue"))
+        assert handler._agent_settings_path("Agent") is None
+
+    @pytest.mark.parametrize("agent", ["", ".", ".."])
+    def test_safens_reserved_agent_names_to_default(self, tmp_path, agent):
+        queue_dir = tmp_path / "queue"
+        handler = ConversationQueueHandler(queue_dir=str(queue_dir))
+        action = ActionSpec(
+            type=ActionType.QUEUE_AGENT,
+            params={"agent": agent, "prompt": "test"},
+        )
+        ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        result = handler.execute(action, ctx)
+        assert result.success is True
+        files = list(queue_dir.glob("*.json"))
+        assert len(files) == 1
+        assert files[0].name.startswith("default_")
+
 
 class TestDetectAgentForgotMarkerEdgeCases:
     """Tests for detect_agent_forgot_marker edge cases."""

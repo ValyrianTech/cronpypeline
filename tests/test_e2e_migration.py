@@ -93,6 +93,20 @@ class TestMockAgentHandlerUnit:
 
         assert handler.check_complete(action, context) is False
 
+    def test_execute_writes_queue_file(self, tmp_path):
+        handler = MockAgentHandler(tmp_path / "queue")
+        action = ActionSpec(type=ActionType.QUEUE_AGENT, params={"agent": "TestAgent", "prompt": "hello"})
+        context = TickContext(target="story-1", workspace_dir=tmp_path, dry_run=False)
+
+        result = handler.execute(action, context)
+
+        assert result.success is True
+        assert len(handler.entries) == 1
+        entry_id, queue_file = handler.entries[0]
+        assert queue_file.exists()
+        entry = json.loads(queue_file.read_text())
+        assert entry["content"] == "hello"
+
 
 # ---------------------------------------------------------------------------
 # VNN multi-tick simulation

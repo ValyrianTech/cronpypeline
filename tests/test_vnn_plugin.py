@@ -5,12 +5,16 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cronpypeline.actions import TickContext
+from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.plugins import vnn_plugin
 from cronpypeline.plugins.vnn_plugin import (
     DEFAULT_MIN_LINKS,
+    DEFAULT_MIN_NEW_LINKS,
     DEFAULT_PROCESSING_TIMEOUT_MINUTES,
     detect_compilation_needed,
     detect_publishing_needed,
@@ -20,6 +24,7 @@ from cronpypeline.plugins.vnn_plugin import (
     detect_writing_needed,
 )
 from cronpypeline.plugins.vnn_ranking import (
+    clear_active_story,
     compiled_dir,
     day_from_timestamp,
     load_active_story,
@@ -116,6 +121,32 @@ def country(tmp_path: Path) -> Path:
     _make_story(target_dir, STORY_ID, "story.json")
     write_active_story(target_dir, STORY_ID, "research", DATE)
     return target_dir
+
+
+def _action(**params) -> ActionSpec:
+    """Build a custom action spec with the given params."""
+    return ActionSpec(type=ActionType.CUSTOM, params=params)
+
+
+def _tick_context(target_dir: Path, dry_run: bool = False, **kwargs) -> TickContext:
+    """Build a TickContext whose target_dir resolves to ``target_dir``.
+
+    ``posts_dir`` points at a path that does not exist so the publish
+    reconciliation never reads the live VNN content repository.
+    """
+    target_config = kwargs.pop("target_config", None)
+    posts_dir = {"posts_dir": str(target_dir.parent / "no-such-posts")}
+    if target_config is None:
+        target_config = posts_dir
+    else:
+        target_config = {**posts_dir, **target_config}
+    return TickContext(
+        target=target_dir.name,
+        workspace_dir=target_dir.parent,
+        dry_run=dry_run,
+        target_config=target_config,
+        **kwargs,
+    )
 
 
 class TestProcessingGate:
@@ -662,3 +693,288 @@ class TestReleaseFinishedStoryHook:
         (country / ".active_story").unlink()
 
         assert vnn_plugin.release_finished_story_hook(_hook_context(country)) is True
+
+
+class TestConfigHelpers:
+    def test_target_dir_tick_context(self, tmp_path: Path):
+        ctx = TickContext(target=COUNTRY, workspace_dir=tmp_path)
+        assert vnn_plugin._target_dir(ctx) == tmp_path / COUNTRY
+
+    def test_target_dir_fallback(self, tmp_path: Path):
+        ctx = {"workspace_dir": str(tmp_path), "target": COUNTRY}
+        assert vnn_plugin._target_dir(ctx) == tmp_path / COUNTRY
+
+    def test_int_option_returns_default_on_non_int(self):
+        assert vnn_plugin._int_option({"min_links": "abc"}, "min_links", 10) == 10
+
+    def test_date_configured(self, country: Path):
+        ctx = _context(country)
+        ctx["target_config"]["date"] = "20260101"
+        assert vnn_plugin._date(ctx) == "20260101"
+
+    def test_date_defaults_to_today(self, country: Path):
+        assert vnn_plugin._date(_context(country)) == vnn_plugin.today_utc()
+
+    def test_country_tick_context(self, tmp_path: Path):
+        ctx = TickContext(target=COUNTRY, workspace_dir=tmp_path)
+        assert vnn_plugin._country(ctx) == COUNTRY
+
+    def test_country_dict(self):
+        assert vnn_plugin._country({"target": COUNTRY}) == COUNTRY
+
+
+class TestProcessingGateErrors:
+    def test_stat_error_is_not_processing(self, country: Path):
+        _write_processing(country)
+        real_stat = Path.stat
+        calls = {"n": 0}
+
+        def fake_stat(self, *args, **kwargs):
+            if self.name == vnn_plugin.PROCESSING_MARKER:
+                calls["n"] += 1
+                if calls["n"] >= 2:
+                    raise OSError("boom")
+            return real_stat(self, *args, **kwargs)
+
+        with patch("pathlib.Path.stat", fake_stat):
+            assert vnn_plugin._is_processing(country, 60) is False
+
+    def test_non_dict_marker_is_processing(self, country: Path):
+        (country / vnn_plugin.PROCESSING_MARKER).write_text("[]", encoding="utf-8")
+        assert vnn_plugin._is_processing(country, 60) is True
+
+    def test_iterdir_error_no_reminder(self, country: Path, tmp_path: Path):
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        queue_file = queue_dir / "Agent_1.json"
+        _write_processing(country, queue_file)
+        with patch("pathlib.Path.iterdir", side_effect=OSError("boom")):
+            assert vnn_plugin._is_processing(country, 60) is False
+
+
+class TestCompiledLinkIds:
+    def test_corrupt_marker(self, country: Path):
+        (country / vnn_plugin.COMPILATION_MARKER).write_text("{nope", encoding="utf-8")
+        assert vnn_plugin._compiled_link_ids(country) == set()
+
+    def test_non_dict_marker(self, country: Path):
+        (country / vnn_plugin.COMPILATION_MARKER).write_text("[]", encoding="utf-8")
+        assert vnn_plugin._compiled_link_ids(country) == set()
+
+    def test_non_list_link_ids(self, country: Path):
+        (country / vnn_plugin.COMPILATION_MARKER).write_text(
+            json.dumps({"link_ids": "nope"}), encoding="utf-8"
+        )
+        assert vnn_plugin._compiled_link_ids(country) == set()
+
+
+class TestPublishedPostExistsErrors:
+    def test_unreadable_post_is_skipped(self, country: Path, tmp_path: Path):
+        posts = tmp_path / "posts"
+        posts.mkdir()
+        (posts / "bad.md").write_bytes(b"\xff\xfe")
+        story_path = country / "stories" / "2026" / "10" / "22" / STORY_ID
+        story_path.mkdir(parents=True, exist_ok=True)
+        assert vnn_plugin._published_post_exists(story_path, posts) is False
+
+
+class TestCompilationRecompiles:
+    def test_recompiles_when_new_links_appear(self, country: Path):
+        for i in range(DEFAULT_MIN_NEW_LINKS):
+            _write_link(country, f"link_{i}")
+        (country / vnn_plugin.COMPILATION_MARKER).write_text(
+            json.dumps({"link_ids": ["link_old"]}), encoding="utf-8"
+        )
+        assert detect_compilation_needed(_context(country)) is True
+
+
+class TestTriggerProcessingGate:
+    def test_writing_blocked_while_agent_runs(self, country: Path, tmp_path: Path):
+        queue_file = tmp_path / "queue" / "ArticleWriterAgent_1.json"
+        queue_file.parent.mkdir()
+        queue_file.write_text("{}", encoding="utf-8")
+        _write_processing(country, queue_file)
+        assert detect_writing_needed(_context(country)) is False
+
+    def test_publishing_blocked_while_agent_runs(self, country: Path, tmp_path: Path):
+        queue_file = tmp_path / "queue" / "ArticlePublisherAgent_1.json"
+        queue_file.parent.mkdir()
+        queue_file.write_text("{}", encoding="utf-8")
+        _write_processing(country, queue_file)
+        assert detect_publishing_needed(_context(country)) is False
+
+    def test_revision_blocked_while_agent_runs(self, country: Path, tmp_path: Path):
+        queue_file = tmp_path / "queue" / "ArticleRevisionAgent_1.json"
+        queue_file.parent.mkdir()
+        queue_file.write_text("{}", encoding="utf-8")
+        _write_processing(country, queue_file)
+        assert detect_revision_needed(_context(country)) is False
+
+    def test_revision_not_needed_when_story_needs_publishing(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", "research.md", "article.md")
+        assert detect_revision_needed(_context(country)) is False
+
+
+class TestClaimStoryAction:
+    def test_dry_run(self, country: Path):
+        result = vnn_plugin.claim_story(_action(), _tick_context(country, dry_run=True))
+        assert result.dry_run is True
+        assert result.success is True
+
+    def test_no_story_available(self, tmp_path: Path):
+        target_dir = tmp_path / "empty"
+        target_dir.mkdir()
+        result = vnn_plugin.claim_story(_action(), _tick_context(target_dir))
+        assert result.success is False
+        assert "No story" in result.stderr
+
+    def test_claims_story(self, country: Path):
+        clear_active_story(country)
+        result = vnn_plugin.claim_story(
+            _action(stage="research", state="researching"), _tick_context(country)
+        )
+        assert result.success is True
+        assert result.data["story_id"] == STORY_ID
+        lock = load_active_story(country)
+        assert lock["story_id"] == STORY_ID
+
+    def test_claims_without_state(self, country: Path):
+        clear_active_story(country)
+        result = vnn_plugin.claim_story(_action(stage="research"), _tick_context(country))
+        assert result.success is True
+        assert result.data["stage"] == "research"
+
+
+class TestReleaseStoryAction:
+    def test_dry_run(self, country: Path):
+        result = vnn_plugin.release_story(_action(), _tick_context(country, dry_run=True))
+        assert result.dry_run is True
+
+    def test_releases(self, country: Path):
+        result = vnn_plugin.release_story(_action(), _tick_context(country))
+        assert result.success is True
+        assert load_active_story(country) is None
+
+
+class TestValidateRankingAction:
+    def test_dry_run(self, country: Path):
+        result = vnn_plugin.validate_ranking_action(_action(), _tick_context(country, dry_run=True))
+        assert result.dry_run is True
+
+    def test_invalid_ranking(self, country: Path):
+        result = vnn_plugin.validate_ranking_action(_action(), _tick_context(country))
+        assert result.success is False
+
+    def test_valid_ranking(self, country: Path):
+        result = vnn_plugin.validate_ranking_action(
+            _action(), _tick_context(country, target_config={"date": DATE})
+        )
+        assert result.success is True
+        assert "valid" in result.stdout
+
+
+class TestSyncStoryStatesAction:
+    def test_dry_run(self, country: Path):
+        result = vnn_plugin.sync_story_states(_action(), _tick_context(country, dry_run=True))
+        assert result.dry_run is True
+
+
+class TestRelativeToTarget:
+    def test_sentinel_when_outside_target(self, country: Path):
+        outside = country.parent / "elsewhere"
+        assert vnn_plugin._relative_to_target(country, outside) == "stories/.none"
+
+
+class TestCleanupInconsistentState:
+    def test_removes_rejection_files_when_article_newer(self, country: Path):
+        story = _make_story(
+            country, STORY_ID, "story.json", "article.md", "rejected-article.md", "revision-notes.md"
+        )
+        now = time.time()
+        os.utime(story / "article.md", (now, now))
+        old = now - 1000
+        os.utime(story / "rejected-article.md", (old, old))
+        assert vnn_plugin.cleanup_inconsistent_state(_hook_context(country)) is True
+        assert not (story / "rejected-article.md").exists()
+        assert not (story / "revision-notes.md").exists()
+
+    def test_removes_article_when_rejected_newer(self, country: Path):
+        story = _make_story(country, STORY_ID, "story.json", "article.md", "rejected-article.md")
+        now = time.time()
+        os.utime(story / "rejected-article.md", (now, now))
+        old = now - 1000
+        os.utime(story / "article.md", (old, old))
+        assert vnn_plugin.cleanup_inconsistent_state(_hook_context(country)) is True
+        assert not (story / "article.md").exists()
+
+    def test_stat_error_skips(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", "article.md", "rejected-article.md")
+        real_stat = Path.stat
+        calls = {"n": 0}
+
+        def fake_stat(self, *args, **kwargs):
+            if self.name == "article.md":
+                calls["n"] += 1
+                if calls["n"] >= 2:
+                    raise OSError("boom")
+            return real_stat(self, *args, **kwargs)
+
+        with patch("pathlib.Path.stat", fake_stat):
+            assert vnn_plugin.cleanup_inconsistent_state(_hook_context(country)) is True
+
+    def test_unlink_error_skips(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", "article.md", "rejected-article.md")
+        with patch("pathlib.Path.unlink", side_effect=OSError("boom")):
+            assert vnn_plugin.cleanup_inconsistent_state(_hook_context(country)) is True
+
+
+class TestLogRejection:
+    def test_appends_to_existing_log(self, country: Path):
+        story = _make_story(country, STORY_ID, "story.json", "rejected-article.md")
+        (story / "rejection_log.json").write_text(json.dumps([{"a": 1}]), encoding="utf-8")
+        vnn_plugin.log_rejection(_hook_context(country), None)
+        log = json.loads((story / "rejection_log.json").read_text(encoding="utf-8"))
+        assert len(log) == 2
+
+    def test_corrupt_log_resets(self, country: Path):
+        story = _make_story(country, STORY_ID, "story.json", "rejected-article.md")
+        (story / "rejection_log.json").write_text("{nope", encoding="utf-8")
+        vnn_plugin.log_rejection(_hook_context(country), None)
+        log = json.loads((story / "rejection_log.json").read_text(encoding="utf-8"))
+        assert len(log) == 1
+
+    def test_notes_read_error_sets_empty_reason(self, country: Path, monkeypatch):
+        story = _make_story(
+            country, STORY_ID, "story.json", "rejected-article.md", "revision-notes.md"
+        )
+        (story / "revision-notes.md").write_text("please fix", encoding="utf-8")
+        real_read_text = Path.read_text
+
+        def fake_read_text(self, *args, **kwargs):
+            if self.name == "revision-notes.md":
+                raise OSError("boom")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+        vnn_plugin.log_rejection(_hook_context(country), None)
+        log = json.loads(real_read_text(story / "rejection_log.json", encoding="utf-8"))
+        assert log[0]["reason"] == ""
+
+    def test_reason_from_result(self, country: Path):
+        _make_story(country, STORY_ID, "story.json", "rejected-article.md")
+        result = MagicMock(stderr="", stdout="agent said no")
+        vnn_plugin.log_rejection(_hook_context(country), result)
+        log = json.loads(
+            (story_dir(country, STORY_ID, DATE) / "rejection_log.json").read_text(encoding="utf-8")
+        )
+        assert log[0]["reason"] == "agent said no"
+
+
+class TestDiscardExhaustedStoriesHookError:
+    def test_continue_when_marker_write_raises_oserror(self, country: Path, monkeypatch):
+        story = _make_story(country, STORY_ID, "story.json", "research.md", "rejected-article.md")
+        log = [{"reason": f"rejection {i}"} for i in range(vnn_plugin.DEFAULT_MAX_REJECTIONS)]
+        (story / "rejection_log.json").write_text(json.dumps(log), encoding="utf-8")
+        monkeypatch.setattr(vnn_plugin, "_write_gave_up_marker", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+        assert vnn_plugin.discard_exhausted_stories_hook(_hook_context(country)) is True
+        assert not (story / ".gave_up").exists()
