@@ -2580,9 +2580,8 @@ class TestPinnedConnections:
         conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34"])
         sock = self._mock_sock()
         sock.setsockopt.side_effect = OSError(errno.EINVAL, "Invalid argument")
-        with patch("cronpypeline.actions.socket.create_connection", MagicMock(return_value=sock)):
-            with pytest.raises(OSError):
-                conn.connect()
+        with patch("cronpypeline.actions.socket.create_connection", MagicMock(return_value=sock)), pytest.raises(OSError):
+            conn.connect()
 
     def test_http_connection_set_tunnel_not_supported(self):
         conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34"])
@@ -2603,9 +2602,8 @@ class TestPinnedConnections:
     def test_http_connection_raises_last_error_when_all_fail(self):
         conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34", "93.184.216.35"])
         create = MagicMock(side_effect=[OSError("first"), OSError("second")])
-        with patch("cronpypeline.actions.socket.create_connection", create):
-            with pytest.raises(OSError, match="second"):
-                conn.connect()
+        with patch("cronpypeline.actions.socket.create_connection", create), pytest.raises(OSError, match="second"):
+            conn.connect()
 
     # --- _PinnedHTTPSConnection ---
 
@@ -2643,9 +2641,8 @@ class TestPinnedConnections:
         conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34"], context=ctx)
         sock = self._mock_sock()
         sock.setsockopt.side_effect = OSError(errno.EINVAL, "Invalid argument")
-        with patch("cronpypeline.actions.socket.create_connection", MagicMock(return_value=sock)):
-            with pytest.raises(OSError):
-                conn.connect()
+        with patch("cronpypeline.actions.socket.create_connection", MagicMock(return_value=sock)), pytest.raises(OSError):
+            conn.connect()
 
     def test_https_connection_set_tunnel_not_supported(self):
         conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34"])
@@ -2674,9 +2671,8 @@ class TestPinnedConnections:
         ctx = self._mock_https_context()
         conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34", "93.184.216.35"], context=ctx)
         create = MagicMock(side_effect=[OSError("first"), OSError("second")])
-        with patch("cronpypeline.actions.socket.create_connection", create):
-            with pytest.raises(OSError, match="second"):
-                conn.connect()
+        with patch("cronpypeline.actions.socket.create_connection", create), pytest.raises(OSError, match="second"):
+            conn.connect()
 
     # --- _PinnedHTTPHandler / _PinnedHTTPSHandler ---
 
