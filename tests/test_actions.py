@@ -22,10 +22,12 @@ from cronpypeline.actions import (
     _host_matches,
     _is_private_ip,
     _is_sensitive_header,
+    _looks_like_path_secret,
     _PinnedHTTPConnection,
     _PinnedHTTPHandler,
     _PinnedHTTPSConnection,
     _PinnedHTTPSHandler,
+    _redact_path_segments,
     _redact_url,
     _validate_ssrf,
     build_template_variables,
@@ -1357,6 +1359,54 @@ class TestRedactUrl:
     def test_no_credentials_unchanged(self):
         assert _redact_url("https://example.com/plain") == "https://example.com/plain"
 
+    def test_telegram_bot_token_in_path_redacted(self):
+        redacted = _redact_url("https://api.telegram.org/bot123456:ABC-DEF/sendMessage")
+        assert "123456:ABC-DEF" not in redacted
+        assert redacted.endswith("/sendMessage")
+
+    def test_generic_api_key_path_segment_redacted(self):
+        redacted = _redact_url("https://api.example.com/v1/abcdef1234567890abcdef/items")
+        assert "abcdef1234567890abcdef" not in redacted
+        assert "/v1/" in redacted
+        assert redacted.endswith("/items")
+
+    def test_keyword_followed_by_secret_segment_redacted(self):
+        redacted = _redact_url("https://example.com/token/supersecretvalue")
+        assert redacted == "https://example.com/token/***"
+
+    def test_short_ordinary_segments_kept(self):
+        assert _redact_url("https://example.com/v1/users/42") == "https://example.com/v1/users/42"
+
+    def test_url_without_path(self):
+        assert _redact_url("https://example.com") == "https://example.com"
+
+    def test_all_digit_long_segment_kept(self):
+        assert _redact_url("https://example.com/1234567890123456") == "https://example.com/1234567890123456"
+
+    def test_all_alpha_long_segment_kept(self):
+        assert _redact_url("https://example.com/thisisalongwordwithnodigits") == "https://example.com/thisisalongwordwithnodigits"
+
+    def test_redact_path_segments_empty_path(self):
+        assert _redact_path_segments("") == ""
+
+    def test_redact_path_segments_preserves_leading_slash(self):
+        assert _redact_path_segments("/bot123456:ABC-DEF/sendMessage") == "/***/sendMessage"
+
+    def test_looks_like_path_secret_colon(self):
+        assert _looks_like_path_secret("bot123456:ABC-DEF") is True
+
+    def test_looks_like_path_secret_mixed_alnum(self):
+        assert _looks_like_path_secret("abcdef1234567890abcdef") is True
+
+    def test_looks_like_path_secret_short(self):
+        assert _looks_like_path_secret("v1") is False
+
+    def test_looks_like_path_secret_all_alpha(self):
+        assert _looks_like_path_secret("thisisalongwordwithnodigits") is False
+
+    def test_looks_like_path_secret_all_digit(self):
+        assert _looks_like_path_secret("1234567890123456") is False
+
 
 class TestScrubSecrets:
     """Tests for the scrub_secrets text redaction helper."""
@@ -1385,6 +1435,12 @@ class TestScrubSecrets:
     def test_url_with_both_userinfo_and_query_redacted(self):
         text = "fetch https://user:pass@example.com/api?token=SECRET now"
         assert scrub_secrets(text) == "fetch https://example.com/api now"
+
+    def test_telegram_bot_token_scrubbed_by_scrub_secrets(self):
+        assert "123456:ABC-DEF" not in scrub_secrets("https://api.telegram.org/bot123456:ABC-DEF/sendMessage")
+
+    def test_plain_url_no_secrets_unchanged(self):
+        assert scrub_secrets("https://example.com/path/to/resource") == "https://example.com/path/to/resource"
 
 
 class TestHttpRequestActionHandlerRedaction:
@@ -2580,9 +2636,8 @@ class TestPinnedConnections:
         conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34"])
         sock = self._mock_sock()
         sock.setsockopt.side_effect = OSError(errno.EINVAL, "Invalid argument")
-        with patch("cronpypeline.actions.socket.create_connection", MagicMock(return_value=sock)):
-            with pytest.raises(OSError):
-                conn.connect()
+        with patch("cronpypeline.actions.socket.create_connection", MagicMock(return_value=sock)), pytest.raises(OSError):
+            conn.connect()
 
     def test_http_connection_set_tunnel_not_supported(self):
         conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34"])
@@ -2603,9 +2658,8 @@ class TestPinnedConnections:
     def test_http_connection_raises_last_error_when_all_fail(self):
         conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34", "93.184.216.35"])
         create = MagicMock(side_effect=[OSError("first"), OSError("second")])
-        with patch("cronpypeline.actions.socket.create_connection", create):
-            with pytest.raises(OSError, match="second"):
-                conn.connect()
+        with patch("cronpypeline.actions.socket.create_connection", create), pytest.raises(OSError, match="second"):
+            conn.connect()
 
     # --- _PinnedHTTPSConnection ---
 
@@ -2643,9 +2697,8 @@ class TestPinnedConnections:
         conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34"], context=ctx)
         sock = self._mock_sock()
         sock.setsockopt.side_effect = OSError(errno.EINVAL, "Invalid argument")
-        with patch("cronpypeline.actions.socket.create_connection", MagicMock(return_value=sock)):
-            with pytest.raises(OSError):
-                conn.connect()
+        with patch("cronpypeline.actions.socket.create_connection", MagicMock(return_value=sock)), pytest.raises(OSError):
+            conn.connect()
 
     def test_https_connection_set_tunnel_not_supported(self):
         conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34"])
@@ -2674,9 +2727,8 @@ class TestPinnedConnections:
         ctx = self._mock_https_context()
         conn = _PinnedHTTPSConnection("example.com", 443, validated_ips=["93.184.216.34", "93.184.216.35"], context=ctx)
         create = MagicMock(side_effect=[OSError("first"), OSError("second")])
-        with patch("cronpypeline.actions.socket.create_connection", create):
-            with pytest.raises(OSError, match="second"):
-                conn.connect()
+        with patch("cronpypeline.actions.socket.create_connection", create), pytest.raises(OSError, match="second"):
+            conn.connect()
 
     # --- _PinnedHTTPHandler / _PinnedHTTPSHandler ---
 

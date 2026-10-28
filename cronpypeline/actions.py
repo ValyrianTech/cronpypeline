@@ -104,10 +104,88 @@ class ActionResult:
             self.data = {}
 
 
+# Path segments that immediately follow one of these keywords are treated as
+# secrets regardless of their shape (e.g. /token/abc123, /apikey/xyz).
+_URL_PATH_SECRET_KEYWORDS = (
+    "bot",
+    "token",
+    "key",
+    "apikey",
+    "api_key",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "auth",
+)
+_PATH_REDACTION_PLACEHOLDER = "***"
+
+# A segment that looks like an opaque credential: long, restricted charset, and
+# either containing a ':' (Telegram bot tokens `123456:ABC-DEF...`) or mixing
+# letters with digits (high-entropy API keys).
+_PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9:_-]{16,}")
+
+
+def _looks_like_path_secret(segment: str) -> bool:
+    """Return True if a single URL path segment appears to carry a credential.
+
+    A segment is treated as secret-shaped when it is a long, opaque token made
+    up of a restricted character set (letters, digits, ``_``, ``-``, and ``:``)
+    and either contains a colon (e.g. a Telegram bot token) or mixes letters
+    with digits (a typical high-entropy API key).
+
+    :param segment: A single URL path segment (no ``/`` characters).
+    :returns: ``True`` if the segment should be redacted.
+    """
+    if not _PATH_TOKEN_RE.fullmatch(segment):
+        return False
+    if ":" in segment:
+        return True
+    return any(c.isdigit() for c in segment) and any(c.isalpha() for c in segment)
+
+
+def _redact_path_segments(path: str) -> str:
+    """Redact credential-looking segments from a URL path.
+
+    Splits ``path`` on ``/`` and replaces any segment that is secret-shaped
+    (see :func:`_looks_like_path_secret`) or that immediately follows a secret
+    keyword (``token``, ``key``, etc.) with the placeholder ``***``.
+    Non-secret segments are preserved exactly, including any leading empty
+    segment produced by a leading ``/``.
+
+    :param path: The URL path portion (as returned by ``urlparse``).
+    :returns: The path with secret-looking segments redacted.
+    """
+    if not path:
+        return path
+    segments = path.split("/")
+    redacted: list[str] = []
+    previous_was_keyword = False
+    for segment in segments:
+        lowered = segment.lower()
+        if segment and (previous_was_keyword or _looks_like_path_secret(segment)):
+            redacted.append(_PATH_REDACTION_PLACEHOLDER)
+        else:
+            redacted.append(segment)
+        previous_was_keyword = bool(lowered) and lowered in _URL_PATH_SECRET_KEYWORDS
+    return "/".join(redacted)
+
+
 def _redact_url(url: str) -> str:
-    """Remove userinfo and query params from a URL for safe logging."""
+    """Remove userinfo, query params, and secret path segments from a URL.
+
+    Strips userinfo (``user:pass@``), the query string, and the fragment, and
+    additionally redacts credential-looking path segments (see
+    :func:`_redact_path_segments`) so secrets embedded in the path (e.g.
+    Telegram bot tokens) are not leaked into logs.
+
+    :param url: The URL to redact for safe logging.
+    :returns: The URL with userinfo, query/fragment, and secret path segments
+        removed.
+    """
     parsed = urllib.parse.urlparse(url)
-    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc.split("@")[-1], parsed.path, "", "", ""))
+    path = _redact_path_segments(parsed.path)
+    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc.split("@")[-1], path, "", "", ""))
 
 
 _SCRUB_URL_RE = re.compile(r"https?://\S+")
@@ -117,9 +195,10 @@ def scrub_secrets(text: str) -> str:
     """Redact secrets embedded in URLs within arbitrary text.
 
     Finds every ``http://`` or ``https://`` URL substring within ``text`` and
-    replaces it with its redacted form (userinfo and query/fragment removed)
-    using :func:`_redact_url`. Non-URL text is left unchanged. The returned
-    value is always a string; inputs with no URL are returned unchanged.
+    replaces it with its redacted form using :func:`_redact_url`. Redaction
+    removes userinfo, the query/fragment, and secret-looking path segments.
+    Non-URL text is left unchanged. The returned value is always a string;
+    inputs with no URL are returned unchanged.
 
     :param text: Arbitrary text that may contain URLs with embedded secrets.
     :returns: The text with any URLs redacted.
