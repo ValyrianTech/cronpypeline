@@ -3,6 +3,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -28,10 +29,11 @@ from cronpypeline.plugins.vnn_ranking import (
     ranking_stories,
     rejection_count,
     set_story_state,
-    state_priority,
     split_ranked_by_day,
+    state_priority,
     story_day,
     story_dir,
+    story_state,
     today_utc,
     unranked_stories,
     validate_ranking,
@@ -137,6 +139,17 @@ class TestStoryIds:
     def test_story_day_of_legacy_dir_is_empty(self, tmp_path):
         assert story_day(tmp_path, tmp_path / "stories" / "story_1") == ""
 
+    def test_story_day_outside_stories_root_is_empty(self, tmp_path):
+        assert story_day(tmp_path, tmp_path / "elsewhere" / "story_1") == ""
+
+
+class TestStoryState:
+    def test_unknown_state_falls_back_to_pending(self):
+        assert story_state({"state": "bogus"}) == STATE_PENDING
+
+    def test_known_state_is_preserved(self):
+        assert story_state({"state": "published"}) == STATE_PUBLISHED
+
 
 class TestFindStoryDir:
     def test_missing_returns_none(self, tmp_path):
@@ -180,6 +193,10 @@ class TestFindCompiledStory:
         path = directory / "story_1.json"
         path.write_text(json.dumps({"story_id": "story_1"}), encoding="utf-8")
         assert find_compiled_story(tmp_path, "story_1") == path
+
+    def test_rejects_traversal(self, tmp_path):
+        with pytest.raises(ValueError):
+            find_compiled_story(tmp_path, "../evil")
 
 
 class TestLoadRanking:
@@ -285,6 +302,19 @@ class TestActiveStory:
         (tmp_path / ".active_story").write_text(json.dumps({"story_id": "../x"}), encoding="utf-8")
         assert load_active_story(tmp_path) is None
 
+    def test_invalid_json_lock_returns_none(self, tmp_path):
+        (tmp_path / ".active_story").write_text("{nope", encoding="utf-8")
+        assert load_active_story(tmp_path) is None
+
+    def test_non_dict_lock_returns_none(self, tmp_path):
+        (tmp_path / ".active_story").write_text("[]", encoding="utf-8")
+        assert load_active_story(tmp_path) is None
+
+    def test_clear_unlink_error_returns_false(self, tmp_path):
+        write_active_story(tmp_path, "story_1", "research")
+        with patch("pathlib.Path.unlink", side_effect=OSError("boom")):
+            assert clear_active_story(tmp_path) is False
+
     def test_clear_removes_lock(self, tmp_path):
         write_active_story(tmp_path, "story_1", "research")
         assert clear_active_story(tmp_path) is True
@@ -314,6 +344,10 @@ class TestSetStoryState:
     def test_missing_ranking_returns_false(self, tmp_path):
         assert set_story_state(tmp_path, "story_1", "writing") is False
 
+    def test_corrupt_ranking_day_is_skipped(self, tmp_path):
+        _ranking_file(tmp_path, "20261021").write_text("{nope", encoding="utf-8")
+        assert set_story_state(tmp_path, "story_1", "writing", "20261021") is False
+
     def test_updates_the_ranking_that_contains_the_story(self, tmp_path):
         """A story ranked yesterday keeps its state in yesterday's ranking."""
         _write_ranking(tmp_path, [{"rank": 1, "story_id": "story_old", "state": "pending"}], date="20261020")
@@ -342,6 +376,18 @@ class TestCompiledStories:
         directory = tmp_path / "compiled_stories"
         directory.mkdir()
         (directory / "bad.json").write_text(json.dumps({"story_id": "../x"}), encoding="utf-8")
+        assert load_compiled_stories(tmp_path) == []
+
+    def test_skips_hidden_files(self, tmp_path):
+        directory = tmp_path / "compiled_stories"
+        directory.mkdir()
+        (directory / ".hidden.json").write_text(json.dumps({"story_id": "story_1"}), encoding="utf-8")
+        assert load_compiled_stories(tmp_path) == []
+
+    def test_skips_non_dict(self, tmp_path):
+        directory = tmp_path / "compiled_stories"
+        directory.mkdir()
+        (directory / "list.json").write_text("[]", encoding="utf-8")
         assert load_compiled_stories(tmp_path) == []
 
     def test_missing_dir(self, tmp_path):
@@ -569,3 +615,15 @@ class TestValidateRanking:
         ok, reason = validate_ranking(tmp_path, "belgium", "20261021")
         assert ok is False
         assert "invalid story id" in reason
+
+    def test_invalid_json(self, tmp_path):
+        _ranking_file(tmp_path).write_text("{nope", encoding="utf-8")
+        ok, reason = validate_ranking(tmp_path, "belgium", "20261021")
+        assert ok is False
+        assert "missing" in reason
+
+    def test_non_dict(self, tmp_path):
+        _ranking_file(tmp_path).write_text("[]", encoding="utf-8")
+        ok, reason = validate_ranking(tmp_path, "belgium", "20261021")
+        assert ok is False
+        assert "missing" in reason
