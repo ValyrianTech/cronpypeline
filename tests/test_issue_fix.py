@@ -60,7 +60,7 @@ from cronpypeline.plugins.issue_fix import (
     select_open_issue,
 )
 from cronpypeline.plugins.issue_store import Issue, _write_issue_file
-from cronpypeline.plugins.swe_plugin import INTEGRATION_BRANCH, SWE_SUBDIR
+from cronpypeline.plugins.swe_plugin import GIT_BIN, INTEGRATION_BRANCH, SWE_SUBDIR
 
 
 def _init_git(path: Path) -> None:
@@ -496,6 +496,49 @@ class TestMergeIntoIntegration:
         subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], capture_output=True, check=True)
         subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "i"], capture_output=True, check=True)
         assert merge_into_integration(tmp_path, "t1", verbose=True) is False
+
+    def test_file_not_found_verbose(self, tmp_path, monkeypatch):
+        def fake_run(*args, **kwargs):
+            raise FileNotFoundError("no git")
+
+        monkeypatch.setattr(
+            "cronpypeline.plugins.issue_fix.subprocess.run", fake_run
+        )
+        assert merge_into_integration(tmp_path, "t1", verbose=True) is False
+
+    def test_file_not_found_quiet(self, tmp_path, monkeypatch):
+        def fake_run(*args, **kwargs):
+            raise FileNotFoundError("no git")
+
+        monkeypatch.setattr(
+            "cronpypeline.plugins.issue_fix.subprocess.run", fake_run
+        )
+        assert merge_into_integration(tmp_path, "t1", verbose=False) is False
+
+    def test_timeout_expired(self, tmp_path, monkeypatch):
+        def fake_run(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=args[0], timeout=120)
+
+        monkeypatch.setattr(
+            "cronpypeline.plugins.issue_fix.subprocess.run", fake_run
+        )
+        assert merge_into_integration(tmp_path, "t1", verbose=True) is False
+
+    def test_uses_git_bin_and_timeout(self, tmp_path, monkeypatch):
+        captured = {}
+
+        def fake_run(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return MagicMock()
+
+        monkeypatch.setattr(
+            "cronpypeline.plugins.issue_fix.subprocess.run", fake_run
+        )
+        assert merge_into_integration(tmp_path, "t1", verbose=False) is True
+        argv = captured["args"][0]
+        assert argv[0] == GIT_BIN
+        assert captured["kwargs"]["timeout"] == 120
 
 
 class TestSelectOpenIssue:
