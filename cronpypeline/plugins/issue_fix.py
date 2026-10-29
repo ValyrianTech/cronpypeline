@@ -280,7 +280,9 @@ def merge_into_integration(repo_dir: Path, task_branch: str,
         if verbose:
             if isinstance(exc, (subprocess.CalledProcessError,
                                 subprocess.TimeoutExpired)):
-                detail = exc.stderr or exc.stdout
+                detail_raw = exc.stderr or exc.stdout
+                detail = (detail_raw.decode(errors="replace")
+                          if isinstance(detail_raw, bytes) else detail_raw)
             else:
                 detail = str(exc)
             print(f"  [git] merge of {task_branch} FAILED: {detail}")
