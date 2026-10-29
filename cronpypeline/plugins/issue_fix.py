@@ -34,6 +34,7 @@ from cronpypeline.plugins.issue_store import (
 )
 from cronpypeline.plugins.swe_plugin import (
     COVERAGE_TARGET,
+    GIT_BIN,
     INTEGRATION_BRANCH,
     PHASE_A_BRANCH,
     PHASE_A_GIT_AUTHOR_EMAIL,
@@ -266,17 +267,23 @@ def merge_into_integration(repo_dir: Path, task_branch: str,
         env["GIT_AUTHOR_EMAIL"] = GIT_AUTHOR_EMAIL
         env["GIT_COMMITTER_NAME"] = GIT_AUTHOR_NAME
         env["GIT_COMMITTER_EMAIL"] = GIT_AUTHOR_EMAIL
-        subprocess.run(  # nosec - static args, git on PATH
-            ["git", "-C", str(repo_dir), "merge", "--no-ff", task_branch,
+        subprocess.run(  # nosec - static args, resolved git binary
+            [GIT_BIN, "-C", str(repo_dir), "merge", "--no-ff", task_branch,
              "-m", f"merge {task_branch} into {INTEGRATION_BRANCH}"],
-            check=True, env=env, capture_output=True, text=True,
+            check=True, env=env, capture_output=True, text=True, timeout=120,
         )
         if verbose:
             print(f"  [git] merged {task_branch} -> {INTEGRATION_BRANCH}")
         return True
-    except subprocess.CalledProcessError as exc:
+    except (subprocess.CalledProcessError, FileNotFoundError,
+            subprocess.TimeoutExpired) as exc:
         if verbose:
-            print(f"  [git] merge of {task_branch} FAILED: {exc.stderr or exc.stdout}")
+            if isinstance(exc, (subprocess.CalledProcessError,
+                                subprocess.TimeoutExpired)):
+                detail = exc.stderr or exc.stdout
+            else:
+                detail = str(exc)
+            print(f"  [git] merge of {task_branch} FAILED: {detail}")
         return False
 
 
