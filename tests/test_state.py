@@ -12,7 +12,7 @@ from cronpypeline.config import (
     TriggerCondition,
     TriggerType,
 )
-from cronpypeline.markers import MarkerType, create_marker
+from cronpypeline.markers import MarkerType, create_marker, delete_marker
 from cronpypeline.state import PipelineState, StageState, TargetState
 
 
@@ -1217,3 +1217,98 @@ class TestPipelineStateFlattenConfig:
         assert "api_token" not in ctx
         assert ctx["slug"] == "x"
         assert ctx["target_config"] == {"api_token": "SECRET", "slug": "x"}
+
+
+class TestStageStateRederiveResets:
+    """Re-deriving the same StageState must clear stale per-derivation fields.
+
+    TargetState.derive() reuses StageState instances in place so in-memory
+    overrides survive re-derivation, which means fields that are only ever
+    *set* (never cleared) would leak values from a previous cycle when their
+    marker has since been removed.
+    """
+
+    def _processing_stage(self) -> Stage:
+        return Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+
+    def _rejection_stage(self) -> Stage:
+        return Stage(
+            id="A0",
+            name="Review",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "rejection": MarkerSpec(name=".rejection", type=MarkerType.JSON, content={}),
+            },
+        )
+
+    def test_retry_count_and_processing_data_reset_on_rederive(self, tmp_path):
+        """retry_count and processing_data must clear when the processing marker is gone."""
+        stage = self._processing_stage()
+        (tmp_path / ".processing").write_text(
+            json.dumps({"retry_count": 2, "agent": "coder", "extra": True})
+        )
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.retry_count == 2
+        assert state.processing_data is not None
+
+        delete_marker(stage.markers["processing"], tmp_path)
+        state.derive(tmp_path)
+        assert state.is_processing is False
+        assert state.retry_count == 0
+        assert state.processing_data is None
+
+    def test_rejection_count_and_is_rejected_reset_on_rederive(self, tmp_path):
+        """rejection_count and is_rejected must clear when the rejection marker is gone."""
+        stage = self._rejection_stage()
+        (tmp_path / ".rejection").write_text(
+            json.dumps({"rejection_count": 3, "reason": "bad"})
+        )
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_rejected is True
+        assert state.rejection_count == 3
+
+        delete_marker(stage.markers["rejection"], tmp_path)
+        state.derive(tmp_path)
+        assert state.is_rejected is False
+        assert state.rejection_count == 0
+
+    def test_rejection_override_survives_reset(self, tmp_path):
+        """The in-memory rejection override must survive re-derivation while
+        rejection_count still re-derives from the marker."""
+        stage = self._rejection_stage()
+        (tmp_path / ".rejection").write_text(json.dumps({"rejection_count": 3}))
+        state = StageState(stage=stage)
+        state._rejection_override = True
+        state.derive(tmp_path)
+        assert state.is_rejected is False
+        assert state.rejection_count == 3
+
+    def test_is_stale_reset_on_rederive_when_processing_removed(self, tmp_path):
+        """is_stale must clear when a stale processing marker is removed."""
+        stage = self._processing_stage()
+        (tmp_path / ".processing").write_text(
+            json.dumps({"queue_file": "/nonexistent/queue/entry.json"})
+        )
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.is_stale is True
+
+        delete_marker(stage.markers["processing"], tmp_path)
+        state.derive(tmp_path)
+        assert state.is_processing is False
+        assert state.is_stale is False

@@ -59,6 +59,19 @@ class StageState:
         markers = self.stage.markers
         ctx = context or {}
 
+        # Reset per-derivation fields before recomputing so that values from a
+        # previous cycle do not leak through when their marker has since been
+        # removed. TargetState.derive() reuses StageState instances in place to
+        # preserve the _rejection_override flag, so any field that is only
+        # *set* (never cleared) below would otherwise go stale. is_rejected is
+        # still recomputed from the rejection marker below unless the override
+        # is set, so resetting it here is safe.
+        self.is_rejected = False
+        self.rejection_count = 0
+        self.retry_count = 0
+        self.processing_data = None
+        self.is_stale = False
+
         # Completion check
         if "completion" in markers:
             self.is_complete = marker_exists(markers["completion"], base_dir, context=ctx)
