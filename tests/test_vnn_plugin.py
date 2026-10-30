@@ -5,12 +5,14 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType
+from cronpypeline.markers import MarkerType
 from cronpypeline.plugins import vnn_plugin
 from cronpypeline.plugins.vnn_plugin import (
     DEFAULT_MIN_LINKS,
@@ -88,7 +90,7 @@ def _write_processing(
 ) -> Path:
     """Write a processing marker, optionally aged and under a custom name."""
     marker = target_dir / (name or vnn_plugin.PROCESSING_MARKER)
-    content = {"retry_count": 0}
+    content: dict[str, Any] = {"retry_count": 0}
     if queue_file is not None:
         content["queue_file"] = str(queue_file)
     marker.write_text(json.dumps(content), encoding="utf-8")
@@ -205,7 +207,7 @@ def _stage(stage_id: str, marker: str):
         name=stage_id,
         trigger=TriggerCondition(type=TriggerType.CUSTOM, callable="x"),
         action=ActionSpec(type=ActionType.CUSTOM, params={}),
-        markers={"processing": MarkerSpec(name=marker, type="json")},
+        markers={"processing": MarkerSpec(name=marker, type=MarkerType.JSON)},
     )
 
 
@@ -475,7 +477,9 @@ class TestSyncStoryStatesHook:
 
         assert vnn_plugin.sync_story_states_hook(_hook_context(country)) is True
 
-        states = {s["story_id"]: s["state"] for s in load_ranking(country)["stories"]}
+        ranking = load_ranking(country)
+        assert ranking is not None
+        states = {s["story_id"]: s["state"] for s in ranking["stories"]}
         assert states[STORY_ID] == "published"
 
     def test_progress_is_never_rolled_back(self, country: Path):
@@ -484,7 +488,9 @@ class TestSyncStoryStatesHook:
 
         vnn_plugin.sync_story_states_hook(_hook_context(country))
 
-        states = {s["story_id"]: s["state"] for s in load_ranking(country)["stories"]}
+        ranking = load_ranking(country)
+        assert ranking is not None
+        states = {s["story_id"]: s["state"] for s in ranking["stories"]}
         assert states[STORY_ID] == "publishing"
 
     def test_missing_ranking_is_a_no_op(self, country: Path):
@@ -638,7 +644,9 @@ class TestDiscardExhaustedStoriesHook:
 
         assert (story / ".gave_up").exists()
         assert load_active_story(country) is None
-        states = {s["story_id"]: s["state"] for s in load_ranking(country)["stories"]}
+        ranking = load_ranking(country)
+        assert ranking is not None
+        states = {s["story_id"]: s["state"] for s in ranking["stories"]}
         assert states[STORY_ID] == "discarded"
         resolved = vnn_plugin._active_story(country)
         assert resolved is not None and resolved[0] == next_id
@@ -836,6 +844,7 @@ class TestClaimStoryAction:
         assert result.success is True
         assert result.data["story_id"] == STORY_ID
         lock = load_active_story(country)
+        assert lock is not None
         assert lock["story_id"] == STORY_ID
 
     def test_claims_without_state(self, country: Path):
