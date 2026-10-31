@@ -12,7 +12,12 @@ import subprocess  # nosec B404 - subprocess is used by design to run diagnostic
 from collections.abc import Callable
 from typing import Any
 
-from cronpypeline.actions import ActionResult, TickContext, format_template, run_with_timeout
+from cronpypeline.actions import (
+    ActionResult,
+    TickContext,
+    format_template,
+    run_with_timeout,
+)
 from cronpypeline.config import ActionSpec
 from cronpypeline.reporting import (
     generate_timestamp,

@@ -3178,9 +3178,9 @@ class TestRunWithTimeout:
         proc = self._fake(effects=[exc, ("partial out", "partial err")])
         with patch("subprocess.Popen", return_value=proc), \
                 patch("cronpypeline.actions.os.getpgid", return_value=4242) as mock_getpgid, \
-                patch("cronpypeline.actions.os.killpg") as mock_killpg:
-            with pytest.raises(subprocess.TimeoutExpired) as raised:
-                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+                patch("cronpypeline.actions.os.killpg") as mock_killpg, \
+                pytest.raises(subprocess.TimeoutExpired) as raised:
+            run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
 
         mock_getpgid.assert_called_once_with(4242)
         mock_killpg.assert_called_once_with(4242, signal.SIGKILL)
@@ -3193,9 +3193,9 @@ class TestRunWithTimeout:
         proc = self._fake(effects=[exc, ("", "")])
         with patch("subprocess.Popen", return_value=proc), \
                 patch("cronpypeline.actions.os.getpgid", return_value=4242), \
-                patch("cronpypeline.actions.os.killpg", side_effect=ProcessLookupError):
-            with pytest.raises(subprocess.TimeoutExpired):
-                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+                patch("cronpypeline.actions.os.killpg", side_effect=ProcessLookupError), \
+                pytest.raises(subprocess.TimeoutExpired):
+            run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
 
     def test_posix_killpg_permission_error_swallowed(self, tmp_path):
         """killpg raising PermissionError is swallowed before re-raising."""
@@ -3203,9 +3203,9 @@ class TestRunWithTimeout:
         proc = self._fake(effects=[exc, ("", "")])
         with patch("subprocess.Popen", return_value=proc), \
                 patch("cronpypeline.actions.os.getpgid", return_value=4242), \
-                patch("cronpypeline.actions.os.killpg", side_effect=PermissionError):
-            with pytest.raises(subprocess.TimeoutExpired):
-                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+                patch("cronpypeline.actions.os.killpg", side_effect=PermissionError), \
+                pytest.raises(subprocess.TimeoutExpired):
+            run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
 
     def test_posix_second_communicate_also_times_out(self, tmp_path):
         """If the reap also times out, the child is killed directly."""
@@ -3214,9 +3214,9 @@ class TestRunWithTimeout:
         proc = self._fake(effects=[first, second, ("", "")])
         with patch("subprocess.Popen", return_value=proc), \
                 patch("cronpypeline.actions.os.getpgid", return_value=4242), \
-                patch("cronpypeline.actions.os.killpg"):
-            with pytest.raises(subprocess.TimeoutExpired):
-                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+                patch("cronpypeline.actions.os.killpg"), \
+                pytest.raises(subprocess.TimeoutExpired):
+            run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
 
         assert proc.killed is True
         assert proc._timeouts == [1, 5, None]
@@ -3240,9 +3240,9 @@ class TestRunWithTimeout:
         with patch("sys.platform", "win32"), \
                 patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True), \
                 patch("subprocess.Popen", return_value=proc), \
-                patch("subprocess.run") as mock_run:
-            with pytest.raises(subprocess.TimeoutExpired) as raised:
-                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+                patch("subprocess.run") as mock_run, \
+                pytest.raises(subprocess.TimeoutExpired) as raised:
+            run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
 
         mock_run.assert_called_once_with(
             ["taskkill", "/F", "/T", "/PID", "4242"],
@@ -3258,9 +3258,9 @@ class TestRunWithTimeout:
         with patch("sys.platform", "win32"), \
                 patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True), \
                 patch("subprocess.Popen", return_value=proc), \
-                patch("subprocess.run", side_effect=OSError("taskkill failed")) as mock_run:
-            with pytest.raises(subprocess.TimeoutExpired):
-                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+                patch("subprocess.run", side_effect=OSError("taskkill failed")) as mock_run, \
+                pytest.raises(subprocess.TimeoutExpired):
+            run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
 
         assert mock_run.call_count == 1
 
@@ -3272,8 +3272,8 @@ class TestRunWithTimeout:
         with patch("sys.platform", "win32"), \
                 patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True), \
                 patch("subprocess.Popen", return_value=proc), \
-                patch("subprocess.run"):
-            with pytest.raises(subprocess.TimeoutExpired):
-                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+                patch("subprocess.run"), \
+                pytest.raises(subprocess.TimeoutExpired):
+            run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
 
         assert proc.killed is True
