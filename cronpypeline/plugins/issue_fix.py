@@ -1062,7 +1062,6 @@ def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str, str]:
             cmd_args,
             cwd=str(cwd),
             timeout=timeout,
-            label="issue_fix",
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as exc:

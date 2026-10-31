@@ -745,7 +745,6 @@ def run_with_timeout(
     cwd: str,
     timeout: float | None,
     env: dict[str, str] | None = None,
-    label: str = "command",
 ) -> subprocess.CompletedProcess[str]:
     """Run a command with a timeout, killing the whole process group on timeout.
 
@@ -763,7 +762,6 @@ def run_with_timeout(
     :param cwd: Working directory for the child process.
     :param timeout: Timeout in seconds, or ``None`` for no timeout.
     :param env: Environment mapping, or ``None`` to inherit the parent's.
-    :param label: Human-readable label for the command (kept for diagnostics).
     :returns: The completed process on normal completion.
     :raises subprocess.TimeoutExpired: If the command times out, after the
         whole process group has been killed.
@@ -947,7 +945,6 @@ class CommandActionHandler(ActionHandler):
                 cwd=cwd,
                 timeout=timeout,
                 env={**os.environ, **context.env},
-                label="command",
             )
             return ActionResult(
                 success=proc.returncode == 0,
@@ -1020,7 +1017,6 @@ class SubprocessActionHandler(ActionHandler):
                 cwd=cwd,
                 timeout=timeout,
                 env={**os.environ, **context.env},
-                label="subprocess",
             )
             return ActionResult(
                 success=proc.returncode == 0,
