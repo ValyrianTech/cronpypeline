@@ -557,12 +557,15 @@ class TestRunDiagnosticEdgeCases:
             target_config={"custom_value": "hello; echo INJECTED"},
         )
 
-        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cronpypeline.actions.subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("ok", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             result = run_diagnostic(action, ctx)
 
         assert result.success is True
-        cmd = mock_run.call_args.args[0]
+        cmd = mock_popen.call_args.args[0]
         assert cmd == ["echo", "hello; echo INJECTED"]
 
     def test_cmd_config_values_with_metacharacters_are_rejected(self, tmp_path):
@@ -611,14 +614,17 @@ class TestRunDiagnosticEdgeCases:
             target_config={"test_cmd": "pytest -q"},
         )
 
-        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cronpypeline.actions.subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("ok", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             result = run_diagnostic(action, ctx)
 
         assert result.success is True
-        cmd = mock_run.call_args.args[0]
+        cmd = mock_popen.call_args.args[0]
         assert cmd == ["pytest", "-q"]
-        assert mock_run.call_args.kwargs.get("shell") is False
+        assert mock_popen.call_args.kwargs.get("shell") is False
 
     def test_cmd_config_values_with_exclamation_are_accepted(self, tmp_path):
         """_cmd target_config values containing '!' (find negation) should be accepted."""
@@ -641,14 +647,17 @@ class TestRunDiagnosticEdgeCases:
             target_config={"test_cmd": "find . -name '*.py' ! -path './tests/*'"},
         )
 
-        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cronpypeline.actions.subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("ok", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             result = run_diagnostic(action, ctx)
 
         assert result.success is True
-        cmd = mock_run.call_args.args[0]
+        cmd = mock_popen.call_args.args[0]
         assert cmd == ["find", ".", "-name", "*.py", "!", "-path", "./tests/*"]
-        assert mock_run.call_args.kwargs.get("shell") is False
+        assert mock_popen.call_args.kwargs.get("shell") is False
 
     def test_cmd_config_values_with_hash_are_accepted(self, tmp_path):
         """_cmd target_config values containing '#' should be accepted."""
@@ -671,14 +680,17 @@ class TestRunDiagnosticEdgeCases:
             target_config={"lint_cmd": "ruff check src --exclude 'file#1.py'"},
         )
 
-        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cronpypeline.actions.subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("ok", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             result = run_diagnostic(action, ctx)
 
         assert result.success is True
-        cmd = mock_run.call_args.args[0]
+        cmd = mock_popen.call_args.args[0]
         assert cmd == ["ruff", "check", "src", "--exclude", "file#1.py"]
-        assert mock_run.call_args.kwargs.get("shell") is False
+        assert mock_popen.call_args.kwargs.get("shell") is False
 
     def test_cmd_config_values_with_glob_patterns_are_accepted(self, tmp_path):
         """_cmd target_config values with shell globbing characters should be accepted."""
@@ -701,14 +713,17 @@ class TestRunDiagnosticEdgeCases:
             target_config={"test_cmd": "pytest tests/*.py"},
         )
 
-        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cronpypeline.actions.subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("ok", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             result = run_diagnostic(action, ctx)
 
         assert result.success is True
-        cmd = mock_run.call_args.args[0]
+        cmd = mock_popen.call_args.args[0]
         assert cmd == ["pytest", "tests/*.py"]
-        assert mock_run.call_args.kwargs.get("shell") is False
+        assert mock_popen.call_args.kwargs.get("shell") is False
 
     def test_cmd_config_values_with_glob_question_brackets_accepted(self, tmp_path):
         """_cmd target_config values with ?, [, ] glob characters should be accepted."""
@@ -731,14 +746,17 @@ class TestRunDiagnosticEdgeCases:
             target_config={"lint_cmd": "ruff check src/**/*.py"},
         )
 
-        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch("cronpypeline.actions.subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("ok", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             result = run_diagnostic(action, ctx)
 
         assert result.success is True
-        cmd = mock_run.call_args.args[0]
+        cmd = mock_popen.call_args.args[0]
         assert cmd == ["ruff", "check", "src/**/*.py"]
-        assert mock_run.call_args.kwargs.get("shell") is False
+        assert mock_popen.call_args.kwargs.get("shell") is False
 
     def test_format_template_failure_returns_error(self, tmp_path):
         """When format_template fails, should return failure ActionResult."""
@@ -795,7 +813,12 @@ class TestRunDiagnosticEdgeCases:
 
         import subprocess as sp
         from unittest.mock import patch
-        with patch("subprocess.run", side_effect=sp.TimeoutExpired(cmd="sleep 300", timeout=300)):
+        proc = MagicMock()
+        proc.pid = 4242
+        proc.communicate.side_effect = [sp.TimeoutExpired(cmd="sleep 300", timeout=300), ("", "")]
+        with patch("cronpypeline.actions.subprocess.Popen", return_value=proc), \
+                patch("cronpypeline.actions.os.getpgid", return_value=4242), \
+                patch("cronpypeline.actions.os.killpg"):
             result = run_diagnostic(action, ctx)
 
         assert result.success is False
@@ -817,7 +840,7 @@ class TestRunDiagnosticEdgeCases:
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False, verbose=False)
 
         from unittest.mock import patch
-        with patch("subprocess.run", side_effect=OSError("command failed")):
+        with patch("cronpypeline.actions.subprocess.Popen", side_effect=OSError("command failed")):
             result = run_diagnostic(action, ctx)
 
         assert result.success is False
@@ -897,9 +920,12 @@ class TestRunDiagnosticTimeoutSeconds:
         )
         ctx = TickContext(target="repo", workspace_dir=tmp_path, dry_run=False)
 
-        with patch("cronpypeline.plugins.swe_diagnostics.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="hello", stderr="")
+        with patch("cronpypeline.actions.subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("hello", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             result = run_diagnostic(action, ctx)
 
         assert result.success is True
-        assert mock_run.call_args.kwargs["timeout"] == 5
+        assert mock_proc.communicate.call_args.kwargs["timeout"] == 5

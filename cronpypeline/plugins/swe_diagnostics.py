@@ -12,7 +12,7 @@ import subprocess  # nosec B404 - subprocess is used by design to run diagnostic
 from collections.abc import Callable
 from typing import Any
 
-from cronpypeline.actions import ActionResult, TickContext, format_template
+from cronpypeline.actions import ActionResult, TickContext, format_template, run_with_timeout
 from cronpypeline.config import ActionSpec
 from cronpypeline.reporting import (
     generate_timestamp,
@@ -332,14 +332,11 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
         return ActionResult(success=False, stderr=f"Invalid command: {e}")
 
     try:
-        proc = subprocess.run(
+        proc = run_with_timeout(
             cmd_args,
-            shell=False,  # nosec B603 - arg list, no shell injection
             cwd=str(context.target_dir),
-            capture_output=True,
-            text=True,
             timeout=timeout,
-            check=False,
+            label="diagnostic",
         )
         stdout = proc.stdout
         stderr = proc.stderr
