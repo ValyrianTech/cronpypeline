@@ -739,6 +739,22 @@ def _reap_after_timeout(
     raise subprocess.TimeoutExpired(cmd=cmd_args, timeout=timeout, output=stdout, stderr=stderr)
 
 
+def _timeout_partial_output(exc: subprocess.TimeoutExpired) -> tuple[str, str]:
+    """Extract partial stdout/stderr from a TimeoutExpired exception as str.
+
+    The values carried on the exception may be bytes or str depending on how
+    the child was spawned; normalize both to str (decoding bytes with utf-8 and
+    errors='replace') and fall back to empty strings for None.
+    """
+    def _coerce(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return value
+    return _coerce(exc.stdout), _coerce(exc.stderr)
+
+
 def run_with_timeout(
     cmd_args: list[str],
     *,
@@ -953,12 +969,14 @@ class CommandActionHandler(ActionHandler):
                 exit_code=proc.returncode,
                 command=command_str,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            partial_stdout, partial_stderr = _timeout_partial_output(exc)
             return ActionResult(
                 success=False,
                 timed_out=True,
                 exit_code=-1,
-                stderr=f"Command timed out after {timeout}s",
+                stdout=partial_stdout,
+                stderr=partial_stderr or f"Command timed out after {timeout}s",
                 command=command_str,
             )
 
@@ -1025,12 +1043,14 @@ class SubprocessActionHandler(ActionHandler):
                 exit_code=proc.returncode,
                 command=command_str,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            partial_stdout, partial_stderr = _timeout_partial_output(exc)
             return ActionResult(
                 success=False,
                 timed_out=True,
                 exit_code=-1,
-                stderr=f"Subprocess timed out after {timeout}s",
+                stdout=partial_stdout,
+                stderr=partial_stderr or f"Subprocess timed out after {timeout}s",
                 command=command_str,
             )
 
