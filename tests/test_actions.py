@@ -2,8 +2,10 @@
 
 import errno
 import http.server
+import signal
 import socket
 import ssl
+import subprocess
 import threading
 import urllib.request
 from unittest.mock import MagicMock, patch
@@ -33,6 +35,7 @@ from cronpypeline.actions import (
     build_template_variables,
     execute_action,
     format_template,
+    run_with_timeout,
     scrub_secrets,
 )
 from cronpypeline.config import ActionSpec, ActionType
@@ -290,10 +293,13 @@ class TestCommandActionHandler:
             verbose=False,
         )
         handler = CommandActionHandler()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             handler.execute(action, ctx)
-        cmd = mock_run.call_args.args[0]
+        cmd = mock_popen.call_args.args[0]
         assert cmd == ["echo", "repo; echo INJECTED"]
 
     def test_format_template_failure_returns_error(self, tmp_path):
@@ -328,10 +334,13 @@ class TestCommandActionHandler:
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = CommandActionHandler()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             handler.execute(action, ctx)
-        assert mock_run.call_args.kwargs["timeout"] == 300
+        assert mock_proc.communicate.call_args.kwargs["timeout"] == 300
 
     def test_cwd_escaping_workspace_is_rejected(self, tmp_path):
         """A cwd outside the workspace directory must be rejected."""
@@ -407,10 +416,13 @@ class TestSubprocessActionHandler:
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = SubprocessActionHandler()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             handler.execute(action, ctx)
-        assert mock_run.call_args.kwargs["timeout"] == 300
+        assert mock_proc.communicate.call_args.kwargs["timeout"] == 300
 
     def test_cwd_escaping_workspace_is_rejected(self, tmp_path):
         """A cwd outside the workspace directory must be rejected."""
@@ -480,11 +492,11 @@ class TestSubprocessActionHandlerScriptValidation:
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = SubprocessActionHandler()
-        with patch("subprocess.run") as mock_run:
+        with patch("subprocess.Popen") as mock_popen:
             result = handler.execute(action, ctx)
         assert result.success is False
         assert "script escapes workspace directory" in result.stderr
-        mock_run.assert_not_called()
+        mock_popen.assert_not_called()
 
     def test_relative_script_with_dotdot_escaping_workspace_is_rejected(self, tmp_path):
         """A relative script path with ``..`` escaping the workspace is rejected."""
@@ -494,11 +506,11 @@ class TestSubprocessActionHandlerScriptValidation:
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = SubprocessActionHandler()
-        with patch("subprocess.run") as mock_run:
+        with patch("subprocess.Popen") as mock_popen:
             result = handler.execute(action, ctx)
         assert result.success is False
         assert "script escapes workspace directory" in result.stderr
-        mock_run.assert_not_called()
+        mock_popen.assert_not_called()
 
     def test_bare_command_name_is_allowed(self, tmp_path):
         """A bare command name (no separator) is resolved via PATH and allowed."""
@@ -508,15 +520,18 @@ class TestSubprocessActionHandlerScriptValidation:
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = SubprocessActionHandler()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             result = handler.execute(action, ctx)
         assert result.success is True
-        mock_run.assert_called_once()
-        assert mock_run.call_args[0][0][0] == "echo"
+        mock_popen.assert_called_once()
+        assert mock_popen.call_args.args[0][0] == "echo"
 
     def test_absolute_script_inside_workspace_works(self, tmp_path):
-        """An absolute script path inside the workspace reaches subprocess.run."""
+        """An absolute script path inside the workspace reaches subprocess.Popen."""
         script = tmp_path / "test_script.py"
         script.write_text("print('hi')\n")
         action = ActionSpec(
@@ -525,14 +540,17 @@ class TestSubprocessActionHandlerScriptValidation:
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = SubprocessActionHandler()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             result = handler.execute(action, ctx)
         assert result.success is True
-        mock_run.assert_called_once()
+        mock_popen.assert_called_once()
 
     def test_relative_script_with_separator_inside_workspace_works(self, tmp_path):
-        """A relative script path with a separator inside the workspace reaches subprocess.run."""
+        """A relative script path with a separator inside the workspace reaches subprocess.Popen."""
         subdir = tmp_path / "subdir"
         subdir.mkdir()
         script = subdir / "test_script.py"
@@ -543,11 +561,14 @@ class TestSubprocessActionHandlerScriptValidation:
         )
         ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
         handler = SubprocessActionHandler()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
             result = handler.execute(action, ctx)
         assert result.success is True
-        mock_run.assert_called_once()
+        mock_popen.assert_called_once()
 
 
 class TestCustomActionHandler:
@@ -3099,3 +3120,160 @@ class TestGetDefaultHandlersExport:
             ActionType.CUSTOM,
             ActionType.HTTP_REQUEST,
         }
+
+
+class TestRunWithTimeout:
+    """Tests for the run_with_timeout process-group kill helper."""
+
+    class _FakePopen:
+        """Minimal stand-in for subprocess.Popen used by run_with_timeout."""
+
+        def __init__(self, pid=4242, returncode=0, stdout="", stderr=""):
+            self.pid = pid
+            self.returncode = returncode
+            self._stdout = stdout
+            self._stderr = stderr
+            self._communicate_effects = []
+            self._timeouts = []
+            self.killed = False
+
+        def communicate(self, timeout=None, input=None):
+            self._timeouts.append(timeout)
+            if self._communicate_effects:
+                effect = self._communicate_effects.pop(0)
+                if isinstance(effect, Exception):
+                    raise effect
+                return effect
+            return self._stdout, self._stderr
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+    def _fake(self, effects=()):
+        """Build a fake Popen configured to behave as specified by ``effects``."""
+        proc = self._FakePopen(pid=4242)
+        proc._communicate_effects = list(effects)
+        return proc
+
+    def test_posix_normal_completion(self, tmp_path):
+        """Normal completion returns a CompletedProcess with captured output."""
+        proc = self._fake(effects=[("out", "err")])
+        with patch("subprocess.Popen", return_value=proc) as mock_popen:
+            result = run_with_timeout(["echo", "hi"], cwd=str(tmp_path), timeout=10)
+
+        assert isinstance(result, subprocess.CompletedProcess)
+        assert (result.returncode, result.stdout, result.stderr) == (0, "out", "err")
+        assert mock_popen.call_args.kwargs["start_new_session"] is True
+
+    def test_posix_normal_completion_uses_fake_defaults(self, tmp_path):
+        """The fake Popen returns its default output when no effects are queued."""
+        proc = self._FakePopen(pid=7, returncode=0, stdout="default out", stderr="default err")
+        assert proc.communicate(timeout=10) == ("default out", "default err")
+        assert proc.communicate() == ("default out", "default err")
+
+    def test_posix_kills_process_group_on_timeout(self, tmp_path):
+        """On POSIX a timeout kills the whole process group via killpg."""
+        exc = subprocess.TimeoutExpired(cmd=["sleep", "10"], timeout=1)
+        proc = self._fake(effects=[exc, ("partial out", "partial err")])
+        with patch("subprocess.Popen", return_value=proc), \
+                patch("cronpypeline.actions.os.getpgid", return_value=4242) as mock_getpgid, \
+                patch("cronpypeline.actions.os.killpg") as mock_killpg:
+            with pytest.raises(subprocess.TimeoutExpired) as raised:
+                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+
+        mock_getpgid.assert_called_once_with(4242)
+        mock_killpg.assert_called_once_with(4242, signal.SIGKILL)
+        assert raised.value.output == "partial out"
+        assert raised.value.stderr == "partial err"
+
+    def test_posix_killpg_process_lookup_error_swallowed(self, tmp_path):
+        """killpg raising ProcessLookupError is swallowed before re-raising."""
+        exc = subprocess.TimeoutExpired(cmd=["sleep", "10"], timeout=1)
+        proc = self._fake(effects=[exc, ("", "")])
+        with patch("subprocess.Popen", return_value=proc), \
+                patch("cronpypeline.actions.os.getpgid", return_value=4242), \
+                patch("cronpypeline.actions.os.killpg", side_effect=ProcessLookupError):
+            with pytest.raises(subprocess.TimeoutExpired):
+                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+
+    def test_posix_killpg_permission_error_swallowed(self, tmp_path):
+        """killpg raising PermissionError is swallowed before re-raising."""
+        exc = subprocess.TimeoutExpired(cmd=["sleep", "10"], timeout=1)
+        proc = self._fake(effects=[exc, ("", "")])
+        with patch("subprocess.Popen", return_value=proc), \
+                patch("cronpypeline.actions.os.getpgid", return_value=4242), \
+                patch("cronpypeline.actions.os.killpg", side_effect=PermissionError):
+            with pytest.raises(subprocess.TimeoutExpired):
+                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+
+    def test_posix_second_communicate_also_times_out(self, tmp_path):
+        """If the reap also times out, the child is killed directly."""
+        first = subprocess.TimeoutExpired(cmd=["sleep", "10"], timeout=1)
+        second = subprocess.TimeoutExpired(cmd=["sleep", "10"], timeout=5)
+        proc = self._fake(effects=[first, second, ("", "")])
+        with patch("subprocess.Popen", return_value=proc), \
+                patch("cronpypeline.actions.os.getpgid", return_value=4242), \
+                patch("cronpypeline.actions.os.killpg"):
+            with pytest.raises(subprocess.TimeoutExpired):
+                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+
+        assert proc.killed is True
+        assert proc._timeouts == [1, 5, None]
+
+    def test_windows_normal_completion(self, tmp_path):
+        """On Windows the child is started with CREATE_NEW_PROCESS_GROUP."""
+        proc = self._fake(effects=[("out", "err")])
+        with patch("sys.platform", "win32"), \
+                patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True), \
+                patch("subprocess.Popen", return_value=proc) as mock_popen:
+            result = run_with_timeout(["echo", "hi"], cwd=str(tmp_path), timeout=10)
+
+        assert isinstance(result, subprocess.CompletedProcess)
+        assert (result.returncode, result.stdout, result.stderr) == (0, "out", "err")
+        assert mock_popen.call_args.kwargs["creationflags"] == 0x00000200
+
+    def test_windows_timeout_kills_tree(self, tmp_path):
+        """On Windows a timeout kills the tree via taskkill /T."""
+        exc = subprocess.TimeoutExpired(cmd=["sleep", "10"], timeout=1)
+        proc = self._fake(effects=[exc, ("partial out", "partial err")])
+        with patch("sys.platform", "win32"), \
+                patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True), \
+                patch("subprocess.Popen", return_value=proc), \
+                patch("subprocess.run") as mock_run:
+            with pytest.raises(subprocess.TimeoutExpired) as raised:
+                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+
+        mock_run.assert_called_once_with(
+            ["taskkill", "/F", "/T", "/PID", "4242"],
+            capture_output=True,
+            check=False,
+        )
+        assert raised.value.output == "partial out"
+
+    def test_windows_timeout_taskkill_error_swallowed(self, tmp_path):
+        """A failing taskkill on Windows is swallowed before re-raising."""
+        exc = subprocess.TimeoutExpired(cmd=["sleep", "10"], timeout=1)
+        proc = self._fake(effects=[exc, ("", "")])
+        with patch("sys.platform", "win32"), \
+                patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True), \
+                patch("subprocess.Popen", return_value=proc), \
+                patch("subprocess.run", side_effect=OSError("taskkill failed")) as mock_run:
+            with pytest.raises(subprocess.TimeoutExpired):
+                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+
+        assert mock_run.call_count == 1
+
+    def test_windows_second_communicate_also_times_out(self, tmp_path):
+        """If the Windows reap also times out, the child is killed directly."""
+        first = subprocess.TimeoutExpired(cmd=["sleep", "10"], timeout=1)
+        second = subprocess.TimeoutExpired(cmd=["sleep", "10"], timeout=5)
+        proc = self._fake(effects=[first, second, ("", "")])
+        with patch("sys.platform", "win32"), \
+                patch("subprocess.CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True), \
+                patch("subprocess.Popen", return_value=proc), \
+                patch("subprocess.run"):
+            with pytest.raises(subprocess.TimeoutExpired):
+                run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
+
+        assert proc.killed is True

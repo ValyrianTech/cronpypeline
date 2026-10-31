@@ -14,6 +14,7 @@ import ipaddress
 import os
 import re
 import shlex
+import signal
 import socket
 import ssl
 import subprocess  # nosec B404 - subprocess is used by design to run pipeline commands/scripts
@@ -713,6 +714,107 @@ def resolved_command(action: ActionSpec, context: TickContext) -> str:
     return ""
 
 
+def _reap_after_timeout(
+    proc: subprocess.Popen,
+    cmd_args: list[str],
+    timeout: float | None,
+) -> None:
+    """Reap the child after a timeout and re-raise ``TimeoutExpired``.
+
+    After the process group (POSIX) or process tree (Windows) has been killed,
+    collect whatever output the child produced, then re-raise a
+    :class:`subprocess.TimeoutExpired` carrying that partial output. If the
+    child still refuses to exit, kill it directly and reap it one final time.
+
+    :param proc: The child process that timed out.
+    :param cmd_args: The command and its arguments (no shell).
+    :param timeout: The timeout in seconds that expired.
+    :raises subprocess.TimeoutExpired: Always — this helper never returns.
+    """
+    try:
+        stdout, stderr = proc.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+    raise subprocess.TimeoutExpired(cmd=cmd_args, timeout=timeout, output=stdout, stderr=stderr)
+
+
+def run_with_timeout(
+    cmd_args: list[str],
+    *,
+    cwd: str,
+    timeout: float | None,
+    env: dict[str, str] | None = None,
+    label: str = "command",
+) -> subprocess.CompletedProcess[str]:
+    """Run a command with a timeout, killing the whole process group on timeout.
+
+    The child is started in its own session/process group so that, on timeout,
+    we can kill the direct child *and* any grandchildren it spawned (shell
+    pipelines like ``foo && bar``, build/test tools that fork, test runners
+    with workers) instead of orphaning them. On Windows the child is started
+    in a new process group and killed via ``taskkill /T`` (tree kill).
+
+    The child is spawned with :meth:`subprocess.Popen` so the pid is always
+    available (unlike the ``.pid`` attribute on ``TimeoutExpired``, which does
+    not exist on Python 3.12) for killing the process group/tree.
+
+    :param cmd_args: The command and its arguments (no shell).
+    :param cwd: Working directory for the child process.
+    :param timeout: Timeout in seconds, or ``None`` for no timeout.
+    :param env: Environment mapping, or ``None`` to inherit the parent's.
+    :param label: Human-readable label for the command (kept for diagnostics).
+    :returns: The completed process on normal completion.
+    :raises subprocess.TimeoutExpired: If the command times out, after the
+        whole process group has been killed.
+    """
+    if sys.platform == "win32":
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        proc = subprocess.Popen(  # nosec B603 - arg list, no shell injection
+            cmd_args,
+            shell=False,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            creationflags=creationflags,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                subprocess.run(  # nosec B603 - taskkill arg list, no shell
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+            _reap_after_timeout(proc, cmd_args, timeout)
+        return subprocess.CompletedProcess(cmd_args, proc.returncode, stdout, stderr)
+
+    proc = subprocess.Popen(  # nosec B603 - arg list, no shell injection
+        cmd_args,
+        shell=False,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        _reap_after_timeout(proc, cmd_args, timeout)
+    return subprocess.CompletedProcess(cmd_args, proc.returncode, stdout, stderr)
+
+
 class ActionHandler:
     """Base class / interface for action handlers."""
 
@@ -840,15 +942,12 @@ class CommandActionHandler(ActionHandler):
             return ActionResult(success=False, stderr=f"Invalid command: {e}", command=command_str)
 
         try:
-            proc = subprocess.run(
+            proc = run_with_timeout(
                 cmd_args,
-                shell=False,  # nosec B603 - arg list, no shell injection
                 cwd=cwd,
-                capture_output=True,
-                text=True,
                 timeout=timeout,
                 env={**os.environ, **context.env},
-                check=False,
+                label="command",
             )
             return ActionResult(
                 success=proc.returncode == 0,
@@ -916,14 +1015,12 @@ class SubprocessActionHandler(ActionHandler):
         Path(cwd).mkdir(parents=True, exist_ok=True)
 
         try:
-            proc = subprocess.run(  # nosec B603 - script is validated to stay inside the workspace and args are passed as a list without a shell
+            proc = run_with_timeout(
                 cmd,
                 cwd=cwd,
-                capture_output=True,
-                text=True,
                 timeout=timeout,
                 env={**os.environ, **context.env},
-                check=False,
+                label="subprocess",
             )
             return ActionResult(
                 success=proc.returncode == 0,
