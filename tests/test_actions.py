@@ -31,6 +31,7 @@ from cronpypeline.actions import (
     _PinnedHTTPSHandler,
     _redact_path_segments,
     _redact_url,
+    _timeout_partial_output,
     _validate_ssrf,
     build_template_variables,
     execute_action,
@@ -3277,3 +3278,95 @@ class TestRunWithTimeout:
             run_with_timeout(["sleep", "10"], cwd=str(tmp_path), timeout=1)
 
         assert proc.killed is True
+
+
+class TestTimeoutPartialOutput:
+    """Tests for _timeout_partial_output and handler timeout output capture."""
+
+    def test_both_none(self):
+        exc = subprocess.TimeoutExpired(cmd=["x"], timeout=1)
+        assert _timeout_partial_output(exc) == ("", "")
+
+    def test_bytes_decoded(self):
+        exc = subprocess.TimeoutExpired(cmd=["x"], timeout=1, output=b"bytes out", stderr=b"bytes err")
+        assert _timeout_partial_output(exc) == ("bytes out", "bytes err")
+
+    def test_str_preserved(self):
+        exc = subprocess.TimeoutExpired(cmd=["x"], timeout=1, output="partial out", stderr="partial err")
+        assert _timeout_partial_output(exc) == ("partial out", "partial err")
+
+    def test_mixed_types(self):
+        exc = subprocess.TimeoutExpired(cmd=["x"], timeout=1, output=b"bytes out", stderr="partial err")
+        assert _timeout_partial_output(exc) == ("bytes out", "partial err")
+
+    def _command_timeout(self, exc, tmp_path):
+        action = ActionSpec(
+            type=ActionType.COMMAND,
+            params={"command": "echo hi", "cwd": str(tmp_path)},
+            timeout_seconds=1,
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        with patch("cronpypeline.actions.run_with_timeout", side_effect=exc):
+            return CommandActionHandler().execute(action, ctx)
+
+    def _subprocess_timeout(self, exc, tmp_path):
+        action = ActionSpec(
+            type=ActionType.SUBPROCESS,
+            params={"script": "slow_script.py", "args": []},
+            timeout_seconds=1,
+        )
+        ctx = TickContext(target="test", workspace_dir=tmp_path, dry_run=False, verbose=False)
+        with patch("cronpypeline.actions.run_with_timeout", side_effect=exc):
+            return SubprocessActionHandler().execute(action, ctx)
+
+    def test_command_handler_captures_partial_output(self, tmp_path):
+        exc = subprocess.TimeoutExpired(cmd=["echo", "hi"], timeout=1, output="partial out", stderr="partial err")
+        result = self._command_timeout(exc, tmp_path)
+        assert result.success is False
+        assert result.timed_out is True
+        assert result.stdout == "partial out"
+        assert result.stderr == "partial err"
+
+    def test_subprocess_handler_captures_partial_output(self, tmp_path):
+        exc = subprocess.TimeoutExpired(cmd=["x"], timeout=1, output="partial out", stderr="partial err")
+        result = self._subprocess_timeout(exc, tmp_path)
+        assert result.success is False
+        assert result.timed_out is True
+        assert result.stdout == "partial out"
+        assert result.stderr == "partial err"
+
+    def test_command_handler_none_output_falls_back(self, tmp_path):
+        exc = subprocess.TimeoutExpired(cmd=["echo", "hi"], timeout=1)
+        result = self._command_timeout(exc, tmp_path)
+        assert result.stdout == ""
+        assert result.stderr == "Command timed out after 1s"
+
+    def test_subprocess_handler_none_output_falls_back(self, tmp_path):
+        exc = subprocess.TimeoutExpired(cmd=["x"], timeout=1)
+        result = self._subprocess_timeout(exc, tmp_path)
+        assert result.stdout == ""
+        assert result.stderr == "Subprocess timed out after 1s"
+
+    def test_command_handler_empty_stderr_falls_back(self, tmp_path):
+        exc = subprocess.TimeoutExpired(cmd=["echo", "hi"], timeout=1, output="partial out", stderr="")
+        result = self._command_timeout(exc, tmp_path)
+        assert result.stdout == "partial out"
+        assert result.stderr == "Command timed out after 1s"
+
+    def test_subprocess_handler_empty_stderr_falls_back(self, tmp_path):
+        exc = subprocess.TimeoutExpired(cmd=["x"], timeout=1, output="partial out", stderr="")
+        result = self._subprocess_timeout(exc, tmp_path)
+        assert result.stdout == "partial out"
+        assert result.stderr == "Subprocess timed out after 1s"
+
+    def test_command_handler_bytes_output_decoded(self, tmp_path):
+        exc = subprocess.TimeoutExpired(cmd=["echo", "hi"], timeout=1, output=b"bytes out", stderr=b"bytes err")
+        result = self._command_timeout(exc, tmp_path)
+        assert result.stdout == "bytes out"
+        assert result.stderr == "bytes err"
+
+    def test_subprocess_handler_bytes_output_decoded(self, tmp_path):
+        exc = subprocess.TimeoutExpired(cmd=["x"], timeout=1, output=b"bytes out", stderr=b"bytes err")
+        result = self._subprocess_timeout(exc, tmp_path)
+        assert result.stdout == "bytes out"
+        assert result.stderr == "bytes err"
