@@ -341,7 +341,6 @@ def run_diagnostic(action: ActionSpec, context: TickContext) -> ActionResult:
             cmd_args,
             cwd=str(context.target_dir),
             timeout=timeout,
-            label="diagnostic",
         )
         stdout = proc.stdout
         stderr = proc.stderr
