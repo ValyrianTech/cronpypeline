@@ -747,6 +747,16 @@ def _timeout_partial_output(exc: subprocess.TimeoutExpired) -> tuple[str, str]:
     errors='replace') and fall back to empty strings for None.
     """
     def _coerce(value: Any) -> str:
+        """Normalize a partial-output value into a str.
+
+        Decode bytes as UTF-8 (errors='replace'), map ``None`` to an empty
+        string, and return the value unchanged when it is already a str.
+
+        :param value: The value to normalize (bytes, str, or None).
+        :type value: Any
+        :returns: The value normalized to a str.
+        :rtype: str
+        """
         if value is None:
             return ""
         if isinstance(value, bytes):
