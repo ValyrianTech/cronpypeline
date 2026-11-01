@@ -61,6 +61,7 @@ from cronpypeline.plugins.swe_plugin import (
     _parse_env_file,
     _parse_pip_audit_vulnerabilities,
     _parse_utc_datetime,
+    _publish_preconditions_met,
     _read_batch_marker,
     _read_github_session,
     _resolve_latest_report,
@@ -5129,6 +5130,39 @@ class TestDetectCPrPublishShaMismatch:
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
         assert detect_c_pr_publish(ctx) is False
+
+
+class TestPublishPreconditionsIsReadOnly:
+    def test_does_not_write_pr_published_json(self, tmp_path, monkeypatch):
+        """A stale SHA in pr_published.json must not be rewritten by the trigger.
+
+        Triggers/derivation must be read-only. The SHA-drift bookkeeping is
+        owned by run_c_pr_status (the action), so _publish_preconditions_met
+        must leave pr_published.json byte-for-byte untouched.
+        """
+        target = _make_target_dir(tmp_path)
+        _write_report(target, "test-infra", "r.md", "# Test Infra — PASS\n")
+        _write_report(target, "coverage", "r.md", "# Coverage — PASS\n\n- **Coverage:** 100.0%\n")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+        (target / "new.txt").write_text("new")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "new"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+        pr_marker = target / ".SWE" / "pr_published.json"
+        pr_marker.write_text(json.dumps({"pr_number": 7, "pr_state": "open", "sha": "stale_sha_value"}))
+        before = pr_marker.read_bytes()
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo", "default_branch": "main", "delivery": "open_pr"}}
+        assert _publish_preconditions_met(ctx) is False
+        assert pr_marker.read_bytes() == before
+        assert json.loads(pr_marker.read_text(encoding="utf-8"))["sha"] == "stale_sha_value"
 
 
 class TestDetectCPrPublishAncestorDocSync:
