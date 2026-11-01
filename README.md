@@ -462,6 +462,8 @@ The `custom` trigger and the composite `and`/`or` triggers also fail closed: if 
 | `timeout_seconds` | int | `null` | Execution timeout. When not set, action handlers apply a sensible default: command and subprocess actions default to 300 seconds (5 minutes), and http_request actions default to 30 seconds |
 | `produces` | array | `[]` | Markers created on success |
 
+On timeout, the handler kills the whole process group on POSIX (or process tree on Windows), not just the direct child, so grandchildren spawned by the command (e.g. shell pipelines, forked build/test tools) are not orphaned.
+
 **Template variables** in `command`, `cwd`, `prompt_template`, marker names, and marker directories:
 - `{target}` — current target name
 - `{target_dir}` — full path to target directory
@@ -527,6 +529,8 @@ Each stage has a `timeout_minutes` config. If a task's processing marker is olde
 1. Cleans up the stale marker
 2. For sync actions (command, subprocess, http_request): gives up immediately — writes a give-up marker (if configured) and returns `GAVE_UP`. Sync actions are never re-executed when stale.
 3. For async actions (queue_agent) and custom actions: increments the retry counter and either re-queues the action (if retries remain) or writes a give-up marker. On the stale re-queue path the retry counter is always advanced (never reset to 0), so an async stage whose agent never produces its completion marker gives up after `max_retries` re-queues instead of being re-queued forever.
+
+When a command or subprocess action exceeds its `timeout_seconds`, the handler kills the entire process group on POSIX (or process tree on Windows via `taskkill /T`), so grandchild processes are not left running; `subprocess.TimeoutExpired` still carries any partial stdout/stderr collected.
 
 Sync actions (command, subprocess, http_request) are never re-executed when stale. If a sync action's stage has a stale processing marker (e.g. from a previous bug, manual intervention, or a custom action that created one), the pipeline does NOT re-execute it — the action may have already been executed, and re-running it could cause duplicate side effects. Instead it cleans up the processing marker, writes a give-up marker (if configured), and returns `GAVE_UP` with message "Stage {id} gave up: sync action with stale processing marker".
 

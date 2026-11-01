@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from cronpypeline.actions import TickContext
+from cronpypeline.actions import TickContext, run_with_timeout
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.io_utils import write_json_atomic, write_text_atomic
 from cronpypeline.plugins.issue_store import (
@@ -1058,9 +1058,10 @@ def _run(cmd: str, cwd: Path, timeout: int) -> tuple[int, str, str]:
     if not cmd_args:
         return 1, "", "Empty command string"
     try:
-        proc = subprocess.run(  # nosec B603 - arg list, no shell
-            cmd_args, cwd=str(cwd),
-            capture_output=True, text=True, timeout=timeout, check=False,
+        proc = run_with_timeout(
+            cmd_args,
+            cwd=str(cwd),
+            timeout=timeout,
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as exc:
