@@ -2462,6 +2462,14 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     # The value is mutated in memory and persisted by the flush below.
     pr_data["last_polled_at"] = datetime.now(timezone.utc).isoformat()
 
+    # Record SHA drift on the marker here — this action legitimately owns
+    # pr_published.json. The trigger (`_publish_preconditions_met`) must stay
+    # read-only, so the write happens on the action side instead.
+    default_branch = target_config.get("default_branch") or "main"
+    current_sha = integration_head_sha(target_dir, default_branch)
+    if current_sha and pr_data.get("sha") != current_sha:
+        pr_data["sha"] = current_sha
+
     # Deferred GitHub issue close: if a previous close failed (``gh_close_pending``
     # flag on the session) and the PR is terminal, retry the close before polling
     # the API again.  The poll timestamp is advanced above and the failure counter
@@ -3800,11 +3808,6 @@ def _publish_preconditions_met(context: dict[str, Any]) -> bool:
         try:
             pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
             if pr_data.get("pr_number"):
-                # PR already exists — update SHA in marker if it drifted
-                # (e.g. a manual push after the original PR was opened)
-                if pr_data.get("sha") != sha:
-                    pr_data["sha"] = sha
-                    write_json_atomic(pr_marker, pr_data)
                 return False
         except (OSError, json.JSONDecodeError):
             pass
