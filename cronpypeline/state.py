@@ -65,12 +65,19 @@ class StageState:
         # preserve the _rejection_override flag, so any field that is only
         # *set* (never cleared) below would otherwise go stale. is_rejected is
         # still recomputed from the rejection marker below unless the override
-        # is set, so resetting it here is safe.
+        # is set, so resetting it here is safe. The boolean completion /
+        # processing / give-up flags are likewise reset so a removed marker
+        # (or a stage whose marker role is absent) clears them instead of
+        # leaking a stale True.
+        self.is_complete = False
+        self.is_processing = False
+        self.is_given_up = False
         self.is_rejected = False
         self.rejection_count = 0
         self.retry_count = 0
         self.processing_data = None
         self.is_stale = False
+        self.processing_age_seconds = None
 
         # Completion check
         if "completion" in markers:
