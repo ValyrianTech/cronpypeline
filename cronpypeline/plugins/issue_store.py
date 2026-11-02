@@ -123,6 +123,13 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         key, _, value = line.partition(":")
         key = key.strip()
         value = value.strip()
+        if key in fm:
+            warnings.warn(
+                f"Duplicate key in frontmatter ignored: {key!r}",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
         # If value starts with a quote, find the matching closing quote
         # to handle values containing colons (e.g., "Fix: Login bug")
         if len(value) >= 2 and value[0] in ("'", '"'):
@@ -197,6 +204,7 @@ def _serialize_value(value: Any) -> str:
 
     :param value: Value to serialize (list, bool, float, str, etc.).
     :returns: YAML-like string representation.
+    :raises ValueError: If a string value contains newlines.
     """
     if isinstance(value, list):
         return "[" + ", ".join(_serialize_list_element(v) for v in value) + "]"
@@ -207,6 +215,8 @@ def _serialize_value(value: Any) -> str:
     if value is None:
         return "null"
     if isinstance(value, str):
+        if "\n" in value or "\r" in value:
+            raise ValueError(f"frontmatter value must not contain newlines: {value!r}")
         if _needs_quoting(value):
             s = value.strip()
             if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
@@ -226,6 +236,8 @@ def serialize_frontmatter(fm: dict[str, Any]) -> str:
     """
     lines = []
     for key, value in fm.items():
+        if isinstance(key, str) and ("\n" in key or "\r" in key):
+            raise ValueError(f"frontmatter key must not contain newlines: {key!r}")
         lines.append(f"{key}: {_serialize_value(value)}")
     return "\n".join(lines) + "\n"
 
