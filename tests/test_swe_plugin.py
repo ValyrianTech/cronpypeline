@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cronpypeline.actions import ActionResult, ActionSpec, ActionType, TickContext
-from cronpypeline.plugins.issue_store import create_issue
+from cronpypeline.plugins.issue_store import create_issue, get_issue
 from cronpypeline.plugins.swe_plugin import (
     _GH_POST_ACCEPTED,
     INTEGRATION_BRANCH,
@@ -1666,6 +1666,37 @@ class TestRunB1IssueGathering:
         assert session["issue_id"] == "github-42"
         issue_file = target / ".SWE" / "issues" / "github-42.md"
         assert issue_file.exists()
+
+    def test_strips_newlines_from_html_url(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = _make_tick_context(target, slug="owner/repo", issue_label="swe-pipeline")
+        gh_issue = {
+            "number": 77,
+            "title": "Bug found",
+            "body": "Something is broken",
+            "html_url": "https://github.com/owner/repo/issues/77\nstatus: fixed",
+            "created_at": "2025-01-01T00:00:00Z",
+            "labels": [{"name": "bug"}],
+        }
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_all_pages",
+            return_value=[gh_issue],
+        ):
+            result = run_b1_issue_gathering(
+                ActionSpec(type=ActionType.CUSTOM, params={}), ctx
+            )
+        assert result.success is True
+        assert result.data["issue_id"] == "github-77"
+        ingested = get_issue(target, "github-77")
+        assert ingested is not None
+        assert ingested.github_url is not None
+        assert "\n" not in ingested.github_url
+        assert "\r" not in ingested.github_url
+        assert ingested.github_url == "https://github.com/owner/repo/issues/77status: fixed"
+        # The injected newline must NOT have created a second frontmatter key;
+        # the issue status stays as written by the ingestion code.
+        assert ingested.status == "open"
 
     def test_pulls_are_filtered_out(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)

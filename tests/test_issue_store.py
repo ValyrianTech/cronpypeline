@@ -1163,11 +1163,3 @@ class TestNewlineInjectionRoundTrip:
         loaded = get_issue(tmp_path, 'clean')
         assert loaded.status == 'open'
         assert loaded.github_url == 'https://github.com/o/r/issues/1'
-
-    def test_cleaned_url_survives_write_read(self, tmp_path):
-        gh_url = 'http://x\nstatus: fixed'.replace('\n', '').replace('\r', '')
-        assert gh_url == 'http://xstatus: fixed'
-        create_issue(tmp_path, {'id': 's', 'status': 'open', 'github_url': gh_url})
-        loaded = get_issue(tmp_path, 's')
-        assert loaded.status == 'open'
-        assert loaded.github_url == 'http://xstatus: fixed'
