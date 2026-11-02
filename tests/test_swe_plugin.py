@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cronpypeline.actions import ActionResult, ActionSpec, ActionType, TickContext
-from cronpypeline.plugins.issue_store import create_issue
+from cronpypeline.plugins.issue_store import create_issue, get_issue
 from cronpypeline.plugins.swe_plugin import (
     _GH_POST_ACCEPTED,
     INTEGRATION_BRANCH,
@@ -69,6 +69,7 @@ from cronpypeline.plugins.swe_plugin import (
     _sha_is_ancestor,
     _should_block_on_open_issues,
     _slugify,
+    _strip_newlines,
     _venv_binary,
     _write_batch_marker,
     _write_pipeline_issue,
@@ -1667,6 +1668,37 @@ class TestRunB1IssueGathering:
         issue_file = target / ".SWE" / "issues" / "github-42.md"
         assert issue_file.exists()
 
+    def test_strips_newlines_from_html_url(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = _make_tick_context(target, slug="owner/repo", issue_label="swe-pipeline")
+        gh_issue = {
+            "number": 77,
+            "title": "Bug found",
+            "body": "Something is broken",
+            "html_url": "https://github.com/owner/repo/issues/77\nstatus: fixed",
+            "created_at": "2025-01-01T00:00:00Z",
+            "labels": [{"name": "bug"}],
+        }
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_all_pages",
+            return_value=[gh_issue],
+        ):
+            result = run_b1_issue_gathering(
+                ActionSpec(type=ActionType.CUSTOM, params={}), ctx
+            )
+        assert result.success is True
+        assert result.data["issue_id"] == "github-77"
+        ingested = get_issue(target, "github-77")
+        assert ingested is not None
+        assert ingested.github_url is not None
+        assert "\n" not in ingested.github_url
+        assert "\r" not in ingested.github_url
+        assert ingested.github_url == "https://github.com/owner/repo/issues/77status: fixed"
+        # The injected newline must NOT have created a second frontmatter key;
+        # the issue status stays as written by the ingestion code.
+        assert ingested.status == "open"
+
     def test_pulls_are_filtered_out(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
@@ -1751,6 +1783,91 @@ class TestRunB1IssueGathering:
         with patch("cronpypeline.plugins.swe_plugin._gh_api_get_all_pages", return_value=[gh_issue]):
             result = run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
+
+    def test_strips_newlines_from_labels(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = _make_tick_context(target, slug="owner/repo", issue_label="swe-pipeline")
+        gh_issue = {
+            "number": 88,
+            "title": "Bug found",
+            "body": "Something is broken",
+            "html_url": "https://github.com/owner/repo/issues/88",
+            "created_at": "2025-01-01T00:00:00Z",
+            "labels": [{"name": "bug\ninjected: true"}],
+        }
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_all_pages",
+            return_value=[gh_issue],
+        ):
+            result = run_b1_issue_gathering(
+                ActionSpec(type=ActionType.CUSTOM, params={}), ctx
+            )
+        assert result.success is True
+        ingested = get_issue(target, "github-88")
+        assert ingested is not None
+        assert "buginjected: true" in ingested.labels
+        assert all("\n" not in label and "\r" not in label for label in ingested.labels)
+
+    def test_title_and_body_newlines_ingest_fine(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = _make_tick_context(target, slug="owner/repo", issue_label="swe-pipeline")
+        gh_issue = {
+            "number": 99,
+            "title": "Bug\nfound",
+            "body": "Line one\nLine two",
+            "html_url": "https://github.com/owner/repo/issues/99",
+            "created_at": "2025-01-01T00:00:00Z",
+            "labels": [{"name": "bug"}],
+        }
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_all_pages",
+            return_value=[gh_issue],
+        ):
+            result = run_b1_issue_gathering(
+                ActionSpec(type=ActionType.CUSTOM, params={}), ctx
+            )
+        assert result.success is True
+        ingested = get_issue(target, "github-99")
+        assert ingested is not None
+        assert "Bug\nfound" in ingested.body
+        assert "Line one\nLine two" in ingested.body
+
+    def test_create_issue_value_error_returns_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = _make_tick_context(target, slug="owner/repo", issue_label="swe-pipeline")
+        gh_issue = {
+            "number": 55,
+            "title": "Bug found",
+            "body": "Something is broken",
+            "html_url": "https://github.com/owner/repo/issues/55",
+            "created_at": "2025-01-01T00:00:00Z",
+            "labels": [{"name": "bug"}],
+        }
+        with patch(
+            "cronpypeline.plugins.swe_plugin._gh_api_get_all_pages",
+            return_value=[gh_issue],
+        ), patch(
+            "cronpypeline.plugins.swe_plugin.create_issue",
+            side_effect=ValueError("boom"),
+        ):
+            result = run_b1_issue_gathering(
+                ActionSpec(type=ActionType.CUSTOM, params={}), ctx
+            )
+        assert result.success is False
+        assert "boom" in result.stderr
+        session_path = target / ".SWE" / "github_session.json"
+        assert not session_path.exists()
+
+
+class TestStripNewlines:
+    def test_removes_newlines_and_carriage_returns(self):
+        assert _strip_newlines("a\nb\rc") == "abc"
+
+    def test_unchanged_when_no_newlines(self):
+        assert _strip_newlines("plain text") == "plain text"
 
 
 # ─── _find_active_task ──────────────────────────────────────────────────────

@@ -1092,3 +1092,74 @@ class TestUnreadableIssueFiles:
         (issues_dir / "bad.md").write_bytes(b'---\nid: 99\n---\n\xff\xfe invalid')
 
         assert finalize_issue_outcome(tmp_path, 99, "done") is False
+
+
+class TestSerializeValueRejectsNewlines:
+    """Tests for _serialize_value rejecting newline injection."""
+
+    def test_serialize_value_rejects_newline(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        with pytest.raises(ValueError, match='must not contain newlines'):
+            _serialize_value('http://x\nstatus: fixed')
+
+    def test_serialize_value_rejects_carriage_return(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        with pytest.raises(ValueError, match='must not contain newlines'):
+            _serialize_value('a\rb')
+
+    def test_serialize_value_rejects_newline_in_list(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        with pytest.raises(ValueError, match='must not contain newlines'):
+            _serialize_value(['ok', 'bad\nstatus: fixed'])
+
+    def test_serialize_value_allows_clean_string(self):
+        from cronpypeline.plugins.issue_store import _serialize_value
+        assert _serialize_value('http://x') == 'http://x'
+
+
+class TestSerializeFrontmatterRejectsNewlineKey:
+    """Tests for serialize_frontmatter rejecting newlines in keys/values."""
+
+    def test_serialize_frontmatter_rejects_newline_in_key(self):
+        with pytest.raises(ValueError, match='key must not contain newlines'):
+            serialize_frontmatter({'bad\nkey': 'x'})
+
+    def test_serialize_frontmatter_rejects_newline_in_value(self):
+        with pytest.raises(ValueError, match='value must not contain newlines'):
+            serialize_frontmatter({'status': 'open\ndone'})
+
+
+class TestParseFrontmatterDuplicateKeys:
+    """Injection defense: duplicate frontmatter keys — first occurrence wins."""
+
+    def test_duplicate_key_first_wins_with_warning(self):
+        with pytest.warns(UserWarning, match='Duplicate key'):
+            fm, _ = parse_frontmatter('---\nstatus: open\ngithub_url: http://x\nstatus: fixed\n---\n')
+        assert fm['status'] == 'open'
+        assert fm['github_url'] == 'http://x'
+
+    def test_injected_status_cannot_override(self):
+        text = '---\nid: t\nstatus: open\ngithub_url: http://x\nstatus: fixed\n---\n'
+        with pytest.warns(UserWarning):
+            fm, _ = parse_frontmatter(text)
+        assert fm['status'] == 'open'
+        assert fm['id'] == 't'
+
+
+class TestCreateIssueRejectsNewlineValue:
+    """End-to-end: create_issue must reject newline injection in values."""
+
+    def test_create_issue_rejects_github_url_with_newline(self, tmp_path):
+        with pytest.raises(ValueError, match='must not contain newlines'):
+            create_issue(tmp_path, {'id': 't', 'status': 'open', 'github_url': 'http://x\nstatus: fixed'})
+        assert not (tmp_path / '.SWE' / 'issues' / 't.md').exists()
+
+
+class TestNewlineInjectionRoundTrip:
+    """Regression: clean values round-trip through the write/read cycle."""
+
+    def test_legitimate_roundtrip_unchanged(self, tmp_path):
+        create_issue(tmp_path, {'id': 'clean', 'status': 'open', 'github_url': 'https://github.com/o/r/issues/1'})
+        loaded = get_issue(tmp_path, 'clean')
+        assert loaded.status == 'open'
+        assert loaded.github_url == 'https://github.com/o/r/issues/1'
