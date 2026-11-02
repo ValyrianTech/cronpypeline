@@ -736,6 +736,7 @@ def _reap_after_timeout(
     except subprocess.TimeoutExpired:
         proc.kill()
         stdout, stderr = proc.communicate()
+    assert timeout is not None
     raise subprocess.TimeoutExpired(cmd=cmd_args, timeout=timeout, output=stdout, stderr=stderr)
 
 
