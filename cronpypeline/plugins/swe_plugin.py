@@ -1264,6 +1264,21 @@ def detect_b1_issue_gathering(context: dict[str, Any]) -> bool:
     return "/" in slug
 
 
+def _strip_newlines(value: str) -> str:
+    """Remove newline and carriage-return characters from a string.
+
+    Externally-sourced fields that end up in issue frontmatter (e.g. GitHub
+    label names, repo names, or URLs) must not contain newlines, because
+    :func:`cronpypeline.plugins.issue_store.serialize_frontmatter` rejects any
+    string value containing ``\\n`` or ``\\r``. Values without newlines are
+    returned unchanged.
+
+    :param value: String to sanitize.
+    :returns: The string with all newline characters removed.
+    """
+    return value.replace("\n", "").replace("\r", "")
+
+
 def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionResult:
     """Fetch oldest open GitHub issue with configured label and ingest it.
 
@@ -1292,7 +1307,7 @@ def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionRe
     owner, gh_repo_name = slug.split("/", 1)
 
     issue_label = (target_config.get("issue_label") or "swe-pipeline").strip()
-    repo_name = context.target
+    repo_name = _strip_newlines(context.target)
 
     issues = _gh_api_get_all_pages(
         owner, gh_repo_name, "issues", token,
@@ -1327,24 +1342,30 @@ def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionRe
     issue_id = f"github-{gh_number}"
     title = oldest.get("title", f"GitHub Issue #{gh_number}")
     body = oldest.get("body") or ""
-    gh_url = (oldest.get("html_url", "") or "").replace("\n", "").replace("\r", "")
-    gh_labels = [l.get("name", "") for l in oldest.get("labels", [])]
-    issue_type = _git_issue_type_from_labels(oldest.get("labels", []))
+    gh_url = _strip_newlines(oldest.get("html_url", "") or "")
+    gh_labels = [_strip_newlines(l.get("name", "")) for l in oldest.get("labels", [])]
+    issue_type = _strip_newlines(_git_issue_type_from_labels(oldest.get("labels", [])))
 
-    create_issue(
-        target_dir,
-        issue_data={
-            "id": issue_id,
-            "status": "open",
-            "source": "github",
-            "type": issue_type,
-            "repo": repo_name,
-            "labels": gh_labels,
-            "github_number": gh_number,
-            "github_url": gh_url,
-        },
-        body=f"# {title}\n\n{body}",
-    )
+    try:
+        create_issue(
+            target_dir,
+            issue_data={
+                "id": issue_id,
+                "status": "open",
+                "source": "github",
+                "type": issue_type,
+                "repo": repo_name,
+                "labels": gh_labels,
+                "github_number": gh_number,
+                "github_url": gh_url,
+            },
+            body=f"# {title}\n\n{body}",
+        )
+    except ValueError as exc:
+        return ActionResult(
+            success=False,
+            stderr=f"Failed to create issue from GitHub data: {exc}",
+        )
 
     write_json_atomic(session_path, {
         "active": True,
