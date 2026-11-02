@@ -491,6 +491,31 @@ class TestInitializeRepoScript:
         assert ir.run(["echo", "hi"]) == 0
         assert ir.run(["echo", "hi"], cwd="/tmp") == 0
 
+    def test_run_sets_git_terminal_prompt_env_and_timeout(self, monkeypatch):
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured.update(kwargs)
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(ir.subprocess, "run", fake_run)
+        assert ir.run(["echo", "hi"]) == 0
+        assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+        assert captured["timeout"] == 600
+        assert captured["check"] is True
+
+    def test_run_raises_and_reports_on_timeout(self, monkeypatch, capsys):
+        def fake_run(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+        monkeypatch.setattr(ir.subprocess, "run", fake_run)
+        with pytest.raises(subprocess.TimeoutExpired):
+            ir.run(["git", "clone", "url", "dest"])
+        err = capsys.readouterr().err
+        assert "timed out after 600s" in err
+        assert "git clone url dest" in err
+
     def test_lookup_registry_entry_missing_file(self, tmp_path):
         assert ir.lookup_registry_entry(tmp_path / "nope.json", "myrepo") == {}
 

@@ -87,8 +87,15 @@ def derive_repo_name(git_url: str) -> str:
     return name
 
 
-def run(cmd: list[str], cwd: str | None = None, check: bool = True) -> int:
+def run(cmd: list[str], cwd: str | None = None, check: bool = True,
+        timeout: float | None = 600) -> int:
     """Run a subprocess command and return its exit code.
+
+    Every external command (git clone, venv creation, pip installs) runs with
+    a timeout so a stalled network, a hanging pip resolver, or a credential
+    prompt cannot block the pipeline indefinitely.  ``GIT_TERMINAL_PROMPT`` is
+    forced to ``"0"`` so an unattended ``git clone`` fails fast instead of
+    waiting on an invisible username/password prompt.
 
     :param cmd: The command and arguments to run (list of strings).
     :type cmd: list
@@ -96,13 +103,23 @@ def run(cmd: list[str], cwd: str | None = None, check: bool = True) -> int:
     :type cwd: str or None
     :param check: If True, raise on a non-zero exit code.
     :type check: bool
+    :param timeout: Maximum seconds to wait for the command, or None to wait
+        forever.  Defaults to 600 seconds.
+    :type timeout: float or None
     :returns: The command's return code.
     :rtype: int
     :raises subprocess.CalledProcessError: If ``check`` is True and the
         command exits with a non-zero status.
+    :raises subprocess.TimeoutExpired: If the command does not finish within
+        ``timeout`` seconds.
     """
     print(f"$ {' '.join(cmd)}" + (f"  (cwd={cwd})" if cwd else ""))
-    result = subprocess.run(cmd, cwd=cwd, check=check)
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        result = subprocess.run(cmd, cwd=cwd, check=check, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        print(f"ERROR: command timed out after {timeout}s: {' '.join(cmd)}", file=sys.stderr)
+        raise
     return result.returncode
 
 
