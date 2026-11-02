@@ -1312,3 +1312,108 @@ class TestStageStateRederiveResets:
         state.derive(tmp_path)
         assert state.is_processing is False
         assert state.is_stale is False
+
+    def _completion_stage(self) -> Stage:
+        return Stage(
+            id="A0",
+            name="Onboarding",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={"completion": MarkerSpec(name="done.md", type=MarkerType.FILE)},
+        )
+
+    def test_is_complete_reset_on_rederive_when_completion_removed(self, tmp_path):
+        """is_complete must clear when the completion marker is removed."""
+        stage = self._completion_stage()
+        (tmp_path / "done.md").touch()
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_complete is True
+
+        delete_marker(stage.markers["completion"], tmp_path)
+        state.derive(tmp_path)
+        assert state.is_complete is False
+
+    def test_is_given_up_reset_on_rederive_when_give_up_removed(self, tmp_path):
+        """is_given_up must clear when the give_up marker is removed."""
+        stage = Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "give_up": MarkerSpec(name=".gave_up", type=MarkerType.FILE),
+            },
+        )
+        (tmp_path / ".gave_up").touch()
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_given_up is True
+
+        delete_marker(stage.markers["give_up"], tmp_path)
+        state.derive(tmp_path)
+        assert state.is_given_up is False
+
+    def test_is_processing_reset_on_rederive_when_processing_removed(self, tmp_path):
+        """is_processing must clear when the processing marker is removed."""
+        stage = self._processing_stage()
+        create_marker(stage.markers["processing"], tmp_path)
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+
+        delete_marker(stage.markers["processing"], tmp_path)
+        state.derive(tmp_path)
+        assert state.is_processing is False
+
+    def test_processing_age_seconds_reset_on_rederive_when_processing_removed(self, tmp_path):
+        """processing_age_seconds must clear to None when the processing marker is removed."""
+        stage = self._processing_stage()
+        create_marker(stage.markers["processing"], tmp_path)
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert isinstance(state.processing_age_seconds, float)
+
+        delete_marker(stage.markers["processing"], tmp_path)
+        state.derive(tmp_path)
+        assert state.is_processing is False
+        assert state.processing_age_seconds is None
+
+    def test_boolean_flags_reset_when_marker_roles_absent_from_stage(self, tmp_path):
+        """is_complete/is_processing/is_given_up must clear when the re-derived
+        stage has none of those marker roles (role absent from stage config)."""
+        stage = Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "give_up": MarkerSpec(name=".gave_up", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+        (tmp_path / "done.md").touch()
+        (tmp_path / ".gave_up").touch()
+        create_marker(stage.markers["processing"], tmp_path)
+
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_complete is True
+        assert state.is_given_up is True
+        assert state.is_processing is True
+
+        stage_without_markers = Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={"completion_signal": MarkerSpec(name="signal.md", type=MarkerType.FILE)},
+        )
+        state.stage = stage_without_markers
+        state.derive(tmp_path)
+        assert state.is_complete is False
+        assert state.is_given_up is False
+        assert state.is_processing is False
