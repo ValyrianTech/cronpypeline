@@ -1327,7 +1327,7 @@ def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionRe
     issue_id = f"github-{gh_number}"
     title = oldest.get("title", f"GitHub Issue #{gh_number}")
     body = oldest.get("body") or ""
-    gh_url = oldest.get("html_url", "")
+    gh_url = (oldest.get("html_url", "") or "").replace("\n", "").replace("\r", "")
     gh_labels = [l.get("name", "") for l in oldest.get("labels", [])]
     issue_type = _git_issue_type_from_labels(oldest.get("labels", []))
 
