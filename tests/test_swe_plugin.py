@@ -6916,6 +6916,105 @@ class TestLoadGithubTokenDotenvFallback:
             assert _load_github_token({}) is None
 
 
+class TestEnvFileUnreadable:
+    def test_non_utf8_env_stdlib_parser_returns_none(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        (swe_dir / ".env").write_bytes(b"\xff\xfe")
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_github_token({}) is None
+
+    def test_non_utf8_env_dotenv_unicode_decode_error_returns_none(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        (swe_dir / ".env").write_bytes(b"\xff\xfe")
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+
+        import types
+        dotenv_mod = types.ModuleType("dotenv")
+
+        def dotenv_values(env_file):
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        dotenv_mod.dotenv_values = dotenv_values
+        with patch.dict("sys.modules", {"dotenv": dotenv_mod}):
+            assert _load_github_token({}) is None
+
+    def test_non_utf8_env_dotenv_permission_error_returns_none(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        (swe_dir / ".env").write_bytes(b"\xff\xfe")
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+
+        import types
+        dotenv_mod = types.ModuleType("dotenv")
+
+        def dotenv_values(env_file):
+            raise PermissionError("Permission denied")
+
+        dotenv_mod.dotenv_values = dotenv_values
+        with patch.dict("sys.modules", {"dotenv": dotenv_mod}):
+            assert _load_github_token({}) is None
+
+    def test_parse_env_file_permission_error_returns_empty_dict(self, tmp_path):
+        env_file = tmp_path / ".env"
+        with patch.object(Path, "read_text", side_effect=PermissionError("Permission denied")):
+            assert _parse_env_file(env_file) == {}
+
+    def test_unreadable_env_returns_none(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SWE_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        (swe_dir / ".env").write_text("SWE_GITHUB_TOKEN=secret\n")
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        with patch.dict("sys.modules", {"dotenv": None}), patch.object(Path, "read_text", side_effect=PermissionError("Permission denied")):
+            assert _load_github_token({}) is None
+
+    def test_unreadable_env_env_var_still_wins(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("SWE_ENV_FILE", raising=False)
+        from cronpypeline.plugins import swe_plugin
+        swe_dir = tmp_path / "workspace" / "tasks" / "x"
+        swe_dir.mkdir(parents=True)
+        (swe_dir / ".env").write_text("SWE_GITHUB_TOKEN=secret\n")
+        monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "env-token")
+        with patch.dict("sys.modules", {"dotenv": None}), patch.object(Path, "read_text", side_effect=PermissionError("Permission denied")):
+            assert _load_github_token({}) == "env-token"
+
+    def test_load_env_token_non_utf8_returns_none(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_bytes(b"\xff\xfe")
+        with patch.dict("sys.modules", {"dotenv": None}):
+            assert _load_env_token(env_file, ("SWE_GITHUB_TOKEN",)) is None
+
+    def test_load_env_token_dotenv_happy_path(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("SWE_GITHUB_TOKEN=dotenv-token\n", encoding="utf-8")
+
+        import types
+        dotenv_mod = types.ModuleType("dotenv")
+        dotenv_mod.dotenv_values = lambda p: {"SWE_GITHUB_TOKEN": "ok"}
+        with patch.dict("sys.modules", {"dotenv": dotenv_mod}):
+            assert _load_env_token(env_file, ("SWE_GITHUB_TOKEN",)) == "ok"
+
+
 # ─── run_c_pr_status review branches ────────────────────────────────────────
 
 

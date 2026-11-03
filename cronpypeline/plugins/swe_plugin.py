@@ -840,11 +840,17 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     entries whose key is a valid environment-variable name
     (``^[A-Za-z_][A-Za-z0-9_]*$``).
 
+    An unreadable or non-UTF-8 file yields an empty dict.
+
     :param path: Path to the .env file.
     :returns: Dict mapping environment-variable names to values.
     """
     values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -865,7 +871,9 @@ def _load_env_token(env_file: Path, keys: tuple[str, ...]) -> str | None:
 
     Uses ``dotenv_values`` from python-dotenv if available, otherwise falls
     back to :func:`_parse_env_file`.  Returns the first truthy (post-strip)
-    value among ``keys``, in order, or None if none is present.
+    value among ``keys``, in order, or None if none is present.  This is a
+    best-effort convenience layer: an unreadable or non-UTF-8 ``.env`` file is
+    treated as having no matching value rather than raising.
 
     :param env_file: Path to the .env file.
     :param keys: Environment-variable names to look for, in priority order.
@@ -876,6 +884,8 @@ def _load_env_token(env_file: Path, keys: tuple[str, ...]) -> str | None:
         values = dotenv_values(env_file)
     except ImportError:
         values = _parse_env_file(env_file)
+    except (OSError, UnicodeDecodeError):
+        values = {}
     for key in keys:
         val = values.get(key)
         if val is None:
