@@ -6983,9 +6983,8 @@ class TestEnvFileUnreadable:
         swe_dir.mkdir(parents=True)
         (swe_dir / ".env").write_text("SWE_GITHUB_TOKEN=secret\n")
         monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
-        with patch.dict("sys.modules", {"dotenv": None}):
-            with patch.object(Path, "read_text", side_effect=PermissionError("Permission denied")):
-                assert _load_github_token({}) is None
+        with patch.dict("sys.modules", {"dotenv": None}), patch.object(Path, "read_text", side_effect=PermissionError("Permission denied")):
+            assert _load_github_token({}) is None
 
     def test_unreadable_env_env_var_still_wins(self, tmp_path, monkeypatch):
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -6996,9 +6995,8 @@ class TestEnvFileUnreadable:
         (swe_dir / ".env").write_text("SWE_GITHUB_TOKEN=secret\n")
         monkeypatch.setattr(swe_plugin, "SWE_WORKSPACE_DIR", swe_dir)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "env-token")
-        with patch.dict("sys.modules", {"dotenv": None}):
-            with patch.object(Path, "read_text", side_effect=PermissionError("Permission denied")):
-                assert _load_github_token({}) == "env-token"
+        with patch.dict("sys.modules", {"dotenv": None}), patch.object(Path, "read_text", side_effect=PermissionError("Permission denied")):
+            assert _load_github_token({}) == "env-token"
 
     def test_load_env_token_non_utf8_returns_none(self, tmp_path):
         env_file = tmp_path / ".env"
