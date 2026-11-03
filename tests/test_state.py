@@ -1417,3 +1417,79 @@ class TestStageStateRederiveResets:
         assert state.is_complete is False
         assert state.is_given_up is False
         assert state.is_processing is False
+
+
+class TestStageStateNonDictJsonMarkers:
+    """JSON markers whose decoded value is not a dict must not crash derivation.
+
+    ``read_marker`` for JSON markers returns ``json.loads(...)``, which can be
+    any JSON value (int, float, str, list, bool, null). These tests ensure the
+    state derivation tolerates non-dict content by treating it as absent.
+    """
+
+    def _processing_stage(self, timeout_minutes: int = 30) -> Stage:
+        return Stage(
+            id="A0",
+            name="Agent",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            timeout_minutes=timeout_minutes,
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "processing": MarkerSpec(name=".processing", type=MarkerType.JSON, content={}),
+            },
+        )
+
+    def _rejection_stage(self) -> Stage:
+        return Stage(
+            id="A0",
+            name="Review",
+            trigger=TriggerCondition(type=TriggerType.FILE_MISSING, path="done.md"),
+            action=ActionSpec(type=ActionType.COMMAND, params={"command": "echo hi"}),
+            markers={
+                "completion": MarkerSpec(name="done.md", type=MarkerType.FILE),
+                "rejection": MarkerSpec(name=".rejection", type=MarkerType.JSON, content={}),
+            },
+        )
+
+    def test_processing_marker_non_dict_int(self, tmp_path):
+        """A JSON int processing marker leaves processing_data None and retry_count 0."""
+        stage = self._processing_stage()
+        (tmp_path / ".processing").write_text("123")
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.processing_data is None
+        assert state.retry_count == 0
+
+    def test_processing_marker_non_dict_list(self, tmp_path):
+        """A JSON list processing marker leaves processing_data None."""
+        stage = self._processing_stage()
+        (tmp_path / ".processing").write_text("[1, 2, 3]")
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.processing_data is None
+        assert state.retry_count == 0
+
+    def test_rejection_marker_non_dict_string(self, tmp_path):
+        """A JSON string rejection marker leaves rejection_count 0 but is_rejected True."""
+        stage = self._rejection_stage()
+        (tmp_path / ".rejection").write_text('"foo"')
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_rejected is True
+        assert state.rejection_count == 0
+
+    def test_processing_marker_non_dict_stale(self, tmp_path):
+        """A non-dict processing marker past timeout is still marked stale."""
+        stage = self._processing_stage(timeout_minutes=30)
+        proc_path = tmp_path / ".processing"
+        proc_path.write_text("123")
+        old_time = time.time() - 3600
+        os.utime(proc_path, (old_time, old_time))
+        state = StageState(stage=stage)
+        state.derive(tmp_path)
+        assert state.is_processing is True
+        assert state.processing_data is None
+        assert state.is_stale is True

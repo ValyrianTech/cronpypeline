@@ -94,7 +94,7 @@ class StageState:
                 self.is_rejected = rej_exists
             if rej_exists:
                 rej_data = read_marker(markers["rejection"], base_dir, context=ctx)
-                if rej_data and "rejection_count" in rej_data:
+                if isinstance(rej_data, dict) and "rejection_count" in rej_data:
                     self.rejection_count = rej_data["rejection_count"]
 
         # Processing check
@@ -102,8 +102,8 @@ class StageState:
             self.is_processing = marker_exists(markers["processing"], base_dir, context=ctx)
             if self.is_processing:
                 data = read_marker(markers["processing"], base_dir, context=ctx)
-                self.processing_data = data
-                if data and "retry_count" in data:
+                self.processing_data = data if isinstance(data, dict) else None
+                if isinstance(data, dict) and "retry_count" in data:
                     self.retry_count = data["retry_count"]
 
                 # Compute the processing marker age once for all processing
@@ -120,7 +120,7 @@ class StageState:
                 # but didn't produce completion → immediately stale.
                 # Exception: reminder files in the queue directory mean the agent
                 # was cut off and is being restarted by the reminder system.
-                if data and "queue_file" in data and not _P(data["queue_file"]).exists():
+                if isinstance(data, dict) and "queue_file" in data and not _P(data["queue_file"]).exists():
                     queue_dir = _P(data["queue_file"]).parent
                     has_reminder = (
                         queue_dir.exists()
