@@ -813,7 +813,8 @@ class Pipeline:
                         if "rejection" in ss.stage.markers:
                             rej_spec = ss.stage.markers["rejection"]
                             if rej_spec.type == MarkerType.JSON:
-                                rej_data = read_marker(rej_spec, target_dir, context=marker_ctx) or {}
+                                _rej = read_marker(rej_spec, target_dir, context=marker_ctx)
+                                rej_data = _rej if isinstance(_rej, dict) else {}
                                 rej_data["rejection_count"] = ss.rejection_count + 1
                                 create_marker(replace(rej_spec, content=rej_data), target_dir, context=marker_ctx)
                             else:
@@ -907,7 +908,7 @@ class Pipeline:
         if stage.action.type == ActionType.QUEUE_AGENT and "processing" in stage.markers:
             # Preserve retry count if re-queueing
             retry_count = 0
-            if stage_state.processing_data and "retry_count" in stage_state.processing_data:
+            if isinstance(stage_state.processing_data, dict) and "retry_count" in stage_state.processing_data:
                 retry_count = stage_state.processing_data["retry_count"]
             processing_spec = replace(stage.markers["processing"], content={
                 **stage.markers["processing"].content,
