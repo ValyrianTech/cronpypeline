@@ -2455,13 +2455,20 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
     if not pr_marker.exists():
         return ActionResult(success=False, stderr="PR marker file not found")
-    pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
-    pr_number = pr_data["pr_number"]
+    try:
+        pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ActionResult(success=False, stderr="Failed to read PR marker")
+    pr_number = pr_data.get("pr_number")
+    if not pr_number:
+        return ActionResult(success=False, stderr="PR marker missing pr_number")
 
     token = _load_github_token(target_config)
     if token is None:
         return ActionResult(success=False, stderr="No GitHub token configured")
     slug = (target_config.get("slug") or "").strip()
+    if "/" not in slug:
+        return ActionResult(success=False, stderr=f"Invalid slug: {slug}")
     owner, gh_repo_name = slug.split("/", 1)
 
     # Fetch PR info
@@ -4081,8 +4088,15 @@ def run_c_pr_review(action: ActionSpec, context: TickContext) -> ActionResult:
     sha = integration_head_sha(target_dir, default_branch)
 
     pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
-    pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
-    pr_number = pr_data["pr_number"]
+    if not pr_marker.exists():
+        return ActionResult(success=False, stderr="PR marker file not found")
+    try:
+        pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ActionResult(success=False, stderr="Failed to read PR marker")
+    pr_number = pr_data.get("pr_number")
+    if not pr_number:
+        return ActionResult(success=False, stderr="PR marker missing pr_number")
     pr_cycles = pr_data.get("pr_review_cycles", 0)
     max_cycles = target_config.get("max_pr_review_cycles", MAX_PR_REVIEW_CYCLES)
 
@@ -4090,6 +4104,8 @@ def run_c_pr_review(action: ActionSpec, context: TickContext) -> ActionResult:
         return ActionResult(success=False, stderr="Failed to determine integration head SHA")
 
     slug = (target_config.get("slug") or "").strip()
+    if "/" not in slug:
+        return ActionResult(success=False, stderr=f"Invalid slug: {slug}")
     owner, gh_repo_name = slug.split("/", 1)
 
     prompt = _build_pr_review_prompt(

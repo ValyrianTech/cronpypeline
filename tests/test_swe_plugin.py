@@ -4251,11 +4251,12 @@ class TestRunCPrReview:
         assert result.success is True
         assert result.dry_run is True
 
-    def test_no_pr_marker_raises_error(self, tmp_path):
+    def test_no_pr_marker_returns_failure(self, tmp_path):
         target = _make_target_dir(tmp_path)
         ctx = _make_tick_context(target, slug="owner/repo")
-        with pytest.raises(FileNotFoundError):
-            run_c_pr_review(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        result = run_c_pr_review(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "PR marker file not found"
 
     def test_no_sha_returns_failure(self, tmp_path):
         target = _make_target_dir(tmp_path)
@@ -5394,13 +5395,83 @@ class TestRunCPrStatusNoToken:
 
 
 class TestRunCPrStatusNoSlug:
-    def test_no_slug_raises_error(self, tmp_path, monkeypatch):
+    def test_no_slug_returns_failure(self, tmp_path, monkeypatch):
         target = _make_target_dir(tmp_path)
         monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
         (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
         ctx = _make_tick_context(target)
-        with pytest.raises(ValueError):
-            run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "Invalid slug: "
+
+
+class TestRunCPrGuardedMarkerAndSlug:
+    def test_status_corrupt_marker_returns_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text("bad json")
+        ctx = _make_tick_context(target, slug="owner/repo")
+        result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "Failed to read PR marker"
+
+    def test_status_missing_pr_number_returns_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_state": "open"}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "PR marker missing pr_number"
+
+    def test_status_zero_pr_number_returns_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 0}))
+        ctx = _make_tick_context(target, slug="owner/repo")
+        result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "PR marker missing pr_number"
+
+    def test_status_no_slash_slug_returns_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        ctx = _make_tick_context(target, slug="no-slash")
+        result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "Invalid slug: no-slash"
+
+    def test_review_corrupt_marker_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "pr_published.json").write_text("bad json")
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        result = run_c_pr_review(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "Failed to read PR marker"
+
+    def test_review_missing_pr_number_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_state": "open"}))
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        result = run_c_pr_review(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "PR marker missing pr_number"
+
+    def test_review_no_slash_slug_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        ctx = _make_tick_context(target, slug="no-slash", default_branch="main")
+        result = run_c_pr_review(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "Invalid slug: no-slash"
 
 
 class TestRunCPrStatusPrFetchError:
