@@ -11,6 +11,7 @@ import errno
 import fnmatch
 import http.client
 import ipaddress
+import logging
 import os
 import re
 import shlex
@@ -34,6 +35,9 @@ from cronpypeline.template_safety import (
     validate_template_fields,
 )
 from cronpypeline.triggers import resolve_custom_callable
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -313,16 +317,16 @@ def _validate_ssrf(url: str, params: dict) -> tuple[list[str] | None, str | None
     """Validate a URL against SSRF protections.
 
     Returns a tuple of (validated_ips, error_message). On success, validated_ips
-    is a list of resolved public IP addresses (or None if ``pin_to_validated_ips``
-    is disabled, meaning the connection is not pinned) and error_message is None.
-    On failure, validated_ips is None and error_message describes the failure.
+    is always a non-empty list of resolved public IP addresses (never None) and
+    error_message is None. On failure, validated_ips is None and error_message
+    describes the failure.
 
     DNS resolution and private-IP validation always run to prevent SSRF. The
-    ``pin_to_validated_ips`` option only controls whether the connection is pinned
-    to the validated public IPs (to prevent DNS rebinding) or left to normal DNS
-    resolution at connection time. Private IPs are always blocked. The old name
-    ``resolve_private_ip`` is a deprecated alias for backward compatibility; when
-    both are present, ``pin_to_validated_ips`` takes precedence.
+    connection is always pinned to the validated public IPs to prevent DNS
+    rebinding. The ``pin_to_validated_ips`` and ``resolve_private_ip`` params are
+    deprecated no-ops kept only for backward compatibility: they can no longer
+    disable pinning. If either is present and explicitly set to a falsey value, a
+    warning is logged (but pinning still applies). Private IPs are always blocked.
     """
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname
@@ -341,10 +345,20 @@ def _validate_ssrf(url: str, params: dict) -> tuple[list[str] | None, str | None
     if blocked_hosts and any(_host_matches(host, pattern) for pattern in blocked_hosts):
         return None, f"Host blocked: {host!r}"
 
-    # DNS resolution and private-IP validation always run to prevent SSRF.
-    # pin_to_validated_ips (formerly resolve_private_ip) only controls whether
-    # the connection is pinned to the validated public IPs (to prevent DNS
-    # rebinding) or left to normal DNS.
+    # Warn if a deprecated param explicitly tries to disable pinning. Pinning is
+    # always applied regardless; the params are accepted only for compatibility.
+    for param_name in ("pin_to_validated_ips", "resolve_private_ip"):
+        if param_name in params and _as_bool(params[param_name]) is False:
+            logger.warning(
+                "Disabling validated-IP pinning via %r is no longer supported; "
+                "connections are always pinned to the validated IPs to prevent "
+                "DNS rebinding",
+                param_name,
+            )
+
+    # DNS resolution and private-IP validation always run to prevent SSRF. The
+    # connection is always pinned to the validated public IPs (to prevent DNS
+    # rebinding).
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
@@ -355,14 +369,8 @@ def _validate_ssrf(url: str, params: dict) -> tuple[list[str] | None, str | None
         if _is_private_ip(ip):
             return None, f"SSRF blocked: host {host!r} resolves to private IP {ip!r}"
         public_ips.append(ip)
-    # All resolved IPs are public.
-    if "pin_to_validated_ips" in params:
-        pin = params["pin_to_validated_ips"]
-    else:
-        pin = params.get("resolve_private_ip", True)
-    if _as_bool(pin) and public_ips:
-        return public_ips, None
-    return None, None
+    # All resolved IPs are public; always pin the connection to them.
+    return public_ips, None
 
 
 class _DefaultTimeout:
@@ -432,6 +440,15 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
         except OSError as e:
             if e.errno != errno.ENOPROTOOPT:
                 raise
+        # Defense in depth: re-validate the actually-connected peer IP so a DNS
+        # rebind that slipped past validation cannot connect to a private IP.
+        # Only reject a private/reserved peer that was not already explicitly
+        # validated (validated IPs are public in production).
+        peer = self.sock.getpeername()
+        peer_ip = str(peer[0]).split("%", 1)[0]
+        if _is_private_ip(peer_ip) and peer_ip not in (self._validated_ips or []):
+            self.sock.close()
+            raise ConnectionError(f"SSRF blocked: connected peer IP {peer_ip!r} is private and was not validated")
 
     def set_tunnel(self, *args: Any, **kwargs: Any) -> None:
         """Reject proxy tunnelling for the pinned SSRF connection.
@@ -497,6 +514,15 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         except OSError as e:
             if e.errno != errno.ENOPROTOOPT:
                 raise
+        # Defense in depth: re-validate the raw socket peer IP before wrapping
+        # it in TLS so a DNS rebind cannot connect to a private IP. Only reject
+        # a private/reserved peer that was not already explicitly validated
+        # (validated IPs are public in production).
+        peer = self.sock.getpeername()
+        peer_ip = str(peer[0]).split("%", 1)[0]
+        if _is_private_ip(peer_ip) and peer_ip not in (self._validated_ips or []):
+            self.sock.close()
+            raise ConnectionError(f"SSRF blocked: connected peer IP {peer_ip!r} is private and was not validated")
         # SNI and certificate validation use the original hostname (no proxy tunnel).
         self.sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
 
@@ -1114,8 +1140,11 @@ class HttpRequestActionHandler(ActionHandler):
 
         :param action: Action spec with ``url``, ``method``, ``headers``, ``body``,
             and auth params. SSRF protection is controlled by the optional
-            ``allowed_hosts``, ``blocked_hosts``, and ``pin_to_validated_ips``
-            params (``resolve_private_ip`` is a deprecated alias).
+            ``allowed_hosts`` and ``blocked_hosts`` params. The connection is
+            always pinned to the validated public IPs to prevent DNS rebinding;
+            ``pin_to_validated_ips`` (and its deprecated alias
+            ``resolve_private_ip``) are accepted only for backward compatibility
+            and can no longer disable pinning.
         :param context: Tick context for auth token resolution from env.
         :returns: Result with response body, status code, and request metadata.
         """

@@ -2,6 +2,7 @@
 
 import errno
 import http.server
+import logging
 import signal
 import socket
 import ssl
@@ -2883,10 +2884,14 @@ class TestPinnedConnectionLiveServer:
         assert err is None
         assert ips == ["93.184.216.34", "93.184.216.35"]
 
-    def test_validate_ssrf_returns_none_ip_when_disabled(self):
-        ip, err = _validate_ssrf("http://93.184.216.34/", {"pin_to_validated_ips": False})
+    def test_validate_ssrf_still_returns_ips_when_disabled(self):
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ):
+            ip, err = _validate_ssrf("http://93.184.216.34/", {"pin_to_validated_ips": False})
         assert err is None
-        assert ip is None
+        assert ip == ["93.184.216.34"]
 
     def test_validate_ssrf_blocks_private_ip_when_disabled(self):
         ip, err = _validate_ssrf("http://127.0.0.1/", {"pin_to_validated_ips": False})
@@ -2894,19 +2899,23 @@ class TestPinnedConnectionLiveServer:
         assert ip is None
         assert "SSRF blocked" in err
 
-    def test_validate_ssrf_deprecated_alias_disables_pinning(self):
-        ip, err = _validate_ssrf("http://93.184.216.34/", {"resolve_private_ip": False})
+    def test_validate_ssrf_deprecated_alias_does_not_disable_pinning(self):
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ):
+            ip, err = _validate_ssrf("http://93.184.216.34/", {"resolve_private_ip": False})
         assert err is None
-        assert ip is None
+        assert ip == ["93.184.216.34"]
 
-    def test_validate_ssrf_deprecated_alias_hostname_returns_none(self):
+    def test_validate_ssrf_deprecated_alias_hostname_returns_ips(self):
         with patch(
             "cronpypeline.actions.socket.getaddrinfo",
             return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
         ):
             ip, err = _validate_ssrf("http://example.com/", {"resolve_private_ip": False})
         assert err is None
-        assert ip is None
+        assert ip == ["93.184.216.34"]
 
     def test_validate_ssrf_deprecated_alias_still_blocks_private(self):
         ip, err = _validate_ssrf("http://127.0.0.1/", {"resolve_private_ip": False})
@@ -2914,13 +2923,17 @@ class TestPinnedConnectionLiveServer:
         assert ip is None
         assert "SSRF blocked" in err
 
-    def test_validate_ssrf_new_name_takes_precedence_over_alias(self):
-        ip, err = _validate_ssrf(
-            "http://93.184.216.34/",
-            {"pin_to_validated_ips": False, "resolve_private_ip": True},
-        )
+    def test_validate_ssrf_returns_ips_when_both_params_false(self):
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ):
+            ip, err = _validate_ssrf(
+                "http://93.184.216.34/",
+                {"pin_to_validated_ips": False, "resolve_private_ip": True},
+            )
         assert err is None
-        assert ip is None
+        assert ip == ["93.184.216.34"]
 
     def test_validate_ssrf_new_name_true_takes_precedence_over_alias_false(self):
         with patch(
@@ -2960,7 +2973,7 @@ class TestPinnedConnectionLiveServer:
         req = mock_urlopen.call_args[0][0]
         assert req._validated_ips == ["93.184.216.34"]
 
-    def test_execute_does_not_set_validated_ip_when_disabled(self, tmp_path):
+    def test_execute_sets_validated_ip_even_when_disabled(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={"url": "http://93.184.216.34/api", "method": "GET", "pin_to_validated_ips": False},
@@ -2974,14 +2987,17 @@ class TestPinnedConnectionLiveServer:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
         req = mock_urlopen.call_args[0][0]
-        assert req._validated_ips is None
+        assert req._validated_ips == ["93.184.216.34"]
 
-    def test_execute_deprecated_alias_resolve_private_ip(self, tmp_path):
+    def test_execute_deprecated_alias_still_pins(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={"url": "http://93.184.216.34/api", "method": "GET", "resolve_private_ip": False},
@@ -2995,12 +3011,15 @@ class TestPinnedConnectionLiveServer:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
         req = mock_urlopen.call_args[0][0]
-        assert req._validated_ips is None
+        assert req._validated_ips == ["93.184.216.34"]
 
     def test_execute_deprecated_alias_still_blocks_private(self, tmp_path):
         action = ActionSpec(
@@ -3017,7 +3036,7 @@ class TestPinnedConnectionLiveServer:
         assert "SSRF blocked" in result.stderr
         mock_urlopen.assert_not_called()
 
-    def test_execute_new_name_takes_precedence_over_alias(self, tmp_path):
+    def test_execute_both_params_false_still_pins(self, tmp_path):
         action = ActionSpec(
             type=ActionType.HTTP_REQUEST,
             params={
@@ -3036,12 +3055,123 @@ class TestPinnedConnectionLiveServer:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ), patch("cronpypeline.actions._HTTP_OPENER.open", return_value=mock_resp) as mock_urlopen:
             result = handler.execute(action, ctx)
 
         assert result.success is True
         req = mock_urlopen.call_args[0][0]
-        assert req._validated_ips is None
+        assert req._validated_ips == ["93.184.216.34"]
+
+
+class TestSsrfPinningRegression:
+    """Regression tests for always-on validated-IP pinning and peer re-checks."""
+
+    def test_dns_rebinding_second_resolution_private_is_rejected(self):
+        public = [("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))]
+        private = [("AF_INET", "SOCK_STREAM", 6, "", ("127.0.0.1", 80))]
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            side_effect=[public, private],
+        ):
+            first_ips, first_err = _validate_ssrf("http://rebind.example.com/", {})
+            second_ips, second_err = _validate_ssrf("http://rebind.example.com/", {})
+        assert first_err is None
+        assert first_ips == ["93.184.216.34"]
+        assert second_err is not None
+        assert "SSRF blocked" in second_err
+        assert second_ips is None
+
+    def test_pinned_connection_rejects_unvalidated_private_peer(self):
+        sock = MagicMock()
+        sock.getpeername.return_value = ("169.254.169.254", 80)
+        conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34"])
+        with patch(
+            "cronpypeline.actions.socket.create_connection",
+            MagicMock(return_value=sock),
+        ):
+            with pytest.raises(ConnectionError, match="is private and was not validated"):
+                conn.connect()
+        sock.close.assert_called_once()
+
+    def test_pinned_https_connection_rejects_unvalidated_private_peer(self):
+        sock = MagicMock()
+        sock.getpeername.return_value = ("127.0.0.1", 443)
+        context = MagicMock()
+        conn = _PinnedHTTPSConnection(
+            "example.com", 443, validated_ips=["93.184.216.34"], context=context
+        )
+        with patch(
+            "cronpypeline.actions.socket.create_connection",
+            MagicMock(return_value=sock),
+        ):
+            with pytest.raises(ConnectionError, match="is private and was not validated"):
+                conn.connect()
+        sock.close.assert_called_once()
+        context.wrap_socket.assert_not_called()
+
+    def test_pinned_connection_allows_validated_private_peer(self):
+        sock = MagicMock()
+        sock.getpeername.return_value = ("127.0.0.1", 80)
+        conn = _PinnedHTTPConnection("localhost", 80, validated_ips=["127.0.0.1"])
+        with patch(
+            "cronpypeline.actions.socket.create_connection",
+            MagicMock(return_value=sock),
+        ):
+            conn.connect()
+        assert conn.sock is sock
+
+    def test_pinned_connection_accepts_public_peer(self):
+        sock = MagicMock()
+        sock.getpeername.return_value = ("93.184.216.34", 80)
+        conn = _PinnedHTTPConnection("example.com", 80, validated_ips=["93.184.216.34"])
+        with patch(
+            "cronpypeline.actions.socket.create_connection",
+            MagicMock(return_value=sock),
+        ):
+            conn.connect()
+        assert conn.sock is sock
+
+    def test_validate_ssrf_warns_when_pinning_disabled(self, caplog):
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ):
+            with caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
+                ips, err = _validate_ssrf("http://example.com/", {"pin_to_validated_ips": False})
+        assert err is None
+        assert ips == ["93.184.216.34"]
+        assert any(
+            "DNS rebinding" in r.message and "pin_to_validated_ips" in r.message
+            for r in caplog.records
+        )
+
+    def test_validate_ssrf_warns_for_deprecated_alias(self, caplog):
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ):
+            with caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
+                ips, err = _validate_ssrf("http://example.com/", {"resolve_private_ip": "false"})
+        assert err is None
+        assert ips == ["93.184.216.34"]
+        assert any(
+            "DNS rebinding" in r.message and "resolve_private_ip" in r.message
+            for r in caplog.records
+        )
+
+    def test_validate_ssrf_no_warning_when_pinning_enabled(self, caplog):
+        with patch(
+            "cronpypeline.actions.socket.getaddrinfo",
+            return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
+        ):
+            with caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
+                _validate_ssrf("http://example.com/", {"pin_to_validated_ips": True})
+                _validate_ssrf("http://example.com/", {})
+        warnings = [r for r in caplog.records if "cronpypeline.actions" in r.name]
+        assert warnings == []
 
 
 class TestIsSensitiveHeader:
