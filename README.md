@@ -451,7 +451,7 @@ The `custom` trigger and the composite `and`/`or` triggers also fail closed: if 
 | `command` | Run a shell command | `command`, `cwd` |
 | `queue_agent` | Drop a file in conversation queue | `agent`, `prompt` or `prompt_template`, `reminder_prompt`, `reminder_prompt_template` |
 | `subprocess` | Run a Python script as subprocess | `script`, `args` |
-| `http_request` | Call an HTTP endpoint | `url`, `method`, `headers`, `body`, `auth_token`, `auth_token_env`, `allowed_hosts`, `blocked_hosts`, `pin_to_validated_ips` |
+| `http_request` | Call an HTTP endpoint | `url`, `method`, `headers`, `body`, `auth_token`, `auth_token_env`, `allowed_hosts`, `blocked_hosts` (the connection is always pinned to the validated public IPs; `pin_to_validated_ips` is a deprecated no-op) |
 | `custom` | User-provided Python callable | `callable` |
 
 **Common fields:**
@@ -800,11 +800,12 @@ DNS resolution and private-IP validation always run (regardless of `pin_to_valid
     "headers": {"Accept": "application/vnd.github+json"},
     "auth_token_env": "GITHUB_TOKEN",
     "allowed_hosts": ["*.github.com"],
-    "blocked_hosts": ["internal.example.com"],
-    "pin_to_validated_ips": true
+    "blocked_hosts": ["internal.example.com"]
   }
 }
 ```
+
+> **Note:** validated-IP pinning can no longer be disabled. Earlier versions accepted a `pin_to_validated_ips` (or, before that, `resolve_private_ip`) param to turn it off; that param is retained only for backward compatibility and is now a no-op (setting it false logs a warning but the connection is still pinned).
 
 The URL reported in the result data (`result.data['url']`) is redacted — userinfo (credentials) and query parameters are removed, and secret-looking URL path segments are redacted — to avoid leaking sensitive information. Path-segment redaction targets two cases: a segment that immediately follows a credential keyword (`bot`, `token`, `key`, `apikey`, `api_key`, `secret`, `password`, `passwd`, `credential`, `auth`), and a segment that looks like an opaque credential (at least 16 characters from `[A-Za-z0-9:_-]` that either contains a colon — e.g. a Telegram bot token `123456:ABC-DEF` — or mixes letters with digits — e.g. a high-entropy API key). Redacted segments are replaced with `***`, while ordinary segments (short paths, all-digit or all-alpha tokens) are preserved. The same redaction now also applies to what is written to the execution log: the `action_command` field (which for `http_request` actions is the redacted URL) and any URL appearing in `stdout`/`stderr` are scrubbed the same way.
 
