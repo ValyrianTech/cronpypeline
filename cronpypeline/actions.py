@@ -206,11 +206,32 @@ _SCRUB_INLINE_RES = (
     re.compile(r"(?i)((?:SWE_GITHUB_TOKEN|GITHUB_TOKEN)\s*[=:]\s*)\S+"),
 )
 
-# Generic ``key=value`` / ``key: value`` pair matcher. The value is redacted
+# Generic ``key=value`` / ``key: value`` pair matchers. The value is redacted
 # only when the key matches the shared fail-closed union credential policy (see
 # :func:`_redact_kv_match`); the negative lookbehind keeps the key from eating a
 # leading fragment of a longer word.
-_SCRUB_KV_RE = re.compile(r"(?<![A-Za-z0-9_.-])(?P<key>[A-Za-z0-9_.-]+)(?P<sep>\s*[=:]\s*)(?P<val>\S+)")
+#
+# The ``=`` and ``:`` separators are matched by two distinct regexes, applied
+# ``=``-first then ``:``, so a credential assignment embedded after a benign
+# ``word: `` prefix is still matched independently (``config: password=abc``
+# redacts ``password=abc``, where a single combined matcher would swallow the
+# whole thing into the non-credential ``config`` value and leak ``abc``). The
+# value capture matches a quoted run (``"..."`` or ``'...'``, redacted as a
+# whole including internal spaces) OR an unquoted run of non-whitespace
+# characters that stops at the trailing punctuation ``,``/``;`` (kept intact so
+# legitimate trailing prose is not swallowed into ``***``). A period ``.`` is
+# deliberately NOT treated as trailing punctuation: secrets frequently contain
+# dots (e.g. ``ghp_abc.def``), and stripping one would leave a leaked fragment
+# after the ``.``. The ``:`` matcher's value still permits ``=`` (so
+# ``token: abc=def`` redacts the whole ``abc=def``); the ``=``-first ordering
+# means an embedded ``credential=value`` is redacted before any enclosing
+# ``word: ...`` value can be considered.
+_SCRUB_KV_EQ_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])(?P<key>[A-Za-z0-9_.-]+)(?P<sep>\s*=\s*)(?P<val>\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+)
+_SCRUB_KV_COLON_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])(?P<key>[A-Za-z0-9_.-]+)(?P<sep>\s*:\s*)(?P<val>\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+)
 
 
 def _redact_kv_match(match: re.Match[str]) -> str:
@@ -225,14 +246,24 @@ def _redact_kv_match(match: re.Match[str]) -> str:
     redacted. Benign keys without a credential substring or word (e.g.
     ``monkey``, ``keychain``) are kept, while keys that merely contain a
     credential substring (e.g. ``tokenizer``) are redacted as an accepted
-    fail-closed over-match. Already-redacted values (``***``) and
+    fail-closed over-match.
+
+    A quoted value (``"..."`` or ``'...'``) is redacted as a whole — the quotes
+    are dropped and the entire quoted content (including internal spaces) is
+    replaced by the placeholder, so an internal space cannot leave a fragment of
+    the secret behind. Already-redacted values (``***``, quoted or unquoted) and
     non-credential keys are returned unchanged so the substitution is
     idempotent.
 
-    :param match: A ``_SCRUB_KV_RE`` match object.
+    :param match: A ``_SCRUB_KV_EQ_RE``/``_SCRUB_KV_COLON_RE`` match object.
     :returns: The original match, or the match with its value redacted.
     """
-    if match.group("val") == _PATH_REDACTION_PLACEHOLDER:
+    val = match.group("val")
+    if len(val) >= 2 and val[0] in "\"'" and val[-1] == val[0]:
+        content = val[1:-1]
+    else:
+        content = val
+    if content == _PATH_REDACTION_PLACEHOLDER:
         return match.group(0)
     if _is_scrubbable_key(match.group("key")):
         return match.group("key") + match.group("sep") + _PATH_REDACTION_PLACEHOLDER
@@ -244,12 +275,21 @@ def _redact_inline_secrets(text: str) -> str:
 
     Applies, in order: (1) ``Authorization``/auth-scheme headers (keeping the
     scheme and redacting the credential), (2) explicit token env-var
-    assignments (``GITHUB_TOKEN``/``SWE_GITHUB_TOKEN``), and (3) generic
-    ``key=value``/``key: value`` pairs whose key matches the shared fail-closed
-    union credential policy (via :func:`_is_scrubbable_key`, the union of the
-    substring and whole-word policies). Redacted secrets are replaced with the
-    ``***`` placeholder. The helper is idempotent: running it twice yields the
-    same result as running it once.
+    assignments (``GITHUB_TOKEN``/``SWE_GITHUB_TOKEN``), (3) generic
+    ``key=value`` pairs (``:func:`_SCRUB_KV_EQ_RE`), and (4) generic
+    ``key: value`` pairs (``:func:`_SCRUB_KV_COLON_RE`), redacting the value only
+    when the key matches the shared fail-closed union credential policy (via
+    :func:`_is_scrubbable_key`, the union of the substring and whole-word
+    policies). Redacted secrets are replaced with the ``***`` placeholder.
+
+    Applying ``=``-separated pairs before ``:``-separated pairs means a
+    credential assignment embedded after a benign ``word: `` prefix is still
+    redacted independently (e.g. ``config: password=abc`` becomes
+    ``config: password=***``) instead of being swallowed into the non-credential
+    prefix's value and leaked. Values stop at whitespace and trailing ``,``/``;``
+    punctuation (preserved), quoted values are redacted whole, and a ``.`` is
+    kept in values because secrets may contain dots. The helper is idempotent:
+    running it twice yields the same result as running it once.
 
     :param text: Arbitrary text that may contain inline credentials.
     :returns: The text with inline credentials redacted.
@@ -257,7 +297,8 @@ def _redact_inline_secrets(text: str) -> str:
     redacted = text
     for pattern in _SCRUB_INLINE_RES:
         redacted = pattern.sub(lambda match: match.group(1) + _PATH_REDACTION_PLACEHOLDER, redacted)
-    return _SCRUB_KV_RE.sub(_redact_kv_match, redacted)
+    redacted = _SCRUB_KV_EQ_RE.sub(_redact_kv_match, redacted)
+    return _SCRUB_KV_COLON_RE.sub(_redact_kv_match, redacted)
 
 
 def scrub_secrets(text: str) -> str:
@@ -278,6 +319,14 @@ def scrub_secrets(text: str) -> str:
     a credential substring or word (e.g. ``monkey``, ``keychain``) are kept,
     while keys that merely contain a credential substring (e.g. ``tokenizer``)
     are redacted as an accepted fail-closed over-match.
+
+    ``=``-separated pairs are matched before ``:``-separated pairs, so a
+    credential assignment after a benign ``word: `` prefix is still redacted
+    independently (``config: password=abc`` -> ``config: password=***``) instead
+    of leaking. Inline values stop at whitespace and trailing ``,``/``;``
+    punctuation (kept intact), quoted values (``"..."``/``'...'``) are redacted
+    as a whole including internal spaces, and a ``.`` is retained in values
+    because secrets often contain dots.
     Redacted secrets are replaced with the ``***`` placeholder. Redaction is
     fail-closed and idempotent (running twice equals running once); the
     returned value is always a string, and inputs with nothing to redact are

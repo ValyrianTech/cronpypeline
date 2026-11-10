@@ -1549,6 +1549,62 @@ class TestScrubSecrets:
         """A plain-text colon with a non-credential word is left unchanged."""
         assert scrub_secrets("see note: this is fine") == "see note: this is fine"
 
+    def test_password_assignment_in_text_redacts_only_value(self):
+        """A bare password=secret in prose redacts the value, keeping trailing text."""
+        assert scrub_secrets("password=secret in text") == "password=*** in text"
+
+    def test_password_assignment_mid_sentence_redacted(self):
+        """A credential assignment mid-sentence redacts only the value."""
+        assert scrub_secrets("the password=s3cr3t is here") == "the password=*** is here"
+
+    def test_credential_assignment_after_non_credential_colon_prefix(self):
+        """A credential assignment after a benign ``word: `` prefix is still redacted."""
+        result = scrub_secrets("config: password=abc other=1")
+        assert "abc" not in result
+        assert "password=***" in result
+
+    def test_password_assignment_after_message_prefix_not_leaked(self):
+        """``message: password=hunter2`` no longer leaks the credential."""
+        assert "hunter2" not in scrub_secrets("message: password=hunter2")
+
+    def test_token_assignment_after_note_prefix_not_leaked(self):
+        """``note: token=abc`` no longer leaks the credential."""
+        result = scrub_secrets("note: token=abc")
+        assert "abc" not in result
+        assert "token=***" in result
+
+    def test_benign_note_colon_prose_unchanged(self):
+        """A benign ``note: this is fine`` (non-credential key) is left unchanged."""
+        assert scrub_secrets("note: this is fine") == "note: this is fine"
+
+    def test_trailing_comma_preserved(self):
+        """Trailing punctuation after a redacted secret is preserved."""
+        result = scrub_secrets("seen password=abc, ok")
+        assert "abc" not in result
+        assert ", ok" in result
+
+    def test_quoted_double_value_redacted_whole(self):
+        """A double-quoted value is redacted as a whole, including internal spaces."""
+        assert "secret" not in scrub_secrets('password="quoted secret"')
+
+    def test_quoted_single_value_redacted_whole(self):
+        """A single-quoted value is redacted as a whole, including internal spaces."""
+        assert "secret" not in scrub_secrets("password='quoted secret'")
+
+    def test_inline_value_capture_idempotent(self):
+        """The new value-capture cases are idempotent."""
+        for text in (
+            "password=secret in text",
+            "the password=s3cr3t is here",
+            "config: password=abc other=1",
+            "message: password=hunter2",
+            "note: token=abc",
+            "seen password=abc, ok",
+            'password="quoted secret"',
+            "password='quoted secret'",
+        ):
+            assert scrub_secrets(scrub_secrets(text)) == scrub_secrets(text)
+
 
 class TestHttpRequestActionHandlerRedaction:
     """Tests for URL redaction in HTTP request handler result data."""
