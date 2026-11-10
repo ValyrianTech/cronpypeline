@@ -30,6 +30,7 @@ from typing import Any, cast
 
 from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.template_safety import (
+    _is_scrubbable_key,
     flatten_target_config,
     matches_credential_key,
     validate_template_fields,
@@ -198,7 +199,7 @@ _SCRUB_URL_RE = re.compile(r"https?://\S+")
 # redaction. The Authorization header pattern keeps the auth scheme (e.g.
 # ``Bearer `` or ``token ``) and redacts the credential that follows. The
 # explicit token env-var pattern handles ``GITHUB_TOKEN``/``SWE_GITHUB_TOKEN``,
-# whose underscore delimiter means the generic whole-word credential check
+# whose underscore delimiter means the generic substring credential check
 # below would not flag the trailing ``token``.
 _SCRUB_INLINE_RES = (
     re.compile(r"(?i)(authorization\s*[:=]\s*\S+\s+)\S+"),
@@ -206,7 +207,7 @@ _SCRUB_INLINE_RES = (
 )
 
 # Generic ``key=value`` / ``key: value`` pair matcher. The value is redacted
-# only when the key matches the shared whole-word credential policy (see
+# only when the key matches the shared fail-closed union credential policy (see
 # :func:`_redact_kv_match`); the negative lookbehind keeps the key from eating a
 # leading fragment of a longer word.
 _SCRUB_KV_RE = re.compile(r"(?<![A-Za-z0-9_.-])(?P<key>[A-Za-z0-9_.-]+)(?P<sep>\s*[=:]\s*)(?P<val>\S+)")
@@ -216,16 +217,24 @@ def _redact_kv_match(match: re.Match[str]) -> str:
     """Redact the value of a credential-looking ``key=value``/``key: value`` pair.
 
     Keeps the key and separator intact and replaces the value with the shared
-    redaction placeholder when the key matches the whole-word credential
-    policy. Already-redacted values (``***``) and non-credential keys are
-    returned unchanged so the substitution is idempotent.
+    redaction placeholder when the key matches the shared fail-closed union
+    credential policy (via :func:`_is_scrubbable_key`, the union of the
+    substring and whole-word policies), so underscore-delimited keys such as
+    ``api_key``, ``client_secret``, ``DB_PASSWORD``, ``AWS_SECRET_ACCESS_KEY``,
+    and ``foo_token`` AND hyphenated header-style keys such as ``X-Api-Key`` are
+    redacted. Benign keys without a credential substring or word (e.g.
+    ``monkey``, ``keychain``) are kept, while keys that merely contain a
+    credential substring (e.g. ``tokenizer``) are redacted as an accepted
+    fail-closed over-match. Already-redacted values (``***``) and
+    non-credential keys are returned unchanged so the substitution is
+    idempotent.
 
     :param match: A ``_SCRUB_KV_RE`` match object.
     :returns: The original match, or the match with its value redacted.
     """
     if match.group("val") == _PATH_REDACTION_PLACEHOLDER:
         return match.group(0)
-    if matches_credential_key(match.group("key"), whole_word=True):
+    if _is_scrubbable_key(match.group("key")):
         return match.group("key") + match.group("sep") + _PATH_REDACTION_PLACEHOLDER
     return match.group(0)
 
@@ -236,10 +245,11 @@ def _redact_inline_secrets(text: str) -> str:
     Applies, in order: (1) ``Authorization``/auth-scheme headers (keeping the
     scheme and redacting the credential), (2) explicit token env-var
     assignments (``GITHUB_TOKEN``/``SWE_GITHUB_TOKEN``), and (3) generic
-    ``key=value``/``key: value`` pairs whose key matches the shared whole-word
-    credential policy. Redacted secrets are replaced with the ``***``
-    placeholder. The helper is idempotent: running it twice yields the same
-    result as running it once.
+    ``key=value``/``key: value`` pairs whose key matches the shared fail-closed
+    union credential policy (via :func:`_is_scrubbable_key`, the union of the
+    substring and whole-word policies). Redacted secrets are replaced with the
+    ``***`` placeholder. The helper is idempotent: running it twice yields the
+    same result as running it once.
 
     :param text: Arbitrary text that may contain inline credentials.
     :returns: The text with inline credentials redacted.
@@ -258,9 +268,16 @@ def scrub_secrets(text: str) -> str:
     userinfo, the query/fragment, and secret-looking path segments). It then
     applies :func:`_redact_inline_secrets` to the result, redacting common
     inline credential patterns: ``Authorization:``/auth-scheme headers, and
-    ``key=value``/``key: value`` pairs whose key matches the shared whole-word
-    credential policy (including ``token``, ``secret``, ``password``,
-    ``api_key``, ``bearer``, ``GITHUB_TOKEN``, and ``SWE_GITHUB_TOKEN``).
+    ``key=value``/``key: value`` pairs whose key matches the shared fail-closed
+    union credential policy (via :func:`_is_scrubbable_key`, the union of the
+    substring and whole-word policies), so underscore-delimited keys such as
+    ``api_key``, ``client_secret``, ``DB_PASSWORD``, ``AWS_SECRET_ACCESS_KEY``,
+    and ``foo_token`` AND hyphenated header-style keys such as ``X-Api-Key`` are
+    redacted (in addition to ``token``, ``secret``, ``password``, ``api_key``,
+    ``bearer``, ``GITHUB_TOKEN``, and ``SWE_GITHUB_TOKEN``). Benign keys without
+    a credential substring or word (e.g. ``monkey``, ``keychain``) are kept,
+    while keys that merely contain a credential substring (e.g. ``tokenizer``)
+    are redacted as an accepted fail-closed over-match.
     Redacted secrets are replaced with the ``***`` placeholder. Redaction is
     fail-closed and idempotent (running twice equals running once); the
     returned value is always a string, and inputs with nothing to redact are

@@ -1497,11 +1497,33 @@ class TestScrubSecrets:
         """An X-Api-Key header-style pair is redacted."""
         assert scrub_secrets("X-Api-Key: abc") == "X-Api-Key: ***"
 
-    def test_benign_key_not_redacted(self):
-        """Benign keys (monkey/keychain/tokenizer) are left unchanged."""
+    def test_benign_key_without_credential_substring_not_redacted(self):
+        """Benign keys without a credential substring (monkey/keychain) are left unchanged."""
         assert scrub_secrets("monkey=banana") == "monkey=banana"
         assert scrub_secrets("keychain=gold") == "keychain=gold"
-        assert scrub_secrets("tokenizer=x") == "tokenizer=x"
+
+    def test_substring_overmatching_key_redacted(self):
+        """Keys containing a credential substring (e.g. tokenizer) are redacted."""
+        assert scrub_secrets("tokenizer=x") == "tokenizer=***"
+
+    def test_underscore_delimited_keys_redacted(self):
+        """Underscore-delimited credential keys are redacted to ***."""
+        assert scrub_secrets("api_key=abc") == "api_key=***"
+        assert scrub_secrets("client_secret=abc") == "client_secret=***"
+        assert scrub_secrets("DB_PASSWORD=abc") == "DB_PASSWORD=***"
+        assert scrub_secrets("AWS_SECRET_ACCESS_KEY=abc") == "AWS_SECRET_ACCESS_KEY=***"
+        assert scrub_secrets("foo_token=abc") == "foo_token=***"
+
+    def test_underscore_delimited_keys_idempotent(self):
+        """Redaction of underscore-delimited keys is idempotent."""
+        for text in (
+            "api_key=abc",
+            "client_secret=abc",
+            "DB_PASSWORD=abc",
+            "AWS_SECRET_ACCESS_KEY=abc",
+            "foo_token=abc",
+        ):
+            assert scrub_secrets(scrub_secrets(text)) == scrub_secrets(text)
 
     def test_env_dump_line_redacted(self):
         """An exported token env var in an env dump line is redacted."""
