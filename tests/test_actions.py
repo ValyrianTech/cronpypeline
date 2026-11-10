@@ -1473,6 +1473,41 @@ class TestScrubSecrets:
         """Authorization token-scheme credentials are redacted, keeping the scheme."""
         assert scrub_secrets("Authorization: token ghp_xyz") == "Authorization: token ***"
 
+    def test_authorization_bare_token_header_redacted(self):
+        """A bare ``Authorization: <credential>`` value (no scheme) is redacted whole."""
+        assert scrub_secrets("Authorization: abc123token") == "Authorization: ***"
+
+    def test_authorization_bare_token_idempotent(self):
+        """Bare-token redaction is idempotent: running twice equals running once."""
+        assert scrub_secrets(scrub_secrets("Authorization: abc123token")) == scrub_secrets("Authorization: abc123token")
+
+    def test_authorization_lowercase_header_scheme_redacted(self):
+        """A lowercase ``authorization`` header keeps the scheme and redacts the credential."""
+        assert scrub_secrets("authorization: Bearer abc123") == "authorization: Bearer ***"
+
+    def test_authorization_equals_separator_scheme_redacted(self):
+        """An ``authorization=`` (equals separator) header keeps the scheme and redacts the credential."""
+        assert scrub_secrets("authorization=Bearer abc123") == "authorization=Bearer ***"
+
+    def test_authorization_basic_scheme_redacted(self):
+        """An ``Authorization: Basic <base64>`` header keeps the Basic scheme and redacts the credential."""
+        assert scrub_secrets("Authorization: Basic dXNlcjpwYXNz") == "Authorization: Basic ***"
+
+    def test_authorization_bare_token_with_trailing_prose_redacted(self):
+        """A bare token followed by prose redacts only the token, leaving the trailing prose intact (no leak)."""
+        assert scrub_secrets("Authorization: abc123token extra words here") == "Authorization: *** extra words here"
+
+    def test_authorization_bare_token_with_trailing_prose_idempotent(self):
+        """Trailing-prose redaction is idempotent: the second run must not redact the prose."""
+        text = "Authorization: abc123token extra words here"
+        assert scrub_secrets(scrub_secrets(text)) == scrub_secrets(text)
+
+    def test_curl_bare_authorization_token_redacted(self):
+        """A bare Authorization token inside a curl command is fully redacted."""
+        text = 'curl -H "Authorization: abc123token" https://api.example.com'
+        assert "abc123token" not in scrub_secrets(text)
+        assert "Authorization: ***" in scrub_secrets(text)
+
     def test_github_token_env_var_redacted(self):
         """Explicit GITHUB_TOKEN env-var assignments are redacted."""
         assert scrub_secrets("GITHUB_TOKEN=xyz") == "GITHUB_TOKEN=***"
