@@ -1640,6 +1640,70 @@ class TestScrubSecrets:
         ):
             assert scrub_secrets(scrub_secrets(text)) == scrub_secrets(text)
 
+    @pytest.mark.parametrize(
+        "key",
+        ["api_key", "client_secret", "DB_PASSWORD", "AWS_SECRET_ACCESS_KEY"],
+    )
+    def test_underscore_delimited_keys_both_separators_redacted(self, key):
+        """Each underscore-delimited key is redacted for both ``=`` and ``:`` separators."""
+        eq_text = f"{key}=s3cr3tvalue"
+        eq_result = scrub_secrets(eq_text)
+        assert eq_result == f"{key}=***"
+        assert "s3cr3tvalue" not in eq_result
+
+        colon_text = f"{key}: s3cr3tvalue"
+        colon_result = scrub_secrets(colon_text)
+        assert colon_result == f"{key}: ***"
+        assert "s3cr3tvalue" not in colon_result
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Api_Key=abc",
+            "CLIENT_SECRET=abc",
+            "db_password=abc",
+            "Aws_Secret_Access_Key=abc",
+        ],
+    )
+    def test_underscore_delimited_keys_case_insensitive_redacted(self, text):
+        """Underscore-delimited credential keys are redacted regardless of letter case."""
+        result = scrub_secrets(text)
+        assert "abc" not in result
+        assert result.endswith("=***")
+
+    def test_multi_key_env_style_block_redacts_all_values(self):
+        """A multi-line env-style block redacts every credential value."""
+        text = (
+            "API_KEY=aaa\n"
+            "CLIENT_SECRET=bbb\n"
+            "DB_PASSWORD=ccc\n"
+            "AWS_SECRET_ACCESS_KEY=ddd"
+        )
+        result = scrub_secrets(text)
+        assert result == (
+            "API_KEY=***\n"
+            "CLIENT_SECRET=***\n"
+            "DB_PASSWORD=***\n"
+            "AWS_SECRET_ACCESS_KEY=***"
+        )
+        for secret in ("aaa", "bbb", "ccc", "ddd"):
+            assert secret not in result
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "password=secret in text",
+            "the password=secret here",
+            "config: password=secret",
+            "note: password=secret ok",
+        ],
+    )
+    def test_password_value_redacted_in_various_prose_contexts(self, text):
+        """The literal ``password=secret`` value is redacted in various prose contexts."""
+        result = scrub_secrets(text)
+        assert "password=***" in result
+        assert "password=secret" not in result
+
 
 class TestHttpRequestActionHandlerRedaction:
     """Tests for URL redaction in HTTP request handler result data."""
