@@ -196,15 +196,51 @@ def _redact_url(url: str) -> str:
 _SCRUB_URL_RE = re.compile(r"https?://\S+")
 
 # Inline credential patterns applied by _redact_inline_secrets AFTER URL
-# redaction. The Authorization header pattern keeps the auth scheme (e.g.
-# ``Bearer `` or ``token ``) and redacts the credential that follows. The
-# explicit token env-var pattern handles ``GITHUB_TOKEN``/``SWE_GITHUB_TOKEN``,
-# whose underscore delimiter means the generic substring credential check
-# below would not flag the trailing ``token``.
+# redaction. Authorization headers are handled FIRST by the dedicated
+# _SCRUB_AUTH_RE pattern (defined below), not by this tuple, so the single
+# Authorization matcher can distinguish a ``<scheme> <credential>`` value from
+# a bare ``<credential>`` value and consume only the credential token. The
+# explicit token env-var pattern here handles ``GITHUB_TOKEN`` /
+# ``SWE_GITHUB_TOKEN``, whose underscore delimiter means the generic substring
+# credential check below would not flag the trailing ``token``.
 _SCRUB_INLINE_RES = (
-    re.compile(r"(?i)(authorization\s*[:=]\s*\S+\s+)\S+"),
     re.compile(r"(?i)((?:SWE_GITHUB_TOKEN|GITHUB_TOKEN)\s*[=:]\s*)\S+"),
 )
+
+# A single Authorization-header matcher, applied BEFORE _SCRUB_INLINE_RES. The
+# optional scheme group matches an alphabetic auth-scheme token (``Bearer``,
+# ``Basic``, ``token``, ...) followed by whitespace and then the credential;
+# when the scheme is absent, the first token is treated as a bare credential
+# and redacted whole. The scheme charset is deliberately limited to letters
+# (plus ``-``) so an opaque credential that mixes letters with digits or
+# underscores (``abc123token``, ``ghp_xyz``) is NOT mistaken for a scheme, and
+# only the credential token is consumed, preserving trailing prose after a bare
+# token (``Authorization: abc123token extra words here`` becomes
+# ``Authorization: *** extra words here``). The placeholder ``***`` starts with
+# ``*``, so it can never match the scheme group and already-redacted values
+# remain idempotent.
+_SCRUB_AUTH_RE = re.compile(
+    r"(?i)(authorization\s*[:=]\s*)(?:(?P<scheme>[A-Za-z][A-Za-z-]*)\s+)?(?P<cred>[^\s\"']+)"
+)
+
+
+def _redact_auth_match(match: re.Match[str]) -> str:
+    """Redact a single ``Authorization`` header match.
+
+    Returns the header key/separator (``group(1)``) followed by either the
+    preserved scheme token plus a space and the placeholder (for the
+    ``Authorization: <scheme> <credential>`` form) or just the placeholder (for
+    the bare ``Authorization: <credential>`` form). Only the credential token is
+    consumed by the match, so trailing prose after a bare token is left intact
+    and the substitution is idempotent.
+
+    :param match: A ``_SCRUB_AUTH_RE`` match object.
+    :returns: The redacted header fragment.
+    """
+    scheme = match.group("scheme")
+    if scheme:
+        return match.group(1) + scheme + " " + _PATH_REDACTION_PLACEHOLDER
+    return match.group(1) + _PATH_REDACTION_PLACEHOLDER
 
 # Generic ``key=value`` / ``key: value`` pair matchers. The value is redacted
 # only when the key matches the shared fail-closed union credential policy (see
@@ -273,9 +309,12 @@ def _redact_kv_match(match: re.Match[str]) -> str:
 def _redact_inline_secrets(text: str) -> str:
     """Redact common inline credential patterns from arbitrary text.
 
-    Applies, in order: (1) ``Authorization``/auth-scheme headers (keeping the
-    scheme and redacting the credential), (2) explicit token env-var
-    assignments (``GITHUB_TOKEN``/``SWE_GITHUB_TOKEN``), (3) generic
+    Applies, in order: (1) ``Authorization`` headers via
+    :func:`_SCRUB_AUTH_RE`, a single pattern handling both the
+    ``Authorization: <scheme> <credential>`` form (scheme token preserved, only
+    the credential redacted) and the bare ``Authorization: <credential>`` form
+    (whole value redacted, trailing prose preserved), (2) explicit token
+    env-var assignments (``GITHUB_TOKEN``/``SWE_GITHUB_TOKEN``), (3) generic
     ``key=value`` pairs (``:func:`_SCRUB_KV_EQ_RE`), and (4) generic
     ``key: value`` pairs (``:func:`_SCRUB_KV_COLON_RE`), redacting the value only
     when the key matches the shared fail-closed union credential policy (via
@@ -294,7 +333,7 @@ def _redact_inline_secrets(text: str) -> str:
     :param text: Arbitrary text that may contain inline credentials.
     :returns: The text with inline credentials redacted.
     """
-    redacted = text
+    redacted = _SCRUB_AUTH_RE.sub(_redact_auth_match, text)
     for pattern in _SCRUB_INLINE_RES:
         redacted = pattern.sub(lambda match: match.group(1) + _PATH_REDACTION_PLACEHOLDER, redacted)
     redacted = _SCRUB_KV_EQ_RE.sub(_redact_kv_match, redacted)
@@ -308,10 +347,14 @@ def scrub_secrets(text: str) -> str:
     and replaces it with its redacted form using :func:`_redact_url` (removing
     userinfo, the query/fragment, and secret-looking path segments). It then
     applies :func:`_redact_inline_secrets` to the result, redacting common
-    inline credential patterns: ``Authorization:``/auth-scheme headers, and
-    ``key=value``/``key: value`` pairs whose key matches the shared fail-closed
-    union credential policy (via :func:`_is_scrubbable_key`, the union of the
-    substring and whole-word policies), so underscore-delimited keys such as
+    inline credential patterns: ``Authorization`` headers via a single pattern
+    that handles both the ``Authorization: <scheme> <credential>`` form (scheme
+    token preserved, only the credential redacted) and the bare
+    ``Authorization: <credential>`` form (whole value redacted, trailing prose
+    after the token preserved), and ``key=value``/``key: value`` pairs whose key
+    matches the shared fail-closed union credential policy (via
+    :func:`_is_scrubbable_key`, the union of the substring and whole-word
+    policies), so underscore-delimited keys such as
     ``api_key``, ``client_secret``, ``DB_PASSWORD``, ``AWS_SECRET_ACCESS_KEY``,
     and ``foo_token`` AND hyphenated header-style keys such as ``X-Api-Key`` are
     redacted (in addition to ``token``, ``secret``, ``password``, ``api_key``,
