@@ -1465,6 +1465,68 @@ class TestScrubSecrets:
     def test_plain_url_no_secrets_unchanged(self):
         assert scrub_secrets("https://example.com/path/to/resource") == "https://example.com/path/to/resource"
 
+    def test_authorization_bearer_header_redacted(self):
+        """Authorization Bearer credentials are redacted, keeping the scheme."""
+        assert scrub_secrets("Authorization: Bearer abc123") == "Authorization: Bearer ***"
+
+    def test_authorization_token_scheme_redacted(self):
+        """Authorization token-scheme credentials are redacted, keeping the scheme."""
+        assert scrub_secrets("Authorization: token ghp_xyz") == "Authorization: token ***"
+
+    def test_github_token_env_var_redacted(self):
+        """Explicit GITHUB_TOKEN env-var assignments are redacted."""
+        assert scrub_secrets("GITHUB_TOKEN=xyz") == "GITHUB_TOKEN=***"
+
+    def test_swe_github_token_env_var_redacted(self):
+        """Explicit SWE_GITHUB_TOKEN env-var assignments are redacted."""
+        assert scrub_secrets("SWE_GITHUB_TOKEN=xyz") == "SWE_GITHUB_TOKEN=***"
+
+    def test_generic_token_assignment_redacted(self):
+        """A generic token=value pair is redacted."""
+        assert scrub_secrets("token=abc") == "token=***"
+
+    def test_password_colon_assignment_redacted(self):
+        """A password: value pair is redacted."""
+        assert scrub_secrets("password: hunter2") == "password: ***"
+
+    def test_secret_assignment_with_spaces_redacted(self):
+        """A secret = value pair with surrounding spaces is redacted."""
+        assert scrub_secrets("secret = s3cr3t") == "secret = ***"
+
+    def test_api_key_header_style_redacted(self):
+        """An X-Api-Key header-style pair is redacted."""
+        assert scrub_secrets("X-Api-Key: abc") == "X-Api-Key: ***"
+
+    def test_benign_key_not_redacted(self):
+        """Benign keys (monkey/keychain/tokenizer) are left unchanged."""
+        assert scrub_secrets("monkey=banana") == "monkey=banana"
+        assert scrub_secrets("keychain=gold") == "keychain=gold"
+        assert scrub_secrets("tokenizer=x") == "tokenizer=x"
+
+    def test_env_dump_line_redacted(self):
+        """An exported token env var in an env dump line is redacted."""
+        assert scrub_secrets("export SWE_GITHUB_TOKEN=ghp_leak123") == "export SWE_GITHUB_TOKEN=***"
+
+    def test_multiline_stdout_with_token_and_url_redacted(self):
+        """Multi-line output redacts both a URL query token and a bare token line."""
+        text = "https://api.example.com/x?token=SECRET\ntoken=abc"
+        assert scrub_secrets(text) == "https://api.example.com/x\ntoken=***"
+
+    def test_idempotent(self):
+        """Redaction is idempotent: running twice equals running once."""
+        text = "Authorization: Bearer abc123 token=abc https://x.example.com?key=SECRET"
+        assert scrub_secrets(scrub_secrets(text)) == scrub_secrets(text)
+
+    def test_curl_authorization_header_in_command_redacted(self):
+        """Authorization headers inside a curl command are redacted."""
+        text = 'curl -H "Authorization: Bearer abc123" https://api.example.com'
+        assert "abc123" not in scrub_secrets(text)
+        assert "Bearer ***" in scrub_secrets(text)
+
+    def test_plain_text_colon_not_credential_unchanged(self):
+        """A plain-text colon with a non-credential word is left unchanged."""
+        assert scrub_secrets("see note: this is fine") == "see note: this is fine"
+
 
 class TestHttpRequestActionHandlerRedaction:
     """Tests for URL redaction in HTTP request handler result data."""
