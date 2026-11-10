@@ -3136,9 +3136,8 @@ class TestSsrfPinningRegression:
         with patch(
             "cronpypeline.actions.socket.getaddrinfo",
             return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
-        ):
-            with caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
-                ips, err = _validate_ssrf("http://example.com/", {"pin_to_validated_ips": False})
+        ), caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
+            ips, err = _validate_ssrf("http://example.com/", {"pin_to_validated_ips": False})
         assert err is None
         assert ips == ["93.184.216.34"]
         assert any(
@@ -3150,9 +3149,8 @@ class TestSsrfPinningRegression:
         with patch(
             "cronpypeline.actions.socket.getaddrinfo",
             return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
-        ):
-            with caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
-                ips, err = _validate_ssrf("http://example.com/", {"resolve_private_ip": "false"})
+        ), caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
+            ips, err = _validate_ssrf("http://example.com/", {"resolve_private_ip": "false"})
         assert err is None
         assert ips == ["93.184.216.34"]
         assert any(
