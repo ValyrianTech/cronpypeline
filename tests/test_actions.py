@@ -3091,9 +3091,8 @@ class TestSsrfPinningRegression:
         with patch(
             "cronpypeline.actions.socket.create_connection",
             MagicMock(return_value=sock),
-        ):
-            with pytest.raises(ConnectionError, match="is private and was not validated"):
-                conn.connect()
+        ), pytest.raises(ConnectionError, match="is private and was not validated"):
+            conn.connect()
         sock.close.assert_called_once()
 
     def test_pinned_https_connection_rejects_unvalidated_private_peer(self):
@@ -3106,9 +3105,8 @@ class TestSsrfPinningRegression:
         with patch(
             "cronpypeline.actions.socket.create_connection",
             MagicMock(return_value=sock),
-        ):
-            with pytest.raises(ConnectionError, match="is private and was not validated"):
-                conn.connect()
+        ), pytest.raises(ConnectionError, match="is private and was not validated"):
+            conn.connect()
         sock.close.assert_called_once()
         context.wrap_socket.assert_not_called()
 
@@ -3166,10 +3164,9 @@ class TestSsrfPinningRegression:
         with patch(
             "cronpypeline.actions.socket.getaddrinfo",
             return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
-        ):
-            with caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
-                _validate_ssrf("http://example.com/", {"pin_to_validated_ips": True})
-                _validate_ssrf("http://example.com/", {})
+        ), caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
+            _validate_ssrf("http://example.com/", {"pin_to_validated_ips": True})
+            _validate_ssrf("http://example.com/", {})
         warnings = [r for r in caplog.records if "cronpypeline.actions" in r.name]
         assert warnings == []
 

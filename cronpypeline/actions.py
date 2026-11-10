@@ -36,7 +36,6 @@ from cronpypeline.template_safety import (
 )
 from cronpypeline.triggers import resolve_custom_callable
 
-
 logger = logging.getLogger(__name__)
 
 
