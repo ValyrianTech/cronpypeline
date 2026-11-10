@@ -1465,6 +1465,245 @@ class TestScrubSecrets:
     def test_plain_url_no_secrets_unchanged(self):
         assert scrub_secrets("https://example.com/path/to/resource") == "https://example.com/path/to/resource"
 
+    def test_authorization_bearer_header_redacted(self):
+        """Authorization Bearer credentials are redacted, keeping the scheme."""
+        assert scrub_secrets("Authorization: Bearer abc123") == "Authorization: Bearer ***"
+
+    def test_authorization_token_scheme_redacted(self):
+        """Authorization token-scheme credentials are redacted, keeping the scheme."""
+        assert scrub_secrets("Authorization: token ghp_xyz") == "Authorization: token ***"
+
+    def test_authorization_bare_token_header_redacted(self):
+        """A bare ``Authorization: <credential>`` value (no scheme) is redacted whole."""
+        assert scrub_secrets("Authorization: abc123token") == "Authorization: ***"
+
+    def test_authorization_bare_token_idempotent(self):
+        """Bare-token redaction is idempotent: running twice equals running once."""
+        assert scrub_secrets(scrub_secrets("Authorization: abc123token")) == scrub_secrets("Authorization: abc123token")
+
+    def test_authorization_lowercase_header_scheme_redacted(self):
+        """A lowercase ``authorization`` header keeps the scheme and redacts the credential."""
+        assert scrub_secrets("authorization: Bearer abc123") == "authorization: Bearer ***"
+
+    def test_authorization_equals_separator_scheme_redacted(self):
+        """An ``authorization=`` (equals separator) header keeps the scheme and redacts the credential."""
+        assert scrub_secrets("authorization=Bearer abc123") == "authorization=Bearer ***"
+
+    def test_authorization_basic_scheme_redacted(self):
+        """An ``Authorization: Basic <base64>`` header keeps the Basic scheme and redacts the credential."""
+        assert scrub_secrets("Authorization: Basic dXNlcjpwYXNz") == "Authorization: Basic ***"
+
+    def test_authorization_bare_token_with_trailing_prose_redacted(self):
+        """A bare token followed by prose redacts only the token, leaving the trailing prose intact (no leak)."""
+        assert scrub_secrets("Authorization: abc123token extra words here") == "Authorization: *** extra words here"
+
+    def test_authorization_bare_token_with_trailing_prose_idempotent(self):
+        """Trailing-prose redaction is idempotent: the second run must not redact the prose."""
+        text = "Authorization: abc123token extra words here"
+        assert scrub_secrets(scrub_secrets(text)) == scrub_secrets(text)
+
+    def test_curl_bare_authorization_token_redacted(self):
+        """A bare Authorization token inside a curl command is fully redacted."""
+        text = 'curl -H "Authorization: abc123token" https://api.example.com'
+        assert "abc123token" not in scrub_secrets(text)
+        assert "Authorization: ***" in scrub_secrets(text)
+
+    def test_github_token_env_var_redacted(self):
+        """Explicit GITHUB_TOKEN env-var assignments are redacted."""
+        assert scrub_secrets("GITHUB_TOKEN=xyz") == "GITHUB_TOKEN=***"
+
+    def test_swe_github_token_env_var_redacted(self):
+        """Explicit SWE_GITHUB_TOKEN env-var assignments are redacted."""
+        assert scrub_secrets("SWE_GITHUB_TOKEN=xyz") == "SWE_GITHUB_TOKEN=***"
+
+    def test_generic_token_assignment_redacted(self):
+        """A generic token=value pair is redacted."""
+        assert scrub_secrets("token=abc") == "token=***"
+
+    def test_password_colon_assignment_redacted(self):
+        """A password: value pair is redacted."""
+        assert scrub_secrets("password: hunter2") == "password: ***"
+
+    def test_secret_assignment_with_spaces_redacted(self):
+        """A secret = value pair with surrounding spaces is redacted."""
+        assert scrub_secrets("secret = s3cr3t") == "secret = ***"
+
+    def test_api_key_header_style_redacted(self):
+        """An X-Api-Key header-style pair is redacted."""
+        assert scrub_secrets("X-Api-Key: abc") == "X-Api-Key: ***"
+
+    def test_benign_key_without_credential_substring_not_redacted(self):
+        """Benign keys without a credential substring (monkey/keychain) are left unchanged."""
+        assert scrub_secrets("monkey=banana") == "monkey=banana"
+        assert scrub_secrets("keychain=gold") == "keychain=gold"
+
+    def test_substring_overmatching_key_redacted(self):
+        """Keys containing a credential substring (e.g. tokenizer) are redacted."""
+        assert scrub_secrets("tokenizer=x") == "tokenizer=***"
+
+    def test_underscore_delimited_keys_redacted(self):
+        """Underscore-delimited credential keys are redacted to ***."""
+        assert scrub_secrets("api_key=abc") == "api_key=***"
+        assert scrub_secrets("client_secret=abc") == "client_secret=***"
+        assert scrub_secrets("DB_PASSWORD=abc") == "DB_PASSWORD=***"
+        assert scrub_secrets("AWS_SECRET_ACCESS_KEY=abc") == "AWS_SECRET_ACCESS_KEY=***"
+        assert scrub_secrets("foo_token=abc") == "foo_token=***"
+
+    def test_underscore_delimited_keys_idempotent(self):
+        """Redaction of underscore-delimited keys is idempotent."""
+        for text in (
+            "api_key=abc",
+            "client_secret=abc",
+            "DB_PASSWORD=abc",
+            "AWS_SECRET_ACCESS_KEY=abc",
+            "foo_token=abc",
+        ):
+            assert scrub_secrets(scrub_secrets(text)) == scrub_secrets(text)
+
+    def test_env_dump_line_redacted(self):
+        """An exported token env var in an env dump line is redacted."""
+        assert scrub_secrets("export SWE_GITHUB_TOKEN=ghp_leak123") == "export SWE_GITHUB_TOKEN=***"
+
+    def test_multiline_stdout_with_token_and_url_redacted(self):
+        """Multi-line output redacts both a URL query token and a bare token line."""
+        text = "https://api.example.com/x?token=SECRET\ntoken=abc"
+        assert scrub_secrets(text) == "https://api.example.com/x\ntoken=***"
+
+    def test_idempotent(self):
+        """Redaction is idempotent: running twice equals running once."""
+        text = "Authorization: Bearer abc123 token=abc https://x.example.com?key=SECRET"
+        assert scrub_secrets(scrub_secrets(text)) == scrub_secrets(text)
+
+    def test_curl_authorization_header_in_command_redacted(self):
+        """Authorization headers inside a curl command are redacted."""
+        text = 'curl -H "Authorization: Bearer abc123" https://api.example.com'
+        assert "abc123" not in scrub_secrets(text)
+        assert "Bearer ***" in scrub_secrets(text)
+
+    def test_plain_text_colon_not_credential_unchanged(self):
+        """A plain-text colon with a non-credential word is left unchanged."""
+        assert scrub_secrets("see note: this is fine") == "see note: this is fine"
+
+    def test_password_assignment_in_text_redacts_only_value(self):
+        """A bare password=secret in prose redacts the value, keeping trailing text."""
+        assert scrub_secrets("password=secret in text") == "password=*** in text"
+
+    def test_password_assignment_mid_sentence_redacted(self):
+        """A credential assignment mid-sentence redacts only the value."""
+        assert scrub_secrets("the password=s3cr3t is here") == "the password=*** is here"
+
+    def test_credential_assignment_after_non_credential_colon_prefix(self):
+        """A credential assignment after a benign ``word: `` prefix is still redacted."""
+        result = scrub_secrets("config: password=abc other=1")
+        assert "abc" not in result
+        assert "password=***" in result
+
+    def test_password_assignment_after_message_prefix_not_leaked(self):
+        """``message: password=hunter2`` no longer leaks the credential."""
+        assert "hunter2" not in scrub_secrets("message: password=hunter2")
+
+    def test_token_assignment_after_note_prefix_not_leaked(self):
+        """``note: token=abc`` no longer leaks the credential."""
+        result = scrub_secrets("note: token=abc")
+        assert "abc" not in result
+        assert "token=***" in result
+
+    def test_benign_note_colon_prose_unchanged(self):
+        """A benign ``note: this is fine`` (non-credential key) is left unchanged."""
+        assert scrub_secrets("note: this is fine") == "note: this is fine"
+
+    def test_trailing_comma_preserved(self):
+        """Trailing punctuation after a redacted secret is preserved."""
+        result = scrub_secrets("seen password=abc, ok")
+        assert "abc" not in result
+        assert ", ok" in result
+
+    def test_quoted_double_value_redacted_whole(self):
+        """A double-quoted value is redacted as a whole, including internal spaces."""
+        assert "secret" not in scrub_secrets('password="quoted secret"')
+
+    def test_quoted_single_value_redacted_whole(self):
+        """A single-quoted value is redacted as a whole, including internal spaces."""
+        assert "secret" not in scrub_secrets("password='quoted secret'")
+
+    def test_inline_value_capture_idempotent(self):
+        """The new value-capture cases are idempotent."""
+        for text in (
+            "password=secret in text",
+            "the password=s3cr3t is here",
+            "config: password=abc other=1",
+            "message: password=hunter2",
+            "note: token=abc",
+            "seen password=abc, ok",
+            'password="quoted secret"',
+            "password='quoted secret'",
+        ):
+            assert scrub_secrets(scrub_secrets(text)) == scrub_secrets(text)
+
+    @pytest.mark.parametrize(
+        "key",
+        ["api_key", "client_secret", "DB_PASSWORD", "AWS_SECRET_ACCESS_KEY"],
+    )
+    def test_underscore_delimited_keys_both_separators_redacted(self, key):
+        """Each underscore-delimited key is redacted for both ``=`` and ``:`` separators."""
+        eq_text = f"{key}=s3cr3tvalue"
+        eq_result = scrub_secrets(eq_text)
+        assert eq_result == f"{key}=***"
+        assert "s3cr3tvalue" not in eq_result
+
+        colon_text = f"{key}: s3cr3tvalue"
+        colon_result = scrub_secrets(colon_text)
+        assert colon_result == f"{key}: ***"
+        assert "s3cr3tvalue" not in colon_result
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Api_Key=abc",
+            "CLIENT_SECRET=abc",
+            "db_password=abc",
+            "Aws_Secret_Access_Key=abc",
+        ],
+    )
+    def test_underscore_delimited_keys_case_insensitive_redacted(self, text):
+        """Underscore-delimited credential keys are redacted regardless of letter case."""
+        result = scrub_secrets(text)
+        assert "abc" not in result
+        assert result.endswith("=***")
+
+    def test_multi_key_env_style_block_redacts_all_values(self):
+        """A multi-line env-style block redacts every credential value."""
+        text = (
+            "API_KEY=aaa\n"
+            "CLIENT_SECRET=bbb\n"
+            "DB_PASSWORD=ccc\n"
+            "AWS_SECRET_ACCESS_KEY=ddd"
+        )
+        result = scrub_secrets(text)
+        assert result == (
+            "API_KEY=***\n"
+            "CLIENT_SECRET=***\n"
+            "DB_PASSWORD=***\n"
+            "AWS_SECRET_ACCESS_KEY=***"
+        )
+        for secret in ("aaa", "bbb", "ccc", "ddd"):
+            assert secret not in result
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "password=secret in text",
+            "the password=secret here",
+            "config: password=secret",
+            "note: password=secret ok",
+        ],
+    )
+    def test_password_value_redacted_in_various_prose_contexts(self, text):
+        """The literal ``password=secret`` value is redacted in various prose contexts."""
+        result = scrub_secrets(text)
+        assert "password=***" in result
+        assert "password=secret" not in result
+
 
 class TestHttpRequestActionHandlerRedaction:
     """Tests for URL redaction in HTTP request handler result data."""
@@ -3091,9 +3330,8 @@ class TestSsrfPinningRegression:
         with patch(
             "cronpypeline.actions.socket.create_connection",
             MagicMock(return_value=sock),
-        ):
-            with pytest.raises(ConnectionError, match="is private and was not validated"):
-                conn.connect()
+        ), pytest.raises(ConnectionError, match="is private and was not validated"):
+            conn.connect()
         sock.close.assert_called_once()
 
     def test_pinned_https_connection_rejects_unvalidated_private_peer(self):
@@ -3106,9 +3344,8 @@ class TestSsrfPinningRegression:
         with patch(
             "cronpypeline.actions.socket.create_connection",
             MagicMock(return_value=sock),
-        ):
-            with pytest.raises(ConnectionError, match="is private and was not validated"):
-                conn.connect()
+        ), pytest.raises(ConnectionError, match="is private and was not validated"):
+            conn.connect()
         sock.close.assert_called_once()
         context.wrap_socket.assert_not_called()
 
@@ -3138,9 +3375,8 @@ class TestSsrfPinningRegression:
         with patch(
             "cronpypeline.actions.socket.getaddrinfo",
             return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
-        ):
-            with caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
-                ips, err = _validate_ssrf("http://example.com/", {"pin_to_validated_ips": False})
+        ), caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
+            ips, err = _validate_ssrf("http://example.com/", {"pin_to_validated_ips": False})
         assert err is None
         assert ips == ["93.184.216.34"]
         assert any(
@@ -3152,9 +3388,8 @@ class TestSsrfPinningRegression:
         with patch(
             "cronpypeline.actions.socket.getaddrinfo",
             return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
-        ):
-            with caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
-                ips, err = _validate_ssrf("http://example.com/", {"resolve_private_ip": "false"})
+        ), caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
+            ips, err = _validate_ssrf("http://example.com/", {"resolve_private_ip": "false"})
         assert err is None
         assert ips == ["93.184.216.34"]
         assert any(
@@ -3166,10 +3401,9 @@ class TestSsrfPinningRegression:
         with patch(
             "cronpypeline.actions.socket.getaddrinfo",
             return_value=[("AF_INET", "SOCK_STREAM", 6, "", ("93.184.216.34", 80))],
-        ):
-            with caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
-                _validate_ssrf("http://example.com/", {"pin_to_validated_ips": True})
-                _validate_ssrf("http://example.com/", {})
+        ), caplog.at_level(logging.WARNING, logger="cronpypeline.actions"):
+            _validate_ssrf("http://example.com/", {"pin_to_validated_ips": True})
+            _validate_ssrf("http://example.com/", {})
         warnings = [r for r in caplog.records if "cronpypeline.actions" in r.name]
         assert warnings == []
 
