@@ -15,15 +15,20 @@ from cronpypeline.config import ActionSpec, ActionType
 from cronpypeline.markers import MarkerType
 from cronpypeline.plugins import vnn_plugin
 from cronpypeline.plugins.vnn_plugin import (
+    DEFAULT_GATHER_MAX_ATTEMPTS,
+    DEFAULT_GATHER_TARGET_LINKS,
     DEFAULT_MIN_LINKS,
     DEFAULT_MIN_NEW_LINKS,
     DEFAULT_PROCESSING_TIMEOUT_MINUTES,
+    GATHER_STATE_FILENAME,
     detect_compilation_needed,
+    detect_gathering_needed,
     detect_publishing_needed,
     detect_ranking_needed,
     detect_research_needed,
     detect_revision_needed,
     detect_writing_needed,
+    record_gather_attempt,
 )
 from cronpypeline.plugins.vnn_ranking import (
     clear_active_story,
@@ -34,6 +39,7 @@ from cronpypeline.plugins.vnn_ranking import (
     news_links_dir,
     ranking_path,
     story_dir,
+    today_utc,
     write_active_story,
     write_ranking,
 )
@@ -987,3 +993,101 @@ class TestDiscardExhaustedStoriesHookError:
         monkeypatch.setattr(vnn_plugin, "_write_gave_up_marker", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
         assert vnn_plugin.discard_exhausted_stories_hook(_hook_context(country)) is True
         assert not (story / ".gave_up").exists()
+
+
+class TestDetectGatheringNeeded:
+    """The gathering stage replaces the per-country scheduled gatherer tasks."""
+
+    @staticmethod
+    def _gather_context(target_dir: Path, **config) -> dict:
+        """Build a trigger context carrying the given gather options."""
+        context = _context(target_dir)
+        context["target_config"] = {**context["target_config"], **config}
+        return context
+
+    @staticmethod
+    def _at(hour: int, minute: int = 0):
+        """Patch the plugin's clock to a fixed UTC time of day."""
+        fixed = datetime(2026, 11, 12, hour, minute, tzinfo=timezone.utc)
+        return patch.object(vnn_plugin, "datetime", MagicMock(now=MagicMock(return_value=fixed)))
+
+    @staticmethod
+    def _write_today_links(target_dir: Path, count: int) -> None:
+        """Write ``count`` news links into today's date partition."""
+        directory = news_links_dir(target_dir, today_utc())
+        directory.mkdir(parents=True, exist_ok=True)
+        for index in range(count):
+            (directory / f"link{index}.json").write_text("{}", encoding="utf-8")
+
+    def test_not_due_before_gather_time(self, country: Path):
+        with self._at(11, 59):
+            assert detect_gathering_needed(self._gather_context(country, gather_time="12:00")) is False
+
+    def test_due_at_gather_time(self, country: Path):
+        with self._at(12, 0):
+            assert detect_gathering_needed(self._gather_context(country, gather_time="12:00")) is True
+
+    def test_due_late_catches_up(self, country: Path):
+        with self._at(23, 30):
+            assert detect_gathering_needed(self._gather_context(country, gather_time="04:00")) is True
+
+    def test_no_gather_time_never_fires(self, country: Path):
+        with self._at(23, 30):
+            assert detect_gathering_needed(_context(country)) is False
+
+    def test_quota_met_stops_firing(self, country: Path):
+        self._write_today_links(country, DEFAULT_GATHER_TARGET_LINKS)
+        with self._at(12, 0):
+            assert detect_gathering_needed(self._gather_context(country, gather_time="12:00")) is False
+
+    def test_links_from_earlier_days_do_not_count(self, country: Path):
+        _write_link(country, "old")
+        with self._at(12, 0):
+            assert detect_gathering_needed(self._gather_context(country, gather_time="12:00")) is True
+
+    def test_attempt_cap_stops_firing(self, country: Path):
+        for _ in range(DEFAULT_GATHER_MAX_ATTEMPTS):
+            record_gather_attempt(country, 0)
+        with self._at(12, 0):
+            assert detect_gathering_needed(self._gather_context(country, gather_time="12:00")) is False
+
+    def test_attempt_cap_resets_on_a_new_day(self, country: Path):
+        (country / GATHER_STATE_FILENAME).write_text(
+            json.dumps({"date": "20200101", "attempts": 99}), encoding="utf-8"
+        )
+        with self._at(12, 0):
+            assert detect_gathering_needed(self._gather_context(country, gather_time="12:00")) is True
+
+    def test_processing_gate(self, country: Path, tmp_path: Path):
+        queue_file = tmp_path / "queue" / "NewsGathererAgent_1.json"
+        queue_file.parent.mkdir()
+        queue_file.write_text("{}", encoding="utf-8")
+        _write_processing(country, queue_file)
+        with self._at(12, 0):
+            assert detect_gathering_needed(self._gather_context(country, gather_time="12:00")) is False
+
+    def test_invalid_gather_time_raises(self):
+        with pytest.raises(ValueError):
+            vnn_plugin._parse_hhmm("noon")
+
+    def test_out_of_range_gather_time_raises(self):
+        with pytest.raises(ValueError):
+            vnn_plugin._parse_hhmm("24:00")
+
+
+class TestRecordGatherAttempt:
+    def test_increments_and_stamps_the_day(self, country: Path):
+        record_gather_attempt(country, 4)
+        state = json.loads((country / GATHER_STATE_FILENAME).read_text(encoding="utf-8"))
+        assert state["date"] == today_utc()
+        assert state["attempts"] == 1
+        assert state["links_at_dispatch"] == 4
+
+    def test_accumulates_within_the_day(self, country: Path):
+        record_gather_attempt(country, 0)
+        record_gather_attempt(country, 2)
+        assert vnn_plugin._gather_attempts_today(country) == 2
+
+    def test_corrupt_state_restarts_the_count(self, country: Path):
+        (country / GATHER_STATE_FILENAME).write_text("{nope", encoding="utf-8")
+        assert vnn_plugin._gather_attempts_today(country) == 0

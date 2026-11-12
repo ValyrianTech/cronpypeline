@@ -1,6 +1,8 @@
 """VNN prompt builder custom action callables.
 
 Provides:
+- `build_gather_prompt`: Build a prompt asking the gatherer agent to collect
+  the country's news links for the day.
 - `build_ranking_prompt`: Build a prompt asking the ranking agent to order the
   country's compiled stories.
 - `build_compile_prompt`: Build a prompt asking the compiler agent to turn
@@ -12,6 +14,8 @@ Provides:
 - `queue_ranking_agent`, `queue_compile_agent`, `queue_research_agent`,
   `queue_writing_agent`, `queue_publishing_agent`, `queue_revision_agent`:
   custom actions that build the matching prompt and queue it.
+- `queue_gather_agent`: custom action that builds the gathering prompt and
+  queues it, capped at the country's daily attempt budget.
 """
 
 import shutil
@@ -22,11 +26,17 @@ from cronpypeline.actions import ActionResult, TickContext
 from cronpypeline.config import ActionSpec
 from cronpypeline.plugins.conversation_queue import ConversationQueueHandler
 from cronpypeline.plugins.vnn_plugin import (
+    DEFAULT_GATHER_MAX_ATTEMPTS,
+    DEFAULT_GATHER_TARGET_LINKS,
     _active_story,
     _compiled_link_ids,
+    _gather_attempts_today,
+    _int_option,
     _max_rejections,
     _posts_dir,
     _story_needs,
+    _today_link_count,
+    record_gather_attempt,
 )
 from cronpypeline.plugins.vnn_ranking import (
     COMPILED_SUBDIR,
@@ -45,6 +55,106 @@ from cronpypeline.plugins.vnn_ranking import (
 )
 
 # ─── Prompt builders ────────────────────────────────────────────────────────
+
+
+def _str_list(value: Any) -> list[str]:
+    """Return a list of non-empty strings from a per-country config value.
+
+    :param value: Raw config value (expected to be a list).
+    :returns: The string entries, or an empty list when the value is not a list.
+    """
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _source_list(value: Any) -> list[dict[str, Any]]:
+    """Return the source dicts from a per-country config value.
+
+    :param value: Raw config value (expected to be a list of dicts).
+    :returns: The dict entries, or an empty list when the value is not a list.
+    """
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _source_bullets(sources: list[dict[str, Any]]) -> str:
+    """Render the recommended news sources as a markdown bullet list.
+
+    :param sources: Source dicts with ``name``, ``url`` and optional ``note``.
+    :returns: Markdown bullet list, or a placeholder when there are none.
+    """
+    if not sources:
+        return "_No recommended sources configured._"
+    lines = []
+    for source in sources:
+        name = str(source.get("name") or "source")
+        url = str(source.get("url") or "")
+        note = str(source.get("note") or "")
+        suffix = f" — {note}" if note else ""
+        lines.append(f"- {name} ({url}){suffix}")
+    return "\n".join(lines)
+
+
+def build_gather_prompt(
+    country: str,
+    date: str,
+    display_name: str = "",
+    languages: list[str] | None = None,
+    topics: list[str] | None = None,
+    sources: list[dict[str, Any]] | None = None,
+    target_links: int = DEFAULT_GATHER_TARGET_LINKS,
+    extra_instructions: str = "",
+) -> str:
+    """Build a prompt for the news gatherer agent.
+
+    The country profile (languages, topics, sources) comes from the country's
+    registry config, so the prompt is data-driven and the per-country scheduled
+    tasks that used to carry it are no longer needed.
+
+    :param country: Country name (the pipeline target, e.g. ``united_states``).
+    :param date: Date in ``YYYYMMDD`` form.
+    :param display_name: Human-readable country name for the prompt heading.
+    :param languages: Languages the country's news sources publish in.
+    :param topics: Topics to prioritise.
+    :param sources: Recommended sources as ``{"name", "url", "note"}`` dicts.
+    :param target_links: Number of links to gather for the day.
+    :param extra_instructions: Optional additional instructions to append.
+    :returns: Formatted prompt string.
+    """
+    name = display_name or country
+    languages = languages or []
+    topics = topics or []
+    sources = sources or []
+
+    prompt = f"""Load the news-gatherer skill and gather today's news for **{name}** (`{country}`) on **{date}**.
+
+## Country profile
+
+- Languages: {", ".join(languages) if languages else "the country's primary language(s)"}
+- Topics: {", ".join(topics) if topics else "general news"}
+
+## Recommended sources
+
+{_source_bullets(sources)}
+
+## Task
+
+1. Run `list_saved_links.py --country "{country}"` to see what is already
+   archived today, and build a source coverage map from it.
+2. Browse the sources above, prioritising the ones with no links saved today.
+3. Save every new story immediately with `save_news_link.py` — do not batch,
+   and skip URLs that are already archived.
+4. Stop at {target_links} links for today (`--max-links {target_links}`).
+
+Focus on stories visible to residents of {name} today. Prioritise story
+diversity over quantity: {target_links} different stories are worth more than
+many articles about the same event.
+"""
+    if extra_instructions:
+        prompt += f"\n## Additional Instructions\n\n{extra_instructions}\n"
+    return prompt
 
 
 def _story_bullets(stories: list[dict[str, Any]]) -> str:
@@ -498,6 +608,63 @@ def _resolve_story(context: TickContext) -> tuple[str, Path] | None:
     return story_id, _ensure_story_dir(target_dir, story_id, story_path, stage)
 
 
+def queue_gather_agent(action: ActionSpec, context: TickContext) -> ActionResult:
+    """Build a gathering prompt and queue it.
+
+    Expected action.params:
+        - agent: Agent name to queue
+        - queue_dir / agent_settings_dir / prompt_field / default_fields /
+          flatten_agent_settings: Queue settings (fall back to pipeline config)
+        - extra_instructions: Optional extra instructions for the prompt
+
+    The action declines to queue when the day's link quota is already met or the
+    attempt cap is reached. The stale-stage re-queue path re-runs an action
+    without re-evaluating its trigger, so without these guards a finished (or
+    repeatedly failing) gatherer would be re-queued on every tick.
+
+    :param action: Action spec with queue params.
+    :param context: Tick context with target and directories.
+    :returns: Result from the queue handler.
+    """
+    if context.dry_run:
+        return ActionResult(success=True, dry_run=True)
+
+    target_dir = context.target_dir
+    config = context.target_config or {}
+    target_links = _int_option(config, "gather_target_links", DEFAULT_GATHER_TARGET_LINKS)
+    saved = _today_link_count(target_dir)
+    if saved >= target_links:
+        return ActionResult(
+            success=True,
+            stdout=f"Already gathered {saved}/{target_links} links today",
+            data={"skipped": True},
+        )
+
+    max_attempts = _int_option(config, "gather_max_attempts", DEFAULT_GATHER_MAX_ATTEMPTS)
+    attempts = _gather_attempts_today(target_dir)
+    if attempts >= max_attempts:
+        return ActionResult(
+            success=True,
+            stdout=f"Gather attempt cap reached ({attempts}/{max_attempts})",
+            data={"skipped": True},
+        )
+
+    prompt = build_gather_prompt(
+        country=context.target,
+        date=today_utc(),
+        display_name=str(config.get("display_name") or context.target),
+        languages=_str_list(config.get("gather_languages")),
+        topics=_str_list(config.get("gather_topics")),
+        sources=_source_list(config.get("gather_sources")),
+        target_links=target_links,
+        extra_instructions=action.params.get("extra_instructions", ""),
+    )
+    result = _queue_prompt(action, context, prompt)
+    if result.success:
+        record_gather_attempt(target_dir, saved)
+    return result
+
+
 def queue_ranking_agent(action: ActionSpec, context: TickContext) -> ActionResult:
     """Build a ranking prompt and queue it.
 
@@ -690,12 +857,14 @@ def queue_revision_agent(action: ActionSpec, context: TickContext) -> ActionResu
 
 __all__ = [
     "build_compile_prompt",
+    "build_gather_prompt",
     "build_publishing_prompt",
     "build_ranking_prompt",
     "build_research_prompt",
     "build_revision_prompt",
     "build_writing_prompt",
     "queue_compile_agent",
+    "queue_gather_agent",
     "queue_publishing_agent",
     "queue_ranking_agent",
     "queue_research_agent",

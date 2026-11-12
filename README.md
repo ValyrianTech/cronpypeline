@@ -28,7 +28,7 @@
 - **Shell-safe command execution**: Template variables (`target`, `target_dir`, `workspace_dir`, and target config values) substituted into commands are shell-quoted with `shlex.quote()`, and commands are executed via an argument list (`shell=False`) rather than a shell, preventing command injection. Template fields are restricted to simple `{name}` identifiers (attribute/item access is rejected, and nested replacement fields inside a format spec are also rejected by recursing into the format spec) to prevent secrets or object internals leaking into commands.
 - **HTTP requests**: Built-in `http_request` action handler with auth token resolution from config, env vars, or context.
 - **SWE pipeline plugins**: Issue store (YAML frontmatter), diagnostic report handlers with output parsers, prompt builders for fix/coder/review agents, GitHub session adapter.
-- **VNN pipeline plugins**: Country-scoped article pipeline — ranking, compilation, research, writing, publishing and revision triggers, prompt builders, country-local per-day ranking state helpers, global queue-empty gate and rejection audit trail. Stories, compiled stories, news links and rankings are partitioned into `YYYY/MM/DD` directories.
+- **VNN pipeline plugins**: Country-scoped article pipeline — time-scheduled gathering, ranking, compilation, research, writing, publishing and revision triggers, prompt builders, country-local per-day ranking state helpers, global queue-empty gate and rejection audit trail. Stories, compiled stories, news links and rankings are partitioned into `YYYY/MM/DD` directories.
 - **Crash-safe**: If a process is killed mid-tick, the next tick re-derives state from whatever markers were already written. State, marker, report, and session files are written atomically (temp file + fsync + atomic `os.replace` via `cronpypeline/io_utils.py`), so a crash mid-write cannot leave a partially-written or corrupt state file.
 - **Execution log**: Optional structured JSONL log (via the `log_file` config option) records every tick and stage evaluation — tick IDs, durations, stage results, and resolved action commands — with automatic rotation.
 - **Minimal dependencies**: Pure Python stdlib. No heavy framework. Python 3.10+.
@@ -954,6 +954,7 @@ The VNN pipeline is **country-scoped**: every target is a country, and all of th
 <country>/news_links/<YYYY>/<MM>/<DD>/            # archived links waiting to be compiled
 <country>/.active_story                           # story currently being worked on
 <country>/compilation_metadata.json               # written when a compilation finishes
+<country>/gather_state.json                       # today's gather attempts (cost cap)
 ```
 
 Story ids stay date-free: the day lives in the path, so ids embedded in published article front matter never change. Each ranking entry records the day its story was compiled, which is what lets a story directory be located without scanning the tree. `load_ranking` prefers the requested day and falls back to the most recent earlier ranking, so a story still in progress after midnight is never lost; `set_story_state` updates whichever ranking actually contains the story.
@@ -977,8 +978,31 @@ The ranking for a day is the authoritative record of that day's stories:
 
 Story states: `pending` → `researching` → `writing` → `publishing` → `published`; `discarded` is terminal.
 
+**Scheduled gathering.** The `gathering` stage is the pipeline's entry point and replaces the per-country scheduled tasks that used to kick the news gatherer off at a fixed time. Each country's schedule lives in its registry entry (`countries.json`), not in the pipeline config:
+
+```json
+{
+  "name": "china",
+  "display_name": "China",
+  "enabled": true,
+  "gather_time": "04:00",
+  "gather_languages": ["Mandarin Chinese (Simplified)"],
+  "gather_topics": ["politics", "economy", "technology", "society", "international relations"],
+  "gather_sources": [
+    {"name": "Xinhua News", "url": "https://www.xinhuanet.com/", "note": "Official state news agency"}
+  ]
+}
+```
+
+- `gather_time` is the daily time in **UTC** (`HH:MM`) and doubles as the opt-in: a country without it never gathers, so targets with no news sources (e.g. `international`) stay inert. A malformed value raises, and the custom trigger fails closed with a logged warning.
+- The trigger fires once the time has passed and stops firing once the day's link quota is met, so it is self-limiting without a completion marker. A pipeline that was down at the configured time catches up on its next tick instead of skipping the day.
+- `gather_target_links` (default 10) is the daily quota; it is also passed to the skill as `--max-links`. `gather_max_attempts` (default 3) caps the number of dispatches per UTC day, recorded in `<country>/gather_state.json` (date-stamped, so it resets daily). The stage deliberately has **no give-up marker** — a permanent wedge would stop a daily stage forever — so the attempt cap is what bounds the cost of a gatherer that keeps failing.
+- `gather_languages`, `gather_topics` and `gather_sources` feed the generated prompt, so the per-country prompt text no longer lives in the scheduler's task file.
+- The stage has no `completion` marker (it is recurring) and no `completion_signal`: the queue-file staleness rule marks it stale as soon as the agent's conversation ends, and the action declines with `data: {"skipped": true}` once the quota is met, which clears the processing marker.
+
 **`cronpypeline.plugins.vnn_plugin`** — triggers, actions and hooks:
 
+- `detect_gathering_needed` — trigger: the country's daily `gather_time` (UTC) has passed and today's link quota is not met
 - `detect_ranking_needed` — trigger: enough unranked compiled stories (`min_new_stories`, default 1)
 - `detect_compilation_needed` — trigger: enough archived links (`min_links`, default 10; recompilation needs `min_new_links`, default 5)
 - `detect_research_needed` / `detect_writing_needed` / `detect_publishing_needed` / `detect_revision_needed` — triggers: what the active story still needs
@@ -992,7 +1016,7 @@ Story states: `pending` → `researching` → `writing` → `publishing` → `pu
 - `vnn_marker_context` — marker-context hook: exposes `{active_story}`, `{active_story_dir}` and `{ranking_dir}` so stage markers follow the date partitions
 - `vnn_pre_tick` / `vnn_post_tick` — composite hooks used by the config
 
-**`cronpypeline.plugins.vnn_prompts`** — prompt builders (`build_ranking_prompt`, `build_compile_prompt`, `build_research_prompt`, `build_writing_prompt`, `build_publishing_prompt`, `build_revision_prompt`) and the matching queue actions (`queue_ranking_agent`, `queue_compile_agent`, `queue_research_agent`, `queue_writing_agent`, `queue_publishing_agent`, `queue_revision_agent`).
+**`cronpypeline.plugins.vnn_prompts`** — prompt builders (`build_gather_prompt`, `build_ranking_prompt`, `build_compile_prompt`, `build_research_prompt`, `build_writing_prompt`, `build_publishing_prompt`, `build_revision_prompt`) and the matching queue actions (`queue_gather_agent`, `queue_ranking_agent`, `queue_compile_agent`, `queue_research_agent`, `queue_writing_agent`, `queue_publishing_agent`, `queue_revision_agent`).
 
 The queue actions decline to queue an agent when there is nothing left to do, returning `data: {"skipped": True}` instead of a failure. This matters because the stale re-queue path (`_handle_stale`) re-runs a stage's action **without re-evaluating its trigger**, so a stage whose work is already finished would otherwise be re-dispatched on every tick until `max_retries` is exhausted. `queue_compile_agent` in particular declines when no archived links are pending — the queue monitor deletes the queue file as soon as the conversation finishes, before the agent has written `compilation_metadata.json`, so the compiler stage was previously re-queued several times and gave up before the agent could complete. A `skipped` result also clears the processing marker, so the stage stops re-queueing.
 
@@ -1007,7 +1031,7 @@ The queue actions decline to queue an agent when there is nothing left to do, re
 "post_tick": {"callable": "cronpypeline.plugins.vnn_plugin.vnn_post_tick"}
 ```
 
-**VNN pipeline config**: A full example config is available at `configs/vnn_pipeline.json` with all VNN country-level stages (ranking → compilation → research → writing → publishing → revision), composite hooks, target locking, registry-based country targets, and Serendipity-compatible queue entries. The pipeline date is always today (UTC).
+**VNN pipeline config**: A full example config is available at `configs/vnn_pipeline.json` with all VNN country-level stages (gathering → ranking → compilation → research → writing → publishing → revision), composite hooks, target locking, registry-based country targets, and Serendipity-compatible queue entries. The pipeline date is always today (UTC).
 
 ## Package structure
 

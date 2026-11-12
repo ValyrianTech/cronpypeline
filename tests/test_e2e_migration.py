@@ -522,13 +522,15 @@ class TestVNNDryRunValidation:
     def test_vnn_config_detector_chain_order(self):
         """Verify the detector chain order.
 
-        Ranking and compilation run first (they produce the stories the article
-        stages consume), then research → writing → publishing → revision.
+        Gathering runs first (it is what feeds the archive), then ranking and
+        compilation (they produce the stories the article stages consume), then
+        research → writing → publishing → revision.
         """
         config = PipelineConfig.from_file(self.CONFIG_PATH)
         ids = [s.id for s in config.stages]
-        assert ids == ["ranking", "compilation", "research", "writing", "publishing", "revision"], \
-            f"Unexpected stage order: {ids}"
+        assert ids == [
+            "gathering", "ranking", "compilation", "research", "writing", "publishing", "revision",
+        ], f"Unexpected stage order: {ids}"
 
     def test_story_stages_use_active_story_marker_directory(self):
         """Story-scoped stages must resolve their markers inside the story dir."""

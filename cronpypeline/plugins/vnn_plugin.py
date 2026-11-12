@@ -10,10 +10,12 @@ without bound is partitioned by day::
     <country>/news_links/<YYYY>/<MM>/<DD>/            # archived links awaiting compilation
     <country>/.active_story                           # story currently being worked on
     <country>/compilation_metadata.json               # written when a compilation finishes
+    <country>/gather_state.json                       # today's gather attempts (cost cap)
 
 Provides:
-- Triggers: `detect_ranking_needed`, `detect_compilation_needed`,
-  `detect_research_needed`, `detect_writing_needed`, `detect_publishing_needed`,
+- Triggers: `detect_gathering_needed`, `detect_ranking_needed`,
+  `detect_compilation_needed`, `detect_research_needed`,
+  `detect_writing_needed`, `detect_publishing_needed`,
   `detect_revision_needed`.
 - Actions: `claim_story` (writes `.active_story`), `release_story` (clears it),
   `validate_ranking_action` (checks the ranking the agent wrote),
@@ -26,6 +28,7 @@ Provides:
 import json
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +47,7 @@ from cronpypeline.plugins.vnn_ranking import (
     find_story_dir,
     load_active_story,
     load_ranking,
+    news_links_dir,
     news_links_root,
     ranking_path,
     ranking_stories,
@@ -64,6 +68,7 @@ from cronpypeline.plugins.vnn_ranking import (
 
 VNN_SUBDIR = ".VNN"
 COMPILATION_MARKER = "compilation_metadata.json"
+GATHER_STATE_FILENAME = "gather_state.json"
 PROCESSING_MARKER = ".processing"
 RESEARCH_MARKER = "research.md"
 ARTICLE_MARKER = "article.md"
@@ -77,6 +82,8 @@ DEFAULT_MIN_NEW_LINKS = 5
 DEFAULT_MIN_NEW_STORIES = 1
 DEFAULT_MAX_REJECTIONS = 5
 DEFAULT_PROCESSING_TIMEOUT_MINUTES = 20
+DEFAULT_GATHER_TARGET_LINKS = 10
+DEFAULT_GATHER_MAX_ATTEMPTS = 3
 
 #: Where the publisher skill copies articles before committing them.
 DEFAULT_POSTS_DIR = Path("/home/wouter/Repos/ValyrianNewsNetwork/src/content/posts")
@@ -127,6 +134,121 @@ def _int_option(config: dict[str, Any], key: str, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _gather_time(context: dict[str, Any] | TickContext) -> str | None:
+    """Return the country's daily gathering time (UTC, ``HH:MM``).
+
+    The option doubles as the opt-in for the gathering stage: a country without
+    a ``gather_time`` never gathers, so targets that have no news sources (e.g.
+    ``international``) stay inert.
+
+    :param context: Trigger context dict or :class:`TickContext`.
+    :returns: The configured ``HH:MM`` string, or None when unset.
+    """
+    value = _config(context).get("gather_time")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip()
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    """Parse an ``HH:MM`` string into an ``(hour, minute)`` tuple.
+
+    :param value: Time of day as ``HH:MM``.
+    :returns: Hour and minute.
+    :raises ValueError: If the value is not a valid ``HH:MM`` time.
+    """
+    parts = value.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"invalid gather_time: {value!r} (expected HH:MM)")
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise ValueError(f"invalid gather_time: {value!r} (expected HH:MM)") from None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"invalid gather_time: {value!r} (expected HH:MM)")
+    return hour, minute
+
+
+def _gather_due(context: dict[str, Any] | TickContext) -> bool:
+    """Return True when the country's daily gathering time has passed today.
+
+    The comparison is against the current UTC time of day, so a pipeline that
+    was down at the configured time catches up on its next tick instead of
+    skipping the day.
+
+    :param context: Trigger context dict or :class:`TickContext`.
+    :returns: True when gathering is configured and its time has been reached.
+    """
+    configured = _gather_time(context)
+    if configured is None:
+        return False
+    hour, minute = _parse_hhmm(configured)
+    now = datetime.now(timezone.utc)
+    return (now.hour, now.minute) >= (hour, minute)
+
+
+def _today_link_count(target_dir: Path) -> int:
+    """Count the news links archived for this country today (UTC).
+
+    The gatherer skill partitions links by the UTC day they were saved, which
+    is the same day the pipeline uses, so the count is a single directory
+    listing rather than a walk of the whole archive.
+
+    :param target_dir: Country target directory.
+    :returns: Number of link files saved today.
+    """
+    directory = news_links_dir(target_dir, today_utc())
+    if not directory.is_dir():
+        return 0
+    return sum(1 for path in directory.glob("*.json") if not path.name.startswith("."))
+
+
+def _gather_state(target_dir: Path) -> dict[str, Any]:
+    """Return today's gathering state, resetting it when the stored day is stale.
+
+    :param target_dir: Country target directory.
+    :returns: State dict with at least ``date`` and ``attempts``.
+    """
+    path = target_dir / GATHER_STATE_FILENAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return {"date": today_utc(), "attempts": 0}
+    if not isinstance(data, dict) or data.get("date") != today_utc():
+        return {"date": today_utc(), "attempts": 0}
+    return data
+
+
+def _gather_attempts_today(target_dir: Path) -> int:
+    """Return how many gather attempts were dispatched today.
+
+    :param target_dir: Country target directory.
+    :returns: Attempt count for the current UTC day.
+    """
+    return _int_option(_gather_state(target_dir), "attempts", 0)
+
+
+def record_gather_attempt(target_dir: Path, link_count: int) -> dict[str, Any]:
+    """Record a dispatched gather attempt in ``gather_state.json``.
+
+    The counter bounds the cost of a country whose gatherer keeps failing: the
+    stage has no give-up marker (a permanent wedge would stop a daily stage
+    forever), so without a cap the trigger would re-queue the agent on every
+    tick. The state is date-stamped, so it resets on the next UTC day.
+
+    :param target_dir: Country target directory.
+    :param link_count: Links already archived today when the agent was queued.
+    :returns: The updated state dict.
+    """
+    state = _gather_state(target_dir)
+    state["date"] = today_utc()
+    state["attempts"] = _int_option(state, "attempts", 0) + 1
+    state["links_at_dispatch"] = link_count
+    state["last_attempt_at"] = utc_now_iso()
+    write_json_atomic(target_dir / GATHER_STATE_FILENAME, state)
+    return state
 
 
 def _date(context: dict[str, Any] | TickContext) -> str:
@@ -538,6 +660,36 @@ def _story_needs(story_path: Path) -> dict[str, bool]:
 
 
 # ─── Triggers ───────────────────────────────────────────────────────────────
+
+
+def detect_gathering_needed(context: dict[str, Any]) -> bool:
+    """Trigger: fire when the country's daily news gathering is due.
+
+    Gathering is the pipeline's entry point: it replaces the per-country
+    scheduled tasks that used to kick the news gatherer off at a fixed time.
+    The stage fires once the country's ``gather_time`` (UTC) has passed and
+    stops firing once the day's link quota is met, so it is self-limiting
+    without needing a completion marker.
+
+    The attempt cap bounds the cost of a gatherer that keeps failing. The stage
+    deliberately has no give-up marker — a permanent wedge would stop a daily
+    stage forever — so without the cap the trigger would re-queue the agent on
+    every tick.
+
+    :param context: Trigger context dict with ``target_dir`` and ``target_config``.
+    :returns: True when a gather agent should be queued.
+    """
+    target_dir = _target_dir(context)
+    if _is_processing(target_dir, _stage_timeout(context), _stage(context)):
+        return False
+    if not _gather_due(context):
+        return False
+    config = _config(context)
+    max_attempts = _int_option(config, "gather_max_attempts", DEFAULT_GATHER_MAX_ATTEMPTS)
+    if _gather_attempts_today(target_dir) >= max_attempts:
+        return False
+    target_links = _int_option(config, "gather_target_links", DEFAULT_GATHER_TARGET_LINKS)
+    return _today_link_count(target_dir) < target_links
 
 
 def detect_ranking_needed(context: dict[str, Any]) -> bool:
@@ -1040,10 +1192,12 @@ __all__ = [
     "ACTIVE_STORY_FILENAME",
     "COMPILATION_MARKER",
     "COMPILED_SUBDIR",
+    "GATHER_STATE_FILENAME",
     "NEWS_LINKS_SUBDIR",
     "claim_story",
     "cleanup_inconsistent_state",
     "detect_compilation_needed",
+    "detect_gathering_needed",
     "detect_publishing_needed",
     "detect_ranking_needed",
     "detect_research_needed",
@@ -1051,6 +1205,7 @@ __all__ = [
     "detect_writing_needed",
     "log_rejection",
     "queue_empty_global",
+    "record_gather_attempt",
     "release_finished_story_hook",
     "release_story",
     "sync_story_states",

@@ -9,14 +9,22 @@ import pytest
 from cronpypeline.actions import TickContext
 from cronpypeline.config import ActionSpec, ActionType, PipelineConfig
 from cronpypeline.plugins import vnn_prompts
+from cronpypeline.plugins.vnn_plugin import (
+    DEFAULT_GATHER_MAX_ATTEMPTS,
+    DEFAULT_GATHER_TARGET_LINKS,
+    GATHER_STATE_FILENAME,
+    record_gather_attempt,
+)
 from cronpypeline.plugins.vnn_prompts import (
     build_compile_prompt,
+    build_gather_prompt,
     build_publishing_prompt,
     build_ranking_prompt,
     build_research_prompt,
     build_revision_prompt,
     build_writing_prompt,
     queue_compile_agent,
+    queue_gather_agent,
     queue_publishing_agent,
     queue_ranking_agent,
     queue_research_agent,
@@ -28,6 +36,7 @@ from cronpypeline.plugins.vnn_ranking import (
     day_from_timestamp,
     news_links_dir,
     story_dir,
+    today_utc,
     write_active_story,
     write_ranking,
 )
@@ -721,14 +730,120 @@ class TestQueueHandlerConfig:
             queue_compile_agent(_action(agent="A"), ctx)
 
 
+class TestBuildGatherPrompt:
+    def test_includes_country_profile(self):
+        prompt = build_gather_prompt(
+            country="belgium",
+            date="20261021",
+            display_name="Belgium",
+            languages=["Dutch (Flemish)", "French"],
+            topics=["politics", "EU affairs"],
+            sources=[{
+                "name": "VRT NWS",
+                "url": "https://www.vrt.be/vrtnws/nl/",
+                "note": "Flemish public broadcaster",
+            }],
+            target_links=10,
+        )
+        assert "**Belgium**" in prompt
+        assert "`belgium`" in prompt
+        assert "Dutch (Flemish), French" in prompt
+        assert "politics, EU affairs" in prompt
+        assert "VRT NWS (https://www.vrt.be/vrtnws/nl/) — Flemish public broadcaster" in prompt
+        assert "--max-links 10" in prompt
+
+    def test_falls_back_when_profile_missing(self):
+        prompt = build_gather_prompt(country="china", date="20261021")
+        assert "the country's primary language(s)" in prompt
+        assert "general news" in prompt
+        assert "_No recommended sources configured._" in prompt
+
+    def test_appends_extra_instructions(self):
+        prompt = build_gather_prompt(
+            country="china", date="20261021", extra_instructions="Skip sports."
+        )
+        assert "## Additional Instructions" in prompt
+        assert "Skip sports." in prompt
+
+
+class TestQueueGatherAgent:
+    @staticmethod
+    def _context(tmp_path: Path, queue_dir: Path, config: dict | None = None, dry_run: bool = False):
+        """Build a TickContext carrying the country's gather config."""
+        return TickContext(
+            target=COUNTRY,
+            workspace_dir=tmp_path,
+            dry_run=dry_run,
+            target_config=config or {},
+            pipeline=_pipeline(tmp_path, queue_dir),
+        )
+
+    @staticmethod
+    def _write_today_links(target_dir: Path, count: int) -> None:
+        """Write ``count`` news links into today's date partition."""
+        directory = news_links_dir(target_dir, today_utc())
+        directory.mkdir(parents=True, exist_ok=True)
+        for index in range(count):
+            (directory / f"link{index}.json").write_text("{}", encoding="utf-8")
+
+    def test_queues_agent_and_records_attempt(self, tmp_path: Path):
+        queue_dir = tmp_path / "queue"
+        ctx = self._context(
+            tmp_path, queue_dir, {"display_name": "Belgium", "gather_languages": ["French"]}
+        )
+        result = queue_gather_agent(_action(agent="NewsGathererAgent"), ctx)
+
+        assert result.success
+        assert result.data["async"] is True
+        entry = _queued_entry(queue_dir)
+        assert entry["agent"] == "NewsGathererAgent"
+        assert "**Belgium**" in entry["content"]
+        assert "French" in entry["content"]
+        state = json.loads(
+            (tmp_path / COUNTRY / GATHER_STATE_FILENAME).read_text(encoding="utf-8")
+        )
+        assert state["attempts"] == 1
+
+    def test_declines_when_quota_met(self, tmp_path: Path):
+        queue_dir = tmp_path / "queue"
+        self._write_today_links(tmp_path / COUNTRY, DEFAULT_GATHER_TARGET_LINKS)
+        result = queue_gather_agent(_action(agent="NewsGathererAgent"), self._context(tmp_path, queue_dir))
+
+        assert result.success
+        assert result.data["skipped"] is True
+        assert not list(queue_dir.glob("*.json"))
+
+    def test_declines_at_attempt_cap(self, tmp_path: Path):
+        queue_dir = tmp_path / "queue"
+        for _ in range(DEFAULT_GATHER_MAX_ATTEMPTS):
+            record_gather_attempt(tmp_path / COUNTRY, 0)
+        result = queue_gather_agent(_action(agent="NewsGathererAgent"), self._context(tmp_path, queue_dir))
+
+        assert result.success
+        assert result.data["skipped"] is True
+        assert not list(queue_dir.glob("*.json"))
+
+    def test_dry_run_does_not_queue_or_record(self, tmp_path: Path):
+        queue_dir = tmp_path / "queue"
+        result = queue_gather_agent(
+            _action(agent="NewsGathererAgent"), self._context(tmp_path, queue_dir, dry_run=True)
+        )
+
+        assert result.dry_run is True
+        assert not list(queue_dir.glob("*.json"))
+        assert not (tmp_path / COUNTRY / GATHER_STATE_FILENAME).exists()
+
+
 class TestModuleExports:
     @pytest.mark.parametrize("name", [
+        "build_gather_prompt",
         "build_ranking_prompt",
         "build_compile_prompt",
         "build_research_prompt",
         "build_writing_prompt",
         "build_publishing_prompt",
         "build_revision_prompt",
+        "queue_gather_agent",
         "queue_ranking_agent",
         "queue_compile_agent",
         "queue_research_agent",

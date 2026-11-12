@@ -37,6 +37,26 @@
   },
   "stages": [
     {
+      "id": "gathering",
+      "name": "Gathering — collect today's news links",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.vnn_plugin.detect_gathering_needed"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.vnn_prompts.queue_gather_agent",
+          "agent": "NewsGathererAgent"
+        }
+      },
+      "markers": {
+        "processing": {"type": "json", "name": ".processing_gathering", "content": {}}
+      },
+      "timeout_minutes": 30,
+      "max_retries": 3
+    },
+    {
       "id": "ranking",
       "name": "Ranking — order the compiled stories",
       "trigger": {
