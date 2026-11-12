@@ -82,3 +82,13 @@ class TestProjectReadmeConfig:
     def test_readme_is_plain_string(self):
         data = _load_pyproject()
         assert isinstance(data["project"]["readme"], str)
+
+
+class TestProjectClassifiers:
+    """Tests for the [project] classifiers field in pyproject.toml."""
+
+    def test_classifiers_include_linux_and_windows(self):
+        data = _load_pyproject()
+        classifiers = data["project"]["classifiers"]
+        assert "Operating System :: POSIX :: Linux" in classifiers
+        assert "Operating System :: Microsoft :: Windows" in classifiers
