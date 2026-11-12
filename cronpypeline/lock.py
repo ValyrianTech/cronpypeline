@@ -31,7 +31,9 @@ class FileLock:
     :param dry_run: If True, bypasses actual locking.
     """
 
-    def __init__(self, lock_file: Path | str | None = None, dry_run: bool = False) -> None:
+    def __init__(
+        self, lock_file: Path | str | None = None, dry_run: bool = False
+    ) -> None:
         """Initialize a file lock.
 
         :param lock_file: Path to the lock file.
