@@ -104,8 +104,21 @@ class FileLock:
         # Write PID and timestamp for debugging
         try:
             content = f"pid:{os.getpid()}\ntimestamp:{time.time()}\n"
-            os.ftruncate(fd, 0)
-            os.write(fd, content.encode())
+            if fcntl is not None:
+                # POSIX (fcntl.flock) locks the whole file, so truncating to 0
+                # before writing is safe.
+                os.ftruncate(fd, 0)
+                os.write(fd, content.encode())
+            else:
+                # Windows (msvcrt.locking) locks byte 0 for a length of 1. We
+                # must never truncate the file below the locked byte, because
+                # reducing the length to 0 removes byte 0 and invalidates the
+                # held lock. So seek to offset 0, write the metadata, and only
+                # truncate trailing bytes down to the metadata length (never
+                # below 1 byte).
+                os.lseek(fd, 0, os.SEEK_SET)
+                os.write(fd, content.encode())
+                os.ftruncate(fd, max(1, len(content.encode())))
             os.fsync(fd)
         except OSError:
             try:
