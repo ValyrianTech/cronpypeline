@@ -834,6 +834,18 @@ class TestQueueGatherAgent:
         assert not (tmp_path / COUNTRY / GATHER_STATE_FILENAME).exists()
 
 
+class TestSourceList:
+    def test_filters_non_dict_entries(self):
+        assert vnn_prompts._source_list([
+            {"name": "X", "url": "u"},
+            "not-a-dict",
+            {"name": "Y"},
+        ]) == [{"name": "X", "url": "u"}, {"name": "Y"}]
+
+    def test_non_list_returns_empty(self):
+        assert vnn_prompts._source_list("nope") == []
+
+
 class TestModuleExports:
     @pytest.mark.parametrize("name", [
         "build_gather_prompt",
