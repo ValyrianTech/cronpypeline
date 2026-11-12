@@ -435,6 +435,29 @@ class TestFileLockWindowsMsvcrt:
             assert fake.calls == [(fd, _FakeMsvcrt.LK_NBLCK, 1)]
             lock.release()
 
+    def test_msvcrt_metadata_write_never_truncates_below_locked_byte(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        fake = _FakeMsvcrt()
+        lock = FileLock(lock_file)
+        truncate_lengths = []
+        real_ftruncate = os.ftruncate
+
+        def recording_ftruncate(fd, length):
+            truncate_lengths.append(length)
+            return real_ftruncate(fd, length)
+
+        with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
+            lock_module, "msvcrt", fake
+        ), mock.patch.object(
+            lock_module.os, "ftruncate", side_effect=recording_ftruncate
+        ):
+            assert lock.acquire() is True
+            lock.release()
+
+        assert str(os.getpid()) in lock_file.read_text()
+        assert all(length >= 1 for length in truncate_lengths)
+        assert lock_file.stat().st_size >= 1
+
 
 class TestFileLockNoBackend:
     """Tests for the no-locking-backend error path."""
