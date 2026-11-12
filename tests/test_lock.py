@@ -385,11 +385,32 @@ class _FakeMsvcrt:
     def __init__(self, fail_lock=False):
         self.fail_lock = fail_lock
         self.calls = []
+        self.locked_range = None
+        self.locked_fd = None
 
     def locking(self, fd, mode, nbytes):
         self.calls.append((fd, mode, nbytes))
         if self.fail_lock:
             raise OSError(errno.EACCES, "Permission denied")
+        if mode == self.LK_NBLCK:
+            start = os.lseek(fd, 0, os.SEEK_CUR)
+            self.locked_range = (start, nbytes)
+            self.locked_fd = fd
+        elif mode == self.LK_UNLCK:
+            self.assert_locked_range_intact()
+            self.locked_range = None
+            self.locked_fd = None
+
+    def assert_locked_range_intact(self):
+        if self.locked_range is None:
+            return
+        start, nbytes = self.locked_range
+        size = os.fstat(self.locked_fd).st_size
+        if size < start + nbytes:
+            raise AssertionError(
+                f"file truncated below locked range "
+                f"(size {size} < {start + nbytes})"
+            )
 
 
 class TestFileLockWindowsMsvcrt:
@@ -452,11 +473,30 @@ class TestFileLockWindowsMsvcrt:
             lock_module.os, "ftruncate", side_effect=recording_ftruncate
         ):
             assert lock.acquire() is True
+            fake.assert_locked_range_intact()
             lock.release()
 
         assert str(os.getpid()) in lock_file.read_text()
         assert all(length >= 1 for length in truncate_lengths)
         assert lock_file.stat().st_size >= 1
+
+    def test_fake_msvcrt_detects_truncation_below_locked_range(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            fake = _FakeMsvcrt()
+            fake.assert_locked_range_intact()
+            fake.locking(fd, _FakeMsvcrt.LK_NBLCK, 1)
+            assert fake.locked_range == (0, 1)
+            os.ftruncate(fd, 0)
+            with pytest.raises(AssertionError):
+                fake.assert_locked_range_intact()
+            with pytest.raises(AssertionError):
+                fake.locking(fd, _FakeMsvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(fd)
 
 
 class TestFileLockNoBackend:
