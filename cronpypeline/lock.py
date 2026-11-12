@@ -1,17 +1,28 @@
-"""FileLock — fcntl-based, non-blocking single-instance lock for cron pipelines."""
+"""FileLock — cross-platform, non-blocking single-instance lock for cron pipelines."""
 
 import errno
-import fcntl
 import os
 import time
 from pathlib import Path
 from types import TracebackType
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+
 
 class FileLock:
-    """Non-blocking file lock using fcntl.flock.
+    """Non-blocking file lock.
 
-    - Acquires ``LOCK_EX | LOCK_NB`` (fails immediately if already locked).
+    Uses ``fcntl.flock`` on POSIX and ``msvcrt.locking`` on Windows. Both
+    fail immediately if the lock is already held by another process.
+
     - Writes PID + timestamp to the lock file for debugging stale locks.
     - Dry-run mode bypasses locking entirely.
     - Supports context manager protocol.
@@ -40,6 +51,8 @@ class FileLock:
         """Attempt to acquire the lock.
 
         :returns: True on success, False if already locked by another process.
+        :raises RuntimeError: If no file-locking backend is available on this
+            platform.
         """
         if self._acquired:
             return True
@@ -48,24 +61,43 @@ class FileLock:
             self._acquired = True
             return True
 
+        if fcntl is None and msvcrt is None:
+            raise RuntimeError(
+                "No file-locking backend is available on this platform; "
+                "neither fcntl nor msvcrt can be imported."
+            )
+
         self.lock_file.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(self.lock_file), os.O_CREAT | os.O_RDWR, 0o644)
 
-        # Distinguish lock contention (return False) from genuine errors
-        # (re-raise, except EINTR which is retried). BlockingIOError is a
-        # subclass of OSError, so handle it first.
-        while True:
+        if fcntl is not None:
+            # Distinguish lock contention (return False) from genuine errors
+            # (re-raise, except EINTR which is retried). BlockingIOError is a
+            # subclass of OSError, so handle it first.
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    os.close(fd)
+                    return False
+                except OSError as e:
+                    if e.errno == errno.EINTR:
+                        continue
+                    os.close(fd)
+                    raise
+                break
+        else:
+            # Windows: lock the first byte of the file, non-blocking.
+            # msvcrt.locking raises OSError when the lock is already held by
+            # another process, which we treat as contention (return False).
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
+                if os.fstat(fd).st_size == 0:
+                    os.write(fd, b"\0")
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError:
                 os.close(fd)
                 return False
-            except OSError as e:
-                if e.errno == errno.EINTR:
-                    continue
-                os.close(fd)
-                raise
-            break
 
         self._fd = fd
 
@@ -77,7 +109,7 @@ class FileLock:
             os.fsync(fd)
         except OSError:
             try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                self._unlock_fd(fd)
             finally:
                 os.close(fd)
                 self._fd = None
@@ -85,6 +117,17 @@ class FileLock:
 
         self._acquired = True
         return True
+
+    def _unlock_fd(self, fd: int) -> None:
+        """Release the lock held on ``fd`` using the active backend.
+
+        :param fd: The open file descriptor holding the lock.
+        :type fd: int
+        """
+        if fcntl is not None:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        else:
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
     def release(self) -> None:
         """Release the lock if held. No-op if not acquired."""
@@ -97,7 +140,7 @@ class FileLock:
 
         if self._fd is not None:
             try:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
+                self._unlock_fd(self._fd)
             finally:
                 os.close(self._fd)
                 self._fd = None

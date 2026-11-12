@@ -1,10 +1,15 @@
-"""Tests for cronpypeline.lock — FileLock (fcntl-based, non-blocking)."""
+"""Tests for cronpypeline.lock — FileLock (cross-platform, non-blocking)."""
 
 import errno
+import importlib
 import os
+import sys
 import time
 from unittest import mock
 
+import pytest
+
+import cronpypeline.lock as lock_module
 from cronpypeline.lock import FileLock
 
 
@@ -369,3 +374,88 @@ class TestFileLockMetadataWriteFailure:
         assert lock2.acquire() is True
         assert lock2.is_acquired is True
         lock2.release()
+
+
+class _FakeMsvcrt:
+    """Stand-in for the Windows-only ``msvcrt`` module."""
+
+    LK_NBLCK = 1
+    LK_UNLCK = 2
+
+    def __init__(self, fail_lock=False):
+        self.fail_lock = fail_lock
+        self.calls = []
+
+    def locking(self, fd, mode, nbytes):
+        self.calls.append((fd, mode, nbytes))
+        if self.fail_lock:
+            raise OSError(errno.EACCES, "Permission denied")
+
+
+class TestFileLockWindowsMsvcrt:
+    """Tests for the Windows ``msvcrt.locking`` backend (faked on POSIX)."""
+
+    def test_msvcrt_acquire_and_release(self, tmp_path):
+        fake = _FakeMsvcrt()
+        lock = FileLock(tmp_path / "pipeline.lock")
+        with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
+            lock_module, "msvcrt", fake
+        ):
+            assert lock.acquire() is True
+            fd = lock._fd
+            assert fake.calls == [(fd, _FakeMsvcrt.LK_NBLCK, 1)]
+            lock.release()
+            assert fake.calls == [
+                (fd, _FakeMsvcrt.LK_NBLCK, 1),
+                (fd, _FakeMsvcrt.LK_UNLCK, 1),
+            ]
+        assert lock.is_acquired is False
+        assert lock._fd is None
+
+    def test_msvcrt_contention_returns_false(self, tmp_path):
+        fake = _FakeMsvcrt(fail_lock=True)
+        lock = FileLock(tmp_path / "pipeline.lock")
+        with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
+            lock_module, "msvcrt", fake
+        ):
+            assert lock.acquire() is False
+            assert lock.is_acquired is False
+            assert lock._fd is None
+
+    def test_msvcrt_acquire_nonempty_file_skips_placeholder(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        lock_file.write_text("existing content")
+        fake = _FakeMsvcrt()
+        lock = FileLock(lock_file)
+        with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
+            lock_module, "msvcrt", fake
+        ):
+            assert lock.acquire() is True
+            fd = lock._fd
+            assert fake.calls == [(fd, _FakeMsvcrt.LK_NBLCK, 1)]
+            lock.release()
+
+
+class TestFileLockNoBackend:
+    """Tests for the no-locking-backend error path."""
+
+    def test_acquire_raises_runtime_error_without_backend(self, tmp_path):
+        lock = FileLock(tmp_path / "pipeline.lock")
+        with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
+            lock_module, "msvcrt", None
+        ):
+            with pytest.raises(RuntimeError, match="No file-locking backend"):
+                lock.acquire()
+        assert lock.is_acquired is False
+
+
+class TestFileLockImportFallback:
+    """Tests for the guarded import fallback paths."""
+
+    def test_fcntl_import_fallback_sets_none(self):
+        try:
+            with mock.patch.dict(sys.modules, {"fcntl": None}):
+                importlib.reload(lock_module)
+                assert lock_module.fcntl is None
+        finally:
+            importlib.reload(lock_module)
