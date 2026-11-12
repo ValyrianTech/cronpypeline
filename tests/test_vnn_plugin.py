@@ -1074,6 +1074,10 @@ class TestDetectGatheringNeeded:
         with pytest.raises(ValueError):
             vnn_plugin._parse_hhmm("24:00")
 
+    def test_non_numeric_gather_time_raises(self):
+        with pytest.raises(ValueError):
+            vnn_plugin._parse_hhmm("ab:cd")
+
 
 class TestRecordGatherAttempt:
     def test_increments_and_stamps_the_day(self, country: Path):
