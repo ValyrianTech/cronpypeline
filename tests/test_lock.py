@@ -385,19 +385,29 @@ class _FakeMsvcrt:
     def __init__(self, fail_lock=False):
         self.fail_lock = fail_lock
         self.calls = []
+        self.positions = []
         self.locked_range = None
         self.locked_fd = None
 
     def locking(self, fd, mode, nbytes):
+        pos = os.lseek(fd, 0, os.SEEK_CUR)
         self.calls.append((fd, mode, nbytes))
+        self.positions.append((mode, pos))
         if self.fail_lock:
             raise OSError(errno.EACCES, "Permission denied")
         if mode == self.LK_NBLCK:
-            start = os.lseek(fd, 0, os.SEEK_CUR)
+            start = pos
             self.locked_range = (start, nbytes)
             self.locked_fd = fd
         elif mode == self.LK_UNLCK:
             self.assert_locked_range_intact()
+            if self.locked_range is not None:
+                locked_start, _ = self.locked_range
+                if pos != locked_start:
+                    raise AssertionError(
+                        f"unlock performed at position {pos} but lock held at "
+                        f"offset {locked_start}"
+                    )
             self.locked_range = None
             self.locked_fd = None
 
@@ -479,6 +489,23 @@ class TestFileLockWindowsMsvcrt:
         assert str(os.getpid()) in lock_file.read_text()
         assert all(length >= 1 for length in truncate_lengths)
         assert lock_file.stat().st_size >= 1
+
+    def test_fake_msvcrt_detects_unlock_at_wrong_position(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            fake = _FakeMsvcrt()
+            fake.locking(fd, _FakeMsvcrt.LK_NBLCK, 1)
+            assert fake.locked_range == (0, 1)
+            os.lseek(fd, 5, os.SEEK_SET)
+            with pytest.raises(
+                AssertionError, match="unlock performed at position"
+            ):
+                fake.locking(fd, _FakeMsvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(fd)
 
     def test_fake_msvcrt_detects_truncation_below_locked_range(self, tmp_path):
         lock_file = tmp_path / "pipeline.lock"

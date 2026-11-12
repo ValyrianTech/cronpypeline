@@ -142,6 +142,11 @@ class FileLock:
         if fcntl is not None:
             fcntl.flock(fd, fcntl.LOCK_UN)
         else:
+            # msvcrt.locking locks relative to the current file position. After
+            # acquire() writes the PID/timestamp metadata the position is at
+            # end-of-file, so seek back to 0 to unlock the exact byte that was
+            # locked (acquire() locks byte 0).
+            os.lseek(fd, 0, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
     def release(self) -> None:
