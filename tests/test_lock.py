@@ -1,10 +1,15 @@
-"""Tests for cronpypeline.lock — FileLock (fcntl-based, non-blocking)."""
+"""Tests for cronpypeline.lock — FileLock (cross-platform, non-blocking)."""
 
 import errno
+import importlib
 import os
+import sys
 import time
 from unittest import mock
 
+import pytest
+
+import cronpypeline.lock as lock_module
 from cronpypeline.lock import FileLock
 
 
@@ -369,3 +374,178 @@ class TestFileLockMetadataWriteFailure:
         assert lock2.acquire() is True
         assert lock2.is_acquired is True
         lock2.release()
+
+
+class _FakeMsvcrt:
+    """Stand-in for the Windows-only ``msvcrt`` module."""
+
+    LK_NBLCK = 1
+    LK_UNLCK = 2
+
+    def __init__(self, fail_lock=False):
+        self.fail_lock = fail_lock
+        self.calls = []
+        self.positions = []
+        self.locked_range = None
+        self.locked_fd = None
+
+    def locking(self, fd, mode, nbytes):
+        pos = os.lseek(fd, 0, os.SEEK_CUR)
+        self.calls.append((fd, mode, nbytes))
+        self.positions.append((mode, pos))
+        if self.fail_lock:
+            raise OSError(errno.EACCES, "Permission denied")
+        if mode == self.LK_NBLCK:
+            start = pos
+            self.locked_range = (start, nbytes)
+            self.locked_fd = fd
+        elif mode == self.LK_UNLCK:
+            self.assert_locked_range_intact()
+            if self.locked_range is not None:
+                locked_start, _ = self.locked_range
+                if pos != locked_start:
+                    raise AssertionError(
+                        f"unlock performed at position {pos} but lock held at "
+                        f"offset {locked_start}"
+                    )
+            self.locked_range = None
+            self.locked_fd = None
+
+    def assert_locked_range_intact(self):
+        if self.locked_range is None:
+            return
+        start, nbytes = self.locked_range
+        size = os.fstat(self.locked_fd).st_size
+        if size < start + nbytes:
+            raise AssertionError(
+                f"file truncated below locked range "
+                f"(size {size} < {start + nbytes})"
+            )
+
+
+class TestFileLockWindowsMsvcrt:
+    """Tests for the Windows ``msvcrt.locking`` backend (faked on POSIX)."""
+
+    def test_msvcrt_acquire_and_release(self, tmp_path):
+        fake = _FakeMsvcrt()
+        lock = FileLock(tmp_path / "pipeline.lock")
+        with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
+            lock_module, "msvcrt", fake
+        ):
+            assert lock.acquire() is True
+            fd = lock._fd
+            assert fake.calls == [(fd, _FakeMsvcrt.LK_NBLCK, 1)]
+            lock.release()
+            assert fake.calls == [
+                (fd, _FakeMsvcrt.LK_NBLCK, 1),
+                (fd, _FakeMsvcrt.LK_UNLCK, 1),
+            ]
+        assert lock.is_acquired is False
+        assert lock._fd is None
+
+    def test_msvcrt_contention_returns_false(self, tmp_path):
+        fake = _FakeMsvcrt(fail_lock=True)
+        lock = FileLock(tmp_path / "pipeline.lock")
+        with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
+            lock_module, "msvcrt", fake
+        ):
+            assert lock.acquire() is False
+            assert lock.is_acquired is False
+            assert lock._fd is None
+
+    def test_msvcrt_acquire_nonempty_file_skips_placeholder(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        lock_file.write_text("existing content")
+        fake = _FakeMsvcrt()
+        lock = FileLock(lock_file)
+        with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
+            lock_module, "msvcrt", fake
+        ):
+            assert lock.acquire() is True
+            fd = lock._fd
+            assert fake.calls == [(fd, _FakeMsvcrt.LK_NBLCK, 1)]
+            lock.release()
+
+    def test_msvcrt_metadata_write_never_truncates_below_locked_byte(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        fake = _FakeMsvcrt()
+        lock = FileLock(lock_file)
+        truncate_lengths = []
+        real_ftruncate = os.ftruncate
+
+        def recording_ftruncate(fd, length):
+            truncate_lengths.append(length)
+            return real_ftruncate(fd, length)
+
+        with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
+            lock_module, "msvcrt", fake
+        ), mock.patch.object(
+            lock_module.os, "ftruncate", side_effect=recording_ftruncate
+        ):
+            assert lock.acquire() is True
+            fake.assert_locked_range_intact()
+            lock.release()
+
+        assert str(os.getpid()) in lock_file.read_text()
+        assert all(length >= 1 for length in truncate_lengths)
+        assert lock_file.stat().st_size >= 1
+
+    def test_fake_msvcrt_detects_unlock_at_wrong_position(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            fake = _FakeMsvcrt()
+            fake.locking(fd, _FakeMsvcrt.LK_NBLCK, 1)
+            assert fake.locked_range == (0, 1)
+            os.lseek(fd, 5, os.SEEK_SET)
+            with pytest.raises(
+                AssertionError, match="unlock performed at position"
+            ):
+                fake.locking(fd, _FakeMsvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(fd)
+
+    def test_fake_msvcrt_detects_truncation_below_locked_range(self, tmp_path):
+        lock_file = tmp_path / "pipeline.lock"
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            fake = _FakeMsvcrt()
+            fake.assert_locked_range_intact()
+            fake.locking(fd, _FakeMsvcrt.LK_NBLCK, 1)
+            assert fake.locked_range == (0, 1)
+            os.ftruncate(fd, 0)
+            with pytest.raises(AssertionError):
+                fake.assert_locked_range_intact()
+            with pytest.raises(AssertionError):
+                fake.locking(fd, _FakeMsvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(fd)
+
+
+class TestFileLockNoBackend:
+    """Tests for the no-locking-backend error path."""
+
+    def test_acquire_raises_runtime_error_without_backend(self, tmp_path):
+        lock = FileLock(tmp_path / "pipeline.lock")
+        with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
+            lock_module, "msvcrt", None
+        ):
+            with pytest.raises(RuntimeError, match="No file-locking backend"):
+                lock.acquire()
+        assert lock.is_acquired is False
+
+
+class TestFileLockImportFallback:
+    """Tests for the guarded import fallback paths."""
+
+    def test_fcntl_import_fallback_sets_none(self):
+        try:
+            with mock.patch.dict(sys.modules, {"fcntl": None}):
+                importlib.reload(lock_module)
+                assert lock_module.fcntl is None
+        finally:
+            importlib.reload(lock_module)
