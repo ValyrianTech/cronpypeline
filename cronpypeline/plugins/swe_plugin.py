@@ -333,12 +333,20 @@ def detect_vulture_fail(context: dict[str, Any]) -> bool:
 
 
 def detect_session_complete(context: dict[str, Any]) -> bool:
-    """Trigger: fire when a GitHub session's issue is done or discarded without a PR.
+    """Trigger: fire when a GitHub session's issue is terminal and no PR will follow.
 
     Mirrors the old pipeline's ``detect_c_github_session_terminal`` logic:
     - GitHub session is active
     - No PR was ever published (pr_published.json doesn't exist)
-    - The session's issue has status 'discarded' or 'done'
+    - The session's issue has status 'discarded', or 'done' with nothing left
+      to publish
+
+    A ``done`` issue is not terminal by itself: the GATE marks an issue done as
+    soon as the fix is verified and merged into the integration branch, which
+    happens *before* ``C-pr-title``/``C-publish`` open the PR.  Finalizing the
+    session at that point would close the GitHub issue as "not actionable"
+    while its fix is still waiting to be published, so ``done`` only counts as
+    terminal when the integration branch has no unpublished commits.
 
     :param context: Trigger context dict with ``target_dir``.
     :returns: True if the session should be finalized.
@@ -369,7 +377,18 @@ def detect_session_complete(context: dict[str, Any]) -> bool:
         fm, _ = parse_frontmatter(issue_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return fm.get("status") in ("discarded", "done")
+    status = fm.get("status")
+    if status == "discarded":
+        return True
+    if status != "done":
+        return False
+    # ``done`` means "the fix is in the integration branch", not "no PR is
+    # coming".  Only finalize when there is nothing left to publish.
+    target_config = context.get("target_config") or {}
+    if (target_config.get("delivery") or "").strip() != "open_pr":
+        return True
+    default_branch = target_config.get("default_branch") or "main"
+    return _integration_ahead_by(target_dir, default_branch) == 0
 
 
 def select_issue(action: ActionSpec, context: TickContext) -> tuple[bool, str]:
@@ -1237,6 +1256,7 @@ def detect_b1_issue_gathering(context: dict[str, Any]) -> bool:
 
     Mirrors the original ``detect_b1_issue_gathering`` logic:
     - No active GitHub session
+    - No published PR awaiting a terminal state
     - Idle or completed session (or recheck interval elapsed)
     - Token available
     - Slug configured (contains '/')
@@ -1251,6 +1271,18 @@ def detect_b1_issue_gathering(context: dict[str, Any]) -> bool:
     # Short-circuit: if the target has been finalized after PR merge, stop polling
     if (target_dir / SWE_SUBDIR / "markers" / "c_finalize.marker").exists():
         return False
+
+    # A published PR that has not reached a terminal state still owns the
+    # current work.  Starting a new session now would overwrite the session the
+    # PR belongs to, so the merge would be credited to the wrong issue.
+    pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
+    if pr_marker.exists():
+        try:
+            pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pr_data = {}
+        if pr_data.get("pr_number") and pr_data.get("pr_state", "open") not in ("merged", "rejected"):
+            return False
 
     session = _read_github_session(target_dir)
     if session is not None:
@@ -1287,6 +1319,30 @@ def _strip_newlines(value: str) -> str:
     :returns: The string with all newline characters removed.
     """
     return value.replace("\n", "").replace("\r", "")
+
+
+def _start_github_session(session_path: Path, gh_number: Any, issue_id: str) -> None:
+    """Write a new active GitHub session and reset the session-terminal marker.
+
+    ``C-session-terminal``'s completion marker is a plain file marker, so it
+    would otherwise stay on disk forever and prevent every later session from
+    being finalized.
+
+    :param session_path: Path to the target's ``.SWE/github_session.json``.
+    :param gh_number: GitHub issue number.
+    :param issue_id: Issue store ID.
+    """
+    write_json_atomic(session_path, {
+        "active": True,
+        "github_number": gh_number,
+        "issue_id": issue_id,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    })
+    terminal_marker = session_path.parent / "markers" / "session_finalized.marker"
+    try:
+        terminal_marker.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -1341,12 +1397,7 @@ def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionRe
         return ActionResult(success=False, stderr="No issue number in GitHub response")
 
     if _git_issue_already_ingested(target_dir, gh_number):
-        write_json_atomic(session_path, {
-            "active": True,
-            "github_number": gh_number,
-            "issue_id": f"github-{gh_number}",
-            "started_at": datetime.now(timezone.utc).isoformat(),
-        })
+        _start_github_session(session_path, gh_number, f"github-{gh_number}")
         return ActionResult(success=True, data={"issue_id": f"github-{gh_number}", "already_ingested": True})
 
     issue_id = f"github-{gh_number}"
@@ -1377,12 +1428,7 @@ def run_b1_issue_gathering(action: ActionSpec, context: TickContext) -> ActionRe
             stderr=f"Failed to create issue from GitHub data: {exc}",
         )
 
-    write_json_atomic(session_path, {
-        "active": True,
-        "github_number": gh_number,
-        "issue_id": issue_id,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    })
+    _start_github_session(session_path, gh_number, issue_id)
 
     return ActionResult(success=True, data={"issue_id": issue_id, "gh_number": gh_number})
 
@@ -1714,6 +1760,24 @@ def integration_head_sha(target_dir: Path, default_branch: str) -> str | None:
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip()
     return None
+
+
+def _integration_ahead_by(target_dir: Path, default_branch: str) -> int:
+    """Return how many commits the integration branch is ahead of the default branch.
+
+    :param target_dir: Target repo directory.
+    :param default_branch: Default branch name (e.g. 'main').
+    :returns: Commit count, or 0 when it cannot be determined.
+    """
+    try:
+        res = subprocess.run(
+            [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
+             f"{default_branch}..{INTEGRATION_BRANCH}"],
+            capture_output=True, text=True, check=False, timeout=60,
+        )  # nosec B603 - git with fixed args
+        return int((res.stdout or "").strip() or "0")
+    except (ValueError, subprocess.TimeoutExpired):
+        return 0
 
 
 def _sha_is_ancestor(target_dir: Path, ancestor_sha: str, descendant_ref: str) -> bool:
@@ -2393,7 +2457,7 @@ def _retry_pending_github_close(
     if pr_state not in ("merged", "rejected"):
         return None
 
-    gh_issue_number = session.get("github_number")
+    gh_issue_number = pr_data.get("github_number") or session.get("github_number")
     if not gh_issue_number:
         session["active"] = False
         session["completed"] = True
@@ -2438,6 +2502,54 @@ def _effective_poll_cooldown(pr_data: dict[str, Any]) -> float:
         failures = 0
     cooldown = PR_POLL_COOLDOWN_SECONDS * (2 ** failures)
     return min(cooldown, PR_POLL_MAX_COOLDOWN_SECONDS)
+
+
+def _finalize_pr_issue(
+    target_dir: Path, pr_data: dict[str, Any], pr_info: dict[str, Any],
+    owner: str, gh_repo_name: str, pr_number: Any, token: str, merged: bool,
+) -> None:
+    """Close the GitHub issue a PR was published for and retire its session.
+
+    The issue number is taken from the PR marker (recorded at publish time)
+    rather than from the live session, so a session started for a *different*
+    issue after the PR was opened can neither be credited with the PR nor
+    closed by it.  The session is only retired when it belongs to the PR's
+    issue; otherwise it is left running for its own issue.
+
+    :param target_dir: Target repo directory.
+    :param pr_data: Parsed ``pr_published.json`` contents.
+    :param pr_info: GitHub PR payload (used for ``html_url``).
+    :param owner: Repo owner.
+    :param gh_repo_name: Repo name on GitHub.
+    :param pr_number: PR number.
+    :param token: GitHub auth token.
+    :param merged: Whether the PR was merged.
+    """
+    session = _read_github_session(target_dir)
+    gh_issue_number = pr_data.get("github_number")
+    if not gh_issue_number and session is not None:
+        gh_issue_number = session.get("github_number")
+
+    if gh_issue_number:
+        closed = _close_and_comment_github_issue(
+            owner, gh_repo_name, gh_issue_number, pr_number,
+            pr_info.get("html_url", ""), token, merged=merged,
+        )
+    else:
+        closed = True
+
+    if session is None or not session.get("active"):
+        return
+    if gh_issue_number is not None and str(session.get("github_number")) != str(gh_issue_number):
+        # The session belongs to a different issue — leave it running for it.
+        return
+    if closed:
+        session["active"] = False
+        session["completed"] = True
+        session["completed_at"] = datetime.now(timezone.utc).isoformat()
+    else:
+        session["gh_close_pending"] = True
+    write_json_atomic(target_dir / GITHUB_SESSION_FILE, session)
 
 
 def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
@@ -2553,50 +2665,20 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
     if gh_state == "closed" and merged:
         _update_marker("merged", merged_at=pr_info.get("merged_at", ""))
         _flush()
-        session = _read_github_session(target_dir)
-        if session is not None and session.get("active"):
-            gh_issue_number = session.get("github_number")
-            if gh_issue_number:
-                closed = _close_and_comment_github_issue(
-                    owner, gh_repo_name, gh_issue_number, pr_number,
-                    pr_info.get("html_url", ""), token, merged=True,
-                )
-                if closed:
-                    session["active"] = False
-                    session["completed"] = True
-                    session["completed_at"] = datetime.now(timezone.utc).isoformat()
-                else:
-                    session["gh_close_pending"] = True
-            else:
-                session["active"] = False
-                session["completed"] = True
-                session["completed_at"] = datetime.now(timezone.utc).isoformat()
-            write_json_atomic(target_dir / GITHUB_SESSION_FILE, session)
+        _finalize_pr_issue(
+            target_dir, pr_data, pr_info, owner, gh_repo_name, pr_number,
+            token, merged=True,
+        )
         return ActionResult(success=True, data={"pr_state": "merged"})
 
     # Terminal: rejected
     if gh_state == "closed" and not merged:
         _update_marker("rejected", closed_at=pr_info.get("closed_at", ""))
         _flush()
-        session = _read_github_session(target_dir)
-        if session is not None and session.get("active"):
-            gh_issue_number = session.get("github_number")
-            if gh_issue_number:
-                closed = _close_and_comment_github_issue(
-                    owner, gh_repo_name, gh_issue_number, pr_number,
-                    pr_info.get("html_url", ""), token, merged=False,
-                )
-                if closed:
-                    session["active"] = False
-                    session["completed"] = True
-                    session["completed_at"] = datetime.now(timezone.utc).isoformat()
-                else:
-                    session["gh_close_pending"] = True
-            else:
-                session["active"] = False
-                session["completed"] = True
-                session["completed_at"] = datetime.now(timezone.utc).isoformat()
-            write_json_atomic(target_dir / GITHUB_SESSION_FILE, session)
+        _finalize_pr_issue(
+            target_dir, pr_data, pr_info, owner, gh_repo_name, pr_number,
+            token, merged=False,
+        )
         return ActionResult(success=True, data={"pr_state": "rejected"})
 
     # Still open — check for changes-requested / approved reviews
@@ -3828,16 +3910,7 @@ def _publish_preconditions_met(context: dict[str, Any]) -> bool:
         return False
 
     # Integration must be ahead of default
-    try:
-        behind = subprocess.run(
-            [GIT_BIN, "-C", str(target_dir), "rev-list", "--count",
-             f"{default_branch}..{INTEGRATION_BRANCH}"],
-            capture_output=True, text=True, check=False, timeout=60,
-        )  # nosec B603 - git with fixed args
-        ahead_by = int((behind.stdout or "").strip() or "0")
-    except (ValueError, subprocess.TimeoutExpired):
-        ahead_by = 0
-    if ahead_by == 0:
+    if _integration_ahead_by(target_dir, default_branch) == 0:
         return False
 
     # No existing PR
@@ -4000,12 +4073,22 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
     pr_url = pr_data.get("html_url", "")
     pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
     pr_marker.parent.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(pr_marker, {
+    marker_data: dict[str, Any] = {
         "sha": sha,
         "pr_number": pr_number,
         "pr_url": pr_url,
         "published_at": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    # Record which issue this PR was published for.  ``C-pr-status`` closes the
+    # issue named here rather than whatever session happens to be current when
+    # the PR is merged, so a later session cannot be credited with this PR.
+    session = _read_github_session(target_dir)
+    if session is not None:
+        if session.get("issue_id"):
+            marker_data["issue_id"] = session["issue_id"]
+        if session.get("github_number"):
+            marker_data["github_number"] = session["github_number"]
+    write_json_atomic(pr_marker, marker_data)
 
     return ActionResult(success=True, data={"pr_number": pr_number, "pr_url": pr_url})
 

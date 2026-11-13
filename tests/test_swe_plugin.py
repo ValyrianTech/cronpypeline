@@ -8987,3 +8987,207 @@ class TestRunCPrStatusInvalidFiledIssueId:
             result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is True
         assert result.data["pr_state"] == "open"
+
+
+# ─── PR/issue attribution (regression: issues #157 / #158) ──────────────────
+
+
+def _init_git_repo(target: Path) -> None:
+    """Initialise a repo with ``main`` and an integration branch at the same commit."""
+    subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+    (target / ".gitignore").write_text(".SWE/\n")
+    (target / "f.txt").write_text("x")
+    subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+
+
+def _commit_on_integration(target: Path) -> None:
+    """Add one commit on the integration branch so it is ahead of ``main``."""
+    subprocess.run(["git", "-C", str(target), "checkout", "swe-pipeline/integration"], capture_output=True, check=True)
+    (target / "fix.txt").write_text("fix")
+    subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(target), "commit", "-m", "fix"], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(target), "checkout", "main"], capture_output=True, check=True)
+
+
+class TestDetectSessionCompletePendingPublish:
+    """A ``done`` issue whose fix is not published yet must not be finalized."""
+
+    def _setup(self, target: Path, status: str = "done") -> None:
+        (target / ".SWE" / "github_session.json").write_text(json.dumps({
+            "active": True, "issue_id": "github-157", "github_number": 157,
+        }))
+        (target / ".SWE" / "issues" / "github-157.md").write_text(
+            f"---\nid: github-157\nstatus: {status}\ngithub_number: 157\n---\n# Issue\n"
+        )
+
+    def test_does_not_fire_when_done_and_integration_ahead(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        _init_git_repo(target)
+        _commit_on_integration(target)
+        ctx = {"target_dir": str(target), "target_config": {"delivery": "open_pr", "default_branch": "main"}}
+        assert detect_session_complete(ctx) is False
+
+    def test_fires_when_done_and_nothing_to_publish(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        _init_git_repo(target)
+        ctx = {"target_dir": str(target), "target_config": {"delivery": "open_pr", "default_branch": "main"}}
+        assert detect_session_complete(ctx) is True
+
+    def test_fires_when_done_and_delivery_is_not_open_pr(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup(target)
+        ctx = {"target_dir": str(target), "target_config": {"delivery": "branch"}}
+        assert detect_session_complete(ctx) is True
+
+    def test_fires_when_discarded_even_with_integration_ahead(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._setup(target, status="discarded")
+        _init_git_repo(target)
+        _commit_on_integration(target)
+        ctx = {"target_dir": str(target), "target_config": {"delivery": "open_pr", "default_branch": "main"}}
+        assert detect_session_complete(ctx) is True
+
+
+class TestRunCPrPublishRecordsIssue:
+    def test_records_session_issue_in_marker(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        _init_git_repo(target)
+        (target / ".SWE" / "github_session.json").write_text(json.dumps({
+            "active": True, "issue_id": "github-157", "github_number": 157,
+        }))
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: dilemmas"}))
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        mock_push = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", return_value=mock_push), \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_post",
+                   return_value={"number": 161, "html_url": "https://github.com/owner/repo/pull/161"}):
+            result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert pr_data["issue_id"] == "github-157"
+        assert pr_data["github_number"] == 157
+
+    def test_marker_omits_issue_when_no_session(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        _init_git_repo(target)
+        (target / ".SWE" / "pr_meta.json").write_text(json.dumps({"title": "SWE Pipeline: dilemmas"}))
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        mock_push = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", return_value=mock_push), \
+             patch("cronpypeline.plugins.swe_plugin._gh_api_post",
+                   return_value={"number": 161, "html_url": "https://github.com/owner/repo/pull/161"}):
+            result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        pr_data = json.loads((target / ".SWE" / "pr_published.json").read_text())
+        assert "github_number" not in pr_data
+        assert "issue_id" not in pr_data
+
+
+class TestRunCPrStatusClosesPrIssue:
+    """The merge must close the issue the PR was published for, not the live session's."""
+
+    def _merged_response(self) -> MagicMock:
+        return _mock_http_response({
+            "state": "closed", "merged": True, "merged_at": "2026-11-13T20:49:41Z",
+            "html_url": "https://github.com/ValyrianTech/Starfarer/pull/161",
+        })
+
+    def test_closes_pr_issue_not_current_session(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 161, "issue_id": "github-157", "github_number": 157,
+        }))
+        (target / ".SWE" / "github_session.json").write_text(json.dumps({
+            "active": True, "issue_id": "github-158", "github_number": 158,
+        }))
+        ctx = _make_tick_context(target, slug="ValyrianTech/Starfarer")
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=self._merged_response()), \
+             patch("cronpypeline.plugins.swe_plugin._close_and_comment_github_issue",
+                   return_value=True) as mock_close:
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.data["pr_state"] == "merged"
+        assert mock_close.call_args.args[2] == 157
+        # The session belongs to a different issue and must be left running.
+        saved = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert saved["active"] is True
+        assert saved["github_number"] == 158
+
+    def test_retires_session_that_owns_pr(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 161, "issue_id": "github-157", "github_number": 157,
+        }))
+        (target / ".SWE" / "github_session.json").write_text(json.dumps({
+            "active": True, "issue_id": "github-157", "github_number": 157,
+        }))
+        ctx = _make_tick_context(target, slug="ValyrianTech/Starfarer")
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", return_value=self._merged_response()), \
+             patch("cronpypeline.plugins.swe_plugin._close_and_comment_github_issue",
+                   return_value=True) as mock_close:
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert mock_close.call_args.args[2] == 157
+        saved = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert saved["active"] is False
+        assert saved["completed"] is True
+
+
+class TestDetectB1IssueGatheringOpenPr:
+    def test_does_not_fire_while_pr_open(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 161}))
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_b1_issue_gathering(ctx) is False
+
+    def test_fires_when_pr_merged(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(
+            json.dumps({"pr_number": 161, "pr_state": "merged"})
+        )
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_b1_issue_gathering(ctx) is True
+
+    def test_fires_when_pr_marker_corrupt(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text("not json")
+        ctx = {"target_dir": str(target), "target_config": {"slug": "owner/repo"}}
+        assert detect_b1_issue_gathering(ctx) is True
+
+
+class TestRunB1IssueGatheringResetsTerminalMarker:
+    def test_new_session_clears_session_finalized_marker(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        terminal = target / ".SWE" / "markers" / "session_finalized.marker"
+        terminal.write_text("")
+        ctx = _make_tick_context(target, slug="owner/repo", issue_label="swe-pipeline")
+        gh_issue = {
+            "number": 158,
+            "title": "Credit trap",
+            "body": "No way to earn credits",
+            "html_url": "https://github.com/owner/repo/issues/158",
+            "created_at": "2025-01-01T00:00:00Z",
+            "labels": [{"name": "enhancement"}],
+        }
+        with patch("cronpypeline.plugins.swe_plugin._gh_api_get_all_pages", return_value=[gh_issue]):
+            result = run_b1_issue_gathering(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert not terminal.exists()
+        session = json.loads((target / ".SWE" / "github_session.json").read_text())
+        assert session["active"] is True
+        assert session["github_number"] == 158
+
