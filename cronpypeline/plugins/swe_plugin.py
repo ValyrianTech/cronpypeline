@@ -2243,6 +2243,7 @@ def _build_pr_review_prompt(
     target_dir: Path, repo_name: str, default_branch: str, sha: str,
     pr_number: int, owner: str, gh_repo_name: str,
     review_cycle: int = 0, max_cycles: int = 0,
+    python: str | None = None,
 ) -> str:
     """Build the prompt for the PRReviewAgent.
 
@@ -2255,6 +2256,9 @@ def _build_pr_review_prompt(
     :param gh_repo_name: Repo name on GitHub.
     :param review_cycle: Current review cycle number.
     :param max_cycles: Maximum review cycles.
+    :param python: The repo's configured base interpreter (the registry
+        ``python`` key), used to create its ``.venv``. Only used to
+        describe the environment in the prompt.
     :returns: Prompt string.
     """
     marker_path = target_dir / SWE_SUBDIR / "pr_reviewed.json"
@@ -2262,6 +2266,18 @@ def _build_pr_review_prompt(
         f"{sys.executable} -m cronpypeline.plugins.pr_review {repo_name} "
         f"--pr-number {pr_number} --body-file /tmp/pr_review.md"
     )
+
+    python_note = (
+        f"## Python environment\n\n"
+        f"Use the repo's virtualenv for any Python command — the system "
+        f"`python` may be a different version and will fail to import the "
+        f"project (e.g. `ImportError: cannot import name 'UTC' from "
+        f"'datetime'` on Python 3.10):\n"
+        f"  cd {shlex.quote(str(target_dir))} && .venv/bin/python -m pytest -q\n"
+    )
+    if python:
+        python_note += f"\nThis repo's `.venv` was created with `{python}`.\n"
+    python_note += "\n"
 
     cycle_guidance = ""
     if max_cycles > 0:
@@ -2310,6 +2326,7 @@ def _build_pr_review_prompt(
         f"is the Recommendation section content, not the review event type. "
         f"Be thorough but fair. Do NOT use APPROVE (that is for humans)."
         f"{cycle_guidance}\n"
+        f"{python_note}"
         f"## Step 1 — gather context\n\n"
         f"Use RunCommand to understand the changes. Start small:\n"
         f"  cd {shlex.quote(str(target_dir))} && git log {default_branch}..{INTEGRATION_BRANCH} --oneline\n"
@@ -2347,8 +2364,10 @@ def _build_pr_review_prompt(
         f"so be explicit.\n\n"
         f"Then post it with RunCommand:\n\n"
         f"  Always post as COMMENT (the pipeline detects change requests from "
-        f"the Recommendation text above):\n"
-        f"    {reviewer_cmd_base} --event COMMENT\n\n"
+        f"the Recommendation text above). Run it from the repo directory — "
+        f"not the agent workspace, which may contain a stale `cronpypeline/` "
+        f"directory that shadows the installed package:\n"
+        f"    cd {shlex.quote(str(target_dir))} && {reviewer_cmd_base} --event COMMENT\n\n"
         f"CRITICAL: The RunCommand output MUST show \"Posted ... review\" before "
         f"you proceed. If the post fails, read the error and fix the problem. "
         f"Do NOT write the completion marker until the post succeeds.\n\n"
@@ -4195,6 +4214,7 @@ def run_c_pr_review(action: ActionSpec, context: TickContext) -> ActionResult:
         target_dir, repo_name, default_branch, sha,
         pr_number, owner, gh_repo_name,
         review_cycle=pr_cycles + 1, max_cycles=max_cycles,
+        python=target_config.get("python"),
     )
 
     # Queue via conversation queue handler

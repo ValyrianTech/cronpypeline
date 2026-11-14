@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -2850,6 +2851,46 @@ class TestBuildPrReviewPrompt:
         )
         assert f"cd '{target}'" in prompt
         assert f"cd {target}" not in prompt
+
+    def test_includes_python_environment_note(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        prompt = _build_pr_review_prompt(
+            target, "repo", "main", "abc123def456", 42, "owner", "repo",
+        )
+        assert "## Python environment" in prompt
+        assert f"cd {target} && .venv/bin/python -m pytest -q" in prompt
+
+    def test_includes_configured_interpreter(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        prompt = _build_pr_review_prompt(
+            target, "repo", "main", "abc123def456", 42, "owner", "repo",
+            python="/usr/bin/python3.12",
+        )
+        assert "created with `/usr/bin/python3.12`" in prompt
+
+    def test_omits_interpreter_note_when_unset(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        prompt = _build_pr_review_prompt(
+            target, "repo", "main", "abc123def456", 42, "owner", "repo",
+        )
+        assert "was created with" not in prompt
+
+    def test_post_command_runs_from_target_dir(self, tmp_path):
+        """The post command must not run from the agent workspace.
+
+        The agent workspace can contain a stale ``cronpypeline/`` directory
+        that shadows the editable-installed package, making
+        ``python -m cronpypeline.plugins.pr_review`` fail with
+        ``No module named cronpypeline.plugins.pr_review``.
+        """
+        target = _make_target_dir(tmp_path)
+        prompt = _build_pr_review_prompt(
+            target, "repo", "main", "abc123def456", 42, "owner", "repo",
+        )
+        assert (
+            f"cd {target} && {sys.executable} -m cronpypeline.plugins.pr_review"
+            in prompt
+        )
 
 
 # ─── _build_pr_title_prompt ─────────────────────────────────────────────────
