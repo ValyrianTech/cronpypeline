@@ -1086,7 +1086,7 @@ The `webui/` directory contains a standalone FastAPI dashboard (`webui/app.py`) 
 .venv/bin/python -m pytest tests/test_pipeline.py -v
 ```
 
-The test suite includes **2637 tests** covering:
+The test suite includes **3075 tests** covering:
 - Unit tests for each core class (config parsing, marker resolution, trigger evaluation, lock acquisition, action execution)
 - Integration tests using temp directories as workspaces, simulating multi-tick execution
 - Crash safety tests verifying state recovery from partial filesystem state
