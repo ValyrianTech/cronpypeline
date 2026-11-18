@@ -638,6 +638,51 @@ def _git(repo_dir: Path, *args: str, check: bool = True, timeout: int = 60) -> s
         ) from e
 
 
+def _git_push_with_token(
+    repo_dir: Path,
+    token: str,
+    *,
+    set_upstream: bool = False,
+    timeout: int = 120,
+) -> subprocess.CompletedProcess[str]:
+    """Push the integration branch authenticated with an explicit token.
+
+    The token is handed to git through a one-shot credential helper that reads
+    it from the environment, so it never appears in the process argument list
+    (visible via ``ps``) nor in git's error output.  Ambient credential helpers
+    are cleared first, so a stale entry in ``~/.git-credentials`` can never
+    override the configured token — otherwise a rotated token would keep
+    failing the push with a 403 naming whichever account the stale entry
+    belongs to, while every GitHub API call (which uses the configured token)
+    kept succeeding.
+
+    :param repo_dir: Target repo directory.
+    :param token: GitHub token used to authenticate the push.
+    :param set_upstream: If True, pass ``--set-upstream``.
+    :param timeout: Timeout in seconds for the push.
+    :returns: CompletedProcess result.
+    """
+    env = os.environ.copy()
+    env["SWE_GIT_PUSH_TOKEN"] = token
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    helper = (
+        'credential.helper=!f() { echo username=x-access-token; '
+        'echo "password=$SWE_GIT_PUSH_TOKEN"; }; f'
+    )
+    args = [
+        GIT_BIN, "-C", str(repo_dir),
+        "-c", "credential.helper=",
+        "-c", helper,
+        "push",
+    ]
+    if set_upstream:
+        args.append("--set-upstream")
+    args += ["origin", INTEGRATION_BRANCH]
+    return subprocess.run(
+        args, capture_output=True, text=True, timeout=timeout, check=False, env=env,
+    )  # nosec B603 - git push with fixed args
+
+
 def ensure_phase_a_branch(repo_dir: Path, verbose: bool = False) -> bool:
     """Ensure repo is on PHASE_A_BRANCH and .SWE/ is gitignored.
 
@@ -2856,10 +2901,7 @@ def run_c_pr_status(action: ActionSpec, context: TickContext) -> ActionResult:
                 default_branch = target_config.get("default_branch") or "main"
                 sha = integration_head_sha(target_dir, default_branch)
                 if sha:
-                    push_result = subprocess.run(
-                        [GIT_BIN, "-C", str(target_dir), "push", "origin", INTEGRATION_BRANCH],
-                        capture_output=True, text=True, timeout=120, check=False,
-                    )  # nosec B603 - git push with fixed args
+                    push_result = _git_push_with_token(target_dir, token)
                     if push_result.returncode == 0:
                         _update_marker("open", last_review_id=review_id, filed_issues=[])
                         _flush()
@@ -4045,10 +4087,7 @@ def run_c_pr_publish(action: ActionSpec, context: TickContext) -> ActionResult:
 
     # Push integration branch
     try:
-        push_result = subprocess.run(
-            [GIT_BIN, "-C", str(target_dir), "push", "--set-upstream", "origin", INTEGRATION_BRANCH],
-            capture_output=True, text=True, timeout=120, check=False,
-        )  # nosec B603 - git push with fixed args
+        push_result = _git_push_with_token(target_dir, token, set_upstream=True)
     except subprocess.TimeoutExpired:
         return ActionResult(success=False, stderr="Git push timed out")
 

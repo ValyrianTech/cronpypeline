@@ -50,6 +50,7 @@ from cronpypeline.plugins.swe_plugin import (
     _git,
     _git_issue_already_ingested,
     _git_issue_type_from_labels,
+    _git_push_with_token,
     _has_open_coverage_issues,
     _increment_batch_fixed_count,
     _issues_per_pr,
@@ -5034,6 +5035,120 @@ class TestRunCPrPublishPushFailure:
             result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
         assert result.success is False
         assert "push" in result.stderr.lower()
+
+
+class TestGitPushWithToken:
+    """The push must authenticate with the configured token, not ambient git credentials."""
+
+    def test_clears_ambient_helpers_and_passes_token_via_env(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        captured: dict[str, Any] = {}
+
+        def _fake_run(args, **kwargs):
+            captured["args"] = args
+            captured["env"] = kwargs.get("env")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_fake_run):
+            result = _git_push_with_token(target, "secret-token", set_upstream=True)
+
+        assert result.returncode == 0
+        args = captured["args"]
+        # Ambient helpers (e.g. the `store` helper reading ~/.git-credentials) are
+        # cleared so a stale credential cannot override the configured token.
+        assert "credential.helper=" in args
+        assert any(a.startswith("credential.helper=!") for a in args)
+        assert "--set-upstream" in args
+        assert args[-2:] == ["origin", INTEGRATION_BRANCH]
+        assert captured["env"]["SWE_GIT_PUSH_TOKEN"] == "secret-token"
+        assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+        # The token must never appear in the argument list (visible via `ps`).
+        assert not any("secret-token" in a for a in args)
+
+    def test_without_set_upstream(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        captured: dict[str, Any] = {}
+
+        def _fake_run(args, **kwargs):
+            captured["args"] = args
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_fake_run):
+            _git_push_with_token(target, "secret-token")
+
+        assert "--set-upstream" not in captured["args"]
+        assert captured["args"][-2:] == ["origin", INTEGRATION_BRANCH]
+
+
+class TestRunCPrPublishUsesConfiguredToken:
+    def test_push_authenticates_with_env_token(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "env-token")
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / ".gitignore").write_text(".SWE/\n")
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", "swe-pipeline/integration"], capture_output=True, check=True)
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        real_run = subprocess.run
+        push_calls: list[tuple[list[str], dict[str, str]]] = []
+
+        def _fake_run(args, **kwargs):
+            if isinstance(args, list) and "push" in args:
+                push_calls.append((args, kwargs.get("env") or {}))
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="denied")
+            return real_run(args, **kwargs)
+
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_fake_run):
+            result = run_c_pr_publish(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+
+        assert result.success is False
+        assert "Git push failed" in result.stderr
+        assert len(push_calls) == 1
+        args, env = push_calls[0]
+        assert env["SWE_GIT_PUSH_TOKEN"] == "env-token"
+        assert "credential.helper=" in args
+        assert not any("env-token" in a for a in args)
+
+
+class TestRunCPrStatusUsesConfiguredToken:
+    def test_changes_requested_push_authenticates_with_env_token(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "env-token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({
+            "pr_number": 7,
+            "pr_state": "changes_requested",
+            "last_review_id": 400,
+            "filed_issues": ["pr-revision-7-1"],
+            "pr_review_cycles": 1,
+        }))
+        (target / ".SWE" / "issues" / "pr-revision-7-1.md").write_text("---\nstatus: done\n---\n# Done")
+        ctx = _make_tick_context(target, slug="owner/repo")
+        pr_resp = _mock_http_response({"state": "open", "merged": False})
+        reviews_resp = _mock_http_response([{"id": 400, "state": "CHANGES_REQUESTED", "body": "needs work"}])
+        push_calls: list[tuple[list[str], dict[str, str]]] = []
+
+        def _mock_run(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args")
+            if isinstance(cmd, list) and "push" in cmd:
+                push_calls.append((cmd, kwargs.get("env") or {}))
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]), \
+             patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="abc12345"), \
+             patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_mock_run):
+            result = run_c_pr_status(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+
+        assert result.success is True
+        assert len(push_calls) == 1
+        args, env = push_calls[0]
+        assert env["SWE_GIT_PUSH_TOKEN"] == "env-token"
+        assert "credential.helper=" in args
+        assert not any("env-token" in a for a in args)
 
 
 class TestDetectCPrStatusReviewsException:
