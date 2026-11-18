@@ -791,6 +791,20 @@
       "timeout_minutes": 30
     },
     {
+      "id": "C-push",
+      "name": "Push integration branch updates to the open PR",
+      "trigger": {
+        "type": "custom",
+        "callable": "cronpypeline.plugins.swe_plugin.detect_c_push"
+      },
+      "action": {
+        "type": "custom",
+        "params": {
+          "callable": "cronpypeline.plugins.swe_plugin.run_c_push"
+        }
+      }
+    },
+    {
       "id": "C-pr-title",
       "name": "Queue PRReviewAgent to generate PR title and body",
       "trigger": {

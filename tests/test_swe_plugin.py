@@ -66,6 +66,7 @@ from cronpypeline.plugins.swe_plugin import (
     _publish_preconditions_met,
     _read_batch_marker,
     _read_github_session,
+    _remote_integration_sha,
     _resolve_latest_report,
     _retry_pending_github_close,
     _sha_is_ancestor,
@@ -87,6 +88,7 @@ from cronpypeline.plugins.swe_plugin import (
     detect_c_pr_review,
     detect_c_pr_status,
     detect_c_pr_title,
+    detect_c_push,
     detect_c_review_issue,
     detect_c_review_ranking,
     detect_coverage_fail,
@@ -117,6 +119,7 @@ from cronpypeline.plugins.swe_plugin import (
     run_c_pr_review,
     run_c_pr_status,
     run_c_pr_title,
+    run_c_push,
     run_c_review_issue,
     run_c_review_ranking,
     run_lint_autofix,
@@ -2741,28 +2744,27 @@ class TestBuildPrBody:
 
 
 class TestBuildDocSyncPrompt:
-    def test_builds_prompt_without_pr(self, tmp_path):
+    def test_builds_prompt(self, tmp_path):
         target = _make_target_dir(tmp_path)
-        prompt = _build_doc_sync_prompt(target, "repo", "main", "abc12345", pr_exists=False)
+        prompt = _build_doc_sync_prompt(target, "repo", "main", "abc12345")
         assert "Documentation Synchronization" in prompt
         assert str(target) in prompt
-        # No push instruction when no PR exists
-        assert "update the existing PR" not in prompt
 
-    def test_builds_prompt_with_pr(self, tmp_path):
+    def test_agent_does_not_push(self, tmp_path):
+        """Pushing is the pipeline's job (C-push), so the agent is never told to push."""
         target = _make_target_dir(tmp_path)
-        prompt = _build_doc_sync_prompt(target, "repo", "main", "abc12345", pr_exists=True)
-        assert "push" in prompt.lower()
-        assert INTEGRATION_BRANCH in prompt
+        prompt = _build_doc_sync_prompt(target, "repo", "main", "abc12345")
+        assert "git push" not in prompt
+        assert "update the existing PR" not in prompt
 
     def test_prompt_contains_marker_path(self, tmp_path):
         target = _make_target_dir(tmp_path)
-        prompt = _build_doc_sync_prompt(target, "repo", "main", "abc12345", pr_exists=False)
+        prompt = _build_doc_sync_prompt(target, "repo", "main", "abc12345")
         assert "doc_sync.json" in prompt
 
     def test_quotes_target_dir_with_spaces(self, tmp_path):
         target = tmp_path / "repo with space"
-        prompt = _build_doc_sync_prompt(target, "repo", "main", "abc12345", pr_exists=False)
+        prompt = _build_doc_sync_prompt(target, "repo", "main", "abc12345")
         assert f"cd '{target}'" in prompt
         assert f"cd {target}" not in prompt
 
@@ -5060,7 +5062,7 @@ class TestGitPushWithToken:
         assert any(a.startswith("credential.helper=!") for a in args)
         assert "--set-upstream" in args
         assert args[-2:] == ["origin", INTEGRATION_BRANCH]
-        assert captured["env"]["SWE_GIT_PUSH_TOKEN"] == "secret-token"
+        assert captured["env"]["SWE_GIT_AUTH_TOKEN"] == "secret-token"
         assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
         # The token must never appear in the argument list (visible via `ps`).
         assert not any("secret-token" in a for a in args)
@@ -5109,7 +5111,7 @@ class TestRunCPrPublishUsesConfiguredToken:
         assert "Git push failed" in result.stderr
         assert len(push_calls) == 1
         args, env = push_calls[0]
-        assert env["SWE_GIT_PUSH_TOKEN"] == "env-token"
+        assert env["SWE_GIT_AUTH_TOKEN"] == "env-token"
         assert "credential.helper=" in args
         assert not any("env-token" in a for a in args)
 
@@ -5146,9 +5148,171 @@ class TestRunCPrStatusUsesConfiguredToken:
         assert result.success is True
         assert len(push_calls) == 1
         args, env = push_calls[0]
-        assert env["SWE_GIT_PUSH_TOKEN"] == "env-token"
+        assert env["SWE_GIT_AUTH_TOKEN"] == "env-token"
         assert "credential.helper=" in args
         assert not any("env-token" in a for a in args)
+
+
+class TestRemoteIntegrationSha:
+    @staticmethod
+    def _init_repo(target: Path) -> None:
+        subprocess.run(["git", "init", "-b", "main", str(target)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t.com"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "config", "user.name", "T"], capture_output=True, check=True)
+        (target / "f.txt").write_text("x")
+        subprocess.run(["git", "-C", str(target), "add", "-A"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "commit", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "branch", INTEGRATION_BRANCH], capture_output=True, check=True)
+
+    def test_returns_none_when_branch_never_pushed(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        self._init_repo(target)
+        assert _remote_integration_sha(target) is None
+
+    def test_returns_remote_tracking_sha_after_push(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        remote = tmp_path / "remote.git"
+        subprocess.run(["git", "init", "--bare", str(remote)], capture_output=True, check=True)
+        self._init_repo(target)
+        subprocess.run(["git", "-C", str(target), "remote", "add", "origin", str(remote)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(target), "push", "origin", INTEGRATION_BRANCH], capture_output=True, check=True)
+        head = subprocess.run(
+            ["git", "-C", str(target), "rev-parse", INTEGRATION_BRANCH],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        assert _remote_integration_sha(target) == head
+
+
+class TestDetectCPush:
+    """C-push fires only when an open PR's branch has unpushed commits."""
+
+    @staticmethod
+    def _ctx(target, **cfg):
+        return {
+            "target_dir": str(target),
+            "target_config": {
+                "slug": "owner/repo", "delivery": "open_pr",
+                "default_branch": "main", **cfg,
+            },
+        }
+
+    def test_fires_when_integration_ahead_of_remote(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        with patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="aaa"), \
+             patch("cronpypeline.plugins.swe_plugin._remote_integration_sha", return_value="bbb"):
+            assert detect_c_push(self._ctx(target)) is True
+
+    def test_no_fire_when_in_sync(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        with patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="aaa"), \
+             patch("cronpypeline.plugins.swe_plugin._remote_integration_sha", return_value="aaa"):
+            assert detect_c_push(self._ctx(target)) is False
+
+    def test_no_fire_when_branch_never_pushed(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        with patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="aaa"), \
+             patch("cronpypeline.plugins.swe_plugin._remote_integration_sha", return_value=None):
+            assert detect_c_push(self._ctx(target)) is True
+
+    def test_no_fire_without_pr_marker(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        with patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="aaa"), \
+             patch("cronpypeline.plugins.swe_plugin._remote_integration_sha", return_value="bbb"):
+            assert detect_c_push(self._ctx(target)) is False
+
+    def test_no_fire_without_pr_number(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_state": "open"}))
+        with patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="aaa"), \
+             patch("cronpypeline.plugins.swe_plugin._remote_integration_sha", return_value="bbb"):
+            assert detect_c_push(self._ctx(target)) is False
+
+    def test_no_fire_without_token(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        with patch("cronpypeline.plugins.swe_plugin._load_github_token", return_value=None), \
+             patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="aaa"), \
+             patch("cronpypeline.plugins.swe_plugin._remote_integration_sha", return_value="bbb"):
+            assert detect_c_push(self._ctx(target)) is False
+
+    def test_no_fire_when_delivery_is_not_open_pr(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        with patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="aaa"), \
+             patch("cronpypeline.plugins.swe_plugin._remote_integration_sha", return_value="bbb"):
+            assert detect_c_push(self._ctx(target, delivery="branch_only")) is False
+
+
+class TestRunCPush:
+    def test_push_success_uses_configured_token(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "env-token")
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        captured: dict[str, Any] = {}
+
+        def _fake_run(args, **kwargs):
+            captured["args"] = args
+            captured["env"] = kwargs.get("env")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run", side_effect=_fake_run):
+            result = run_c_push(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+
+        assert result.success is True
+        assert result.data == {"pushed": True}
+        assert "push" in captured["args"]
+        assert captured["env"]["SWE_GIT_AUTH_TOKEN"] == "env-token"
+        assert not any("env-token" in a for a in captured["args"])
+
+    def test_push_failure_returns_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        with patch(
+            "cronpypeline.plugins.swe_plugin.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="denied"),
+        ):
+            result = run_c_push(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "Git push failed" in result.stderr
+
+    def test_push_timeout_returns_failure(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        with patch(
+            "cronpypeline.plugins.swe_plugin.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="git push", timeout=120),
+        ):
+            result = run_c_push(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert "timed out" in result.stderr.lower()
+
+    def test_no_token_returns_failure(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, slug="owner/repo", default_branch="main")
+        with patch("cronpypeline.plugins.swe_plugin._load_github_token", return_value=None):
+            result = run_c_push(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is False
+        assert result.stderr == "No GitHub token configured"
+
+    def test_dry_run_does_not_push(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        ctx = _make_tick_context(target, dry_run=True, slug="owner/repo")
+        with patch("cronpypeline.plugins.swe_plugin.subprocess.run") as mock_run:
+            result = run_c_push(ActionSpec(type=ActionType.CUSTOM, params={}), ctx)
+        assert result.success is True
+        assert result.dry_run is True
+        mock_run.assert_not_called()
 
 
 class TestDetectCPrStatusReviewsException:

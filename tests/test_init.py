@@ -403,7 +403,7 @@ class TestInitializeRepoScript:
     def test_initialize_repo_writes_marker(self, tmp_path, monkeypatch):
         repos, tasks, registry = self._paths(tmp_path)
         calls = []
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: calls.append(cmd) or 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: calls.append(cmd) or 0)
         summary = ir.initialize_repo(
             "https://github.com/org/myrepo.git",
             repos_dir=repos,
@@ -417,7 +417,7 @@ class TestInitializeRepoScript:
     def test_initialize_repo_existing_without_force_raises(self, tmp_path, monkeypatch):
         repos, tasks, registry = self._paths(tmp_path)
         (repos / "myrepo").mkdir(parents=True)
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: 0)
         with pytest.raises(FileExistsError):
             ir.initialize_repo(
                 "https://github.com/org/myrepo.git",
@@ -435,7 +435,7 @@ class TestInitializeRepoScript:
         date_dir.mkdir(parents=True)
         task_dir = date_dir / "20240101_myrepo_task1"
         task_dir.mkdir()
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: 0)
         ir.initialize_repo(
             "https://github.com/org/myrepo.git",
             force=True,
@@ -450,7 +450,7 @@ class TestInitializeRepoScript:
     def test_initialize_repo_uses_explicit_python(self, tmp_path, monkeypatch):
         repos, tasks, registry = self._paths(tmp_path)
         calls = []
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: calls.append(cmd) or 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: calls.append(cmd) or 0)
         ir.initialize_repo(
             "https://github.com/org/myrepo.git",
             python="/opt/py310/bin/python",
@@ -468,7 +468,7 @@ class TestInitializeRepoScript:
         registry = tmp_path / "repos.json"
         registry.write_text('{"repos": [{"name": "myrepo", "python": "/reg/py"}]}')
         calls = []
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: calls.append(cmd) or 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: calls.append(cmd) or 0)
         ir.initialize_repo(
             "https://github.com/org/myrepo.git",
             repos_dir=repos,
@@ -516,6 +516,40 @@ class TestInitializeRepoScript:
         assert "timed out after 600s" in err
         assert "git clone url dest" in err
 
+    def test_run_merges_extra_env(self, monkeypatch):
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured.update(kwargs)
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(ir.subprocess, "run", fake_run)
+        assert ir.run(["echo", "hi"], env={"EXTRA": "1"}) == 0
+        assert captured["env"]["EXTRA"] == "1"
+        assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+    def test_clone_repo_without_token_uses_plain_clone(self, tmp_path, monkeypatch):
+        calls = []
+        monkeypatch.setattr(ir, "run", lambda cmd, **kw: calls.append((cmd, kw)) or 0)
+        ir.clone_repo("https://github.com/org/repo.git", tmp_path / "repo")
+        assert calls[0][0] == ["git", "clone", "https://github.com/org/repo.git", str(tmp_path / "repo")]
+
+    def test_clone_repo_with_token_clears_helpers_and_passes_env(self, tmp_path, monkeypatch):
+        calls = []
+        monkeypatch.setattr(ir, "run", lambda cmd, **kw: calls.append((cmd, kw)) or 0)
+        ir.clone_repo("https://github.com/org/repo.git", tmp_path / "repo", token="secret-token")
+        cmd, kwargs = calls[0]
+        assert "credential.helper=" in cmd
+        assert any(a.startswith("credential.helper=!") for a in cmd)
+        assert cmd[-3:] == ["clone", "https://github.com/org/repo.git", str(tmp_path / "repo")]
+        assert kwargs["env"]["SWE_GIT_AUTH_TOKEN"] == "secret-token"
+        assert not any("secret-token" in a for a in cmd)
+
+    def test_resolve_clone_token_uses_registry_entry(self, monkeypatch):
+        monkeypatch.setattr(swe_plugin, "_load_github_token", lambda cfg: "tok" if cfg else None)
+        assert ir._resolve_clone_token({"github_token": "tok"}) == "tok"
+        assert ir._resolve_clone_token({}) is None
+
     def test_lookup_registry_entry_missing_file(self, tmp_path):
         assert ir.lookup_registry_entry(tmp_path / "nope.json", "myrepo") == {}
 
@@ -549,7 +583,7 @@ class TestInitializeRepoScript:
         (repo_dir / "requirements.txt").write_text("requests\n")
         venv_dir = repo_dir / ".venv"
         calls = []
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: calls.append(cmd) or 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: calls.append(cmd) or 0)
         summary = ir.install_dependencies(
             repo_dir, venv_dir, editable=None, extras=[], **self._no_tooling()
         )
@@ -560,7 +594,7 @@ class TestInitializeRepoScript:
         repo_dir = tmp_path / "repo"
         repo_dir.mkdir()
         venv_dir = repo_dir / ".venv"
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: 0)
         summary = ir.install_dependencies(
             repo_dir, venv_dir, editable=True, extras=[], **self._no_tooling()
         )
@@ -573,7 +607,7 @@ class TestInitializeRepoScript:
         (repo_dir / "setup.py").write_text("")
         venv_dir = repo_dir / ".venv"
         calls = []
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: calls.append(cmd) or 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: calls.append(cmd) or 0)
         summary = ir.install_dependencies(
             repo_dir, venv_dir, editable=True, extras=[], **self._no_tooling()
         )
@@ -584,7 +618,7 @@ class TestInitializeRepoScript:
         repo_dir = tmp_path / "repo"
         repo_dir.mkdir()
         venv_dir = repo_dir / ".venv"
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: 0)
         summary = ir.install_dependencies(
             repo_dir, venv_dir, editable=False, extras=["dev"], **self._no_tooling()
         )
@@ -597,7 +631,7 @@ class TestInitializeRepoScript:
         (repo_dir / "setup.py").write_text("")
         venv_dir = repo_dir / ".venv"
         calls = []
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: calls.append(cmd) or 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: calls.append(cmd) or 0)
         summary = ir.install_dependencies(
             repo_dir, venv_dir, editable=False, extras=["dev", "test"], **self._no_tooling()
         )
@@ -693,7 +727,7 @@ class TestInitializeRepoScript:
 
     def test_initialize_repo_no_install(self, tmp_path, monkeypatch, capsys):
         repos, tasks, registry = self._paths(tmp_path)
-        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True: 0)
+        monkeypatch.setattr(ir, "run", lambda cmd, cwd=None, check=True, **kw: 0)
         summary = ir.initialize_repo(
             "https://github.com/org/myrepo.git",
             no_install=True,

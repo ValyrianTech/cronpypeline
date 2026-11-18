@@ -26,6 +26,7 @@ from cronpypeline.actions import (
     TickContext,
 )
 from cronpypeline.io_utils import write_json_atomic, write_text_atomic
+from cronpypeline.plugins.git_auth import auth_config_args, auth_env
 from cronpypeline.plugins.issue_store import (
     create_issue,
     issue_filename,
@@ -662,24 +663,13 @@ def _git_push_with_token(
     :param timeout: Timeout in seconds for the push.
     :returns: CompletedProcess result.
     """
-    env = os.environ.copy()
-    env["SWE_GIT_PUSH_TOKEN"] = token
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    helper = (
-        'credential.helper=!f() { echo username=x-access-token; '
-        'echo "password=$SWE_GIT_PUSH_TOKEN"; }; f'
-    )
-    args = [
-        GIT_BIN, "-C", str(repo_dir),
-        "-c", "credential.helper=",
-        "-c", helper,
-        "push",
-    ]
+    args = [GIT_BIN, "-C", str(repo_dir), *auth_config_args(), "push"]
     if set_upstream:
         args.append("--set-upstream")
     args += ["origin", INTEGRATION_BRANCH]
     return subprocess.run(
-        args, capture_output=True, text=True, timeout=timeout, check=False, env=env,
+        args, capture_output=True, text=True, timeout=timeout, check=False,
+        env=auth_env(token),
     )  # nosec B603 - git push with fixed args
 
 
@@ -2203,27 +2193,21 @@ def _build_pr_body(target_dir: Path, repo_name: str, default_branch: str) -> str
 
 
 def _build_doc_sync_prompt(
-    target_dir: Path, repo_name: str, default_branch: str,
-    sha: str, pr_exists: bool,
+    target_dir: Path, repo_name: str, default_branch: str, sha: str,
 ) -> str:
     """Build the prompt for the DocumentationSyncAgent.
+
+    The agent only commits; pushing the integration branch is the pipeline's
+    job (the ``C-push`` stage), so the agent never has to authenticate to
+    GitHub itself.
 
     :param target_dir: Target repo directory.
     :param repo_name: Repo name.
     :param default_branch: Default branch name.
     :param sha: Integration HEAD SHA.
-    :param pr_exists: Whether a PR already exists.
     :returns: Prompt string.
     """
     marker_path = target_dir / SWE_SUBDIR / DOC_SYNC_MARKER
-
-    push_instruction = ""
-    if pr_exists:
-        push_instruction = (
-            f"\n\nAfter committing, push the integration branch to update "
-            f"the existing PR:\n"
-            f"  RunCommand: cd {shlex.quote(str(target_dir))} && git push origin {INTEGRATION_BRANCH}\n"
-        )
 
     return (
         f"Sync documentation for the locally cloned repo at:\n"  # nosec B608 - builds an AI agent prompt, not a SQL query
@@ -2262,8 +2246,7 @@ def _build_doc_sync_prompt(
         f"-c user.email='{PHASE_A_GIT_AUTHOR_EMAIL}' "
         f"commit -m \"docs: sync documentation with latest changes\"\n\n"
         f"If `cd {shlex.quote(str(target_dir))} && git status --porcelain` shows no changes, "
-        f"skip the commit (nothing to update is fine) and proceed."
-        f"{push_instruction}\n\n"
+        f"skip the commit (nothing to update is fine) and proceed.\n\n"
         f"Write the completion marker as your LAST step using the WriteFile "
         f"tool. Write this exact JSON content to:\n"
         f"  {marker_path}\n"
@@ -3782,7 +3765,6 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
     sha = integration_head_sha(target_dir, default_branch)
     if sha is None:
         return ActionResult(success=False, stderr="Failed to determine integration head SHA")
-    pr_exists = (target_dir / SWE_SUBDIR / "pr_published.json").exists()
 
     # Checkout integration branch
     try:
@@ -3790,7 +3772,7 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return ActionResult(success=False, stderr=f"Failed to checkout {INTEGRATION_BRANCH}")
 
-    prompt = _build_doc_sync_prompt(target_dir, repo_name, default_branch, sha, pr_exists)
+    prompt = _build_doc_sync_prompt(target_dir, repo_name, default_branch, sha)
 
     # Queue via conversation queue handler
     from cronpypeline.plugins.swe_prompts import _build_queue_handler
@@ -3817,6 +3799,87 @@ def run_c_doc_sync(action: ActionSpec, context: TickContext) -> ActionResult:
 
     result.data = {**result.data, "async": True}
     return result
+
+
+# ─── C-push: Push integration updates to an open PR ─────────────────────────
+
+
+def _remote_integration_sha(target_dir: Path) -> str | None:
+    """Return the sha of the remote-tracking integration branch.
+
+    :param target_dir: Target repo directory.
+    :returns: SHA string, or None when the branch has never been pushed.
+    """
+    try:
+        res = _git(
+            target_dir, "rev-parse", "--verify", "--quiet",
+            f"origin/{INTEGRATION_BRANCH}", check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    sha = (res.stdout or "").strip()
+    return sha or None
+
+
+def detect_c_push(context: dict[str, Any]) -> bool:
+    """Trigger: fire when an open PR's branch has unpushed commits.
+
+    Every issue fix merged into the integration branch advances it, and the
+    doc-sync agent commits documentation changes on top of it.  Once a PR is
+    open those commits must reach GitHub to update it, but ``C-publish`` only
+    runs while no PR exists yet.  The check compares the integration HEAD
+    against the remote-tracking ref, which a successful push updates, so the
+    stage stops firing once the branch is back in sync.
+
+    :param context: Trigger context dict.
+    :returns: True if the integration branch should be pushed.
+    """
+    target_dir = Path(context.get("target_dir", "."))
+    target_config = context.get("target_config", {})
+
+    if (target_config.get("delivery") or "").strip() != "open_pr":
+        return False
+
+    pr_marker = target_dir / SWE_SUBDIR / "pr_published.json"
+    if not pr_marker.exists():
+        return False
+    try:
+        pr_data = json.loads(pr_marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not pr_data.get("pr_number"):
+        return False
+
+    if not _load_github_token(target_config):
+        return False
+
+    default_branch = target_config.get("default_branch") or "main"
+    sha = integration_head_sha(target_dir, default_branch)
+    if not sha:
+        return False
+    return sha != _remote_integration_sha(target_dir)
+
+
+def run_c_push(action: ActionSpec, context: TickContext) -> ActionResult:
+    """Push integration branch updates to the open PR.
+
+    :param action: Action spec.
+    :param context: Tick context.
+    :returns: ActionResult.
+    """
+    if context.dry_run:
+        return ActionResult(success=True, dry_run=True)
+
+    token = _load_github_token(context.target_config)
+    if token is None:
+        return ActionResult(success=False, stderr="No GitHub token configured")
+    try:
+        push_result = _git_push_with_token(context.target_dir, token)
+    except subprocess.TimeoutExpired:
+        return ActionResult(success=False, stderr="Git push timed out")
+    if push_result.returncode != 0:
+        return ActionResult(success=False, stderr=f"Git push failed: {push_result.stderr}")
+    return ActionResult(success=True, data={"pushed": True})
 
 
 # ─── C-pr-title: Queue PRReviewAgent to generate PR title and body ──────────

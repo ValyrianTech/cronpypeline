@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from cronpypeline.plugins.git_auth import auth_config_args, auth_env
 from cronpypeline.plugins.issue_fix import _task_dir_belongs_to_repo
 
 DEFAULT_DATA_DIR = '/spellbook_data'
@@ -88,7 +89,7 @@ def derive_repo_name(git_url: str) -> str:
 
 
 def run(cmd: list[str], cwd: str | None = None, check: bool = True,
-        timeout: float | None = 600) -> int:
+        timeout: float | None = 600, env: dict[str, str] | None = None) -> int:
     """Run a subprocess command and return its exit code.
 
     Every external command (git clone, venv creation, pip installs) runs with
@@ -106,6 +107,8 @@ def run(cmd: list[str], cwd: str | None = None, check: bool = True,
     :param timeout: Maximum seconds to wait for the command, or None to wait
         forever.  Defaults to 600 seconds.
     :type timeout: float or None
+    :param env: Extra environment variables to set for the command.
+    :type env: dict or None
     :returns: The command's return code.
     :rtype: int
     :raises subprocess.CalledProcessError: If ``check`` is True and the
@@ -114,26 +117,54 @@ def run(cmd: list[str], cwd: str | None = None, check: bool = True,
         ``timeout`` seconds.
     """
     print(f"$ {' '.join(cmd)}" + (f"  (cwd={cwd})" if cwd else ""))
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    full_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", **(env or {})}
     try:
-        result = subprocess.run(cmd, cwd=cwd, check=check, timeout=timeout, env=env)
+        result = subprocess.run(cmd, cwd=cwd, check=check, timeout=timeout, env=full_env)
     except subprocess.TimeoutExpired:
         print(f"ERROR: command timed out after {timeout}s: {' '.join(cmd)}", file=sys.stderr)
         raise
     return result.returncode
 
 
-def clone_repo(git_url: str, dest: Path) -> None:
+def clone_repo(git_url: str, dest: Path, token: str | None = None) -> None:
     """Clone a Git repository into the destination directory.
+
+    When ``token`` is given the clone authenticates with it instead of the
+    ambient git credentials, so a stale entry in ``~/.git-credentials`` cannot
+    break the clone of a private repository.
 
     :param git_url: Git URL of the repo to clone (HTTPS or SSH).
     :type git_url: str
     :param dest: Destination directory for the clone.
     :type dest: Path
+    :param token: Optional GitHub token used to authenticate the clone.
+    :type token: str or None
     :raises subprocess.CalledProcessError: If the git clone fails.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    run(['git', 'clone', git_url, str(dest)])
+    if token:
+        run(['git', *auth_config_args(), 'clone', git_url, str(dest)],
+            env=auth_env(token))
+    else:
+        run(['git', 'clone', git_url, str(dest)])
+
+
+def _resolve_clone_token(registry_entry: dict) -> str | None:
+    """Resolve the GitHub token used to authenticate the clone.
+
+    Token resolution lives in the SWE plugin (it knows about the workspace
+    ``.env`` file and the ``SWE_GITHUB_TOKEN`` / ``GITHUB_TOKEN`` environment
+    variables), so it is imported lazily to keep this module importable on its
+    own.
+
+    :param registry_entry: Registry entry for the repo; may carry ``github_token``.
+    :returns: Token string, or None when none is configured.
+    """
+    try:
+        from cronpypeline.plugins.swe_plugin import _load_github_token
+    except ImportError:  # pragma: no cover - defensive
+        return None
+    return _load_github_token(registry_entry or {})
 
 
 def resolve_python(python: str | None, registry_entry: dict) -> str:
@@ -447,7 +478,7 @@ def initialize_repo(
                 f"Re-run with --force to remove and re-clone."
             )
 
-    clone_repo(git_url, repo_dir)
+    clone_repo(git_url, repo_dir, token=_resolve_clone_token(registry_entry))
     venv_dir = create_venv(repo_dir, interpreter)
     upgrade_pip(venv_dir)
     upgrade_setuptools(venv_dir)
