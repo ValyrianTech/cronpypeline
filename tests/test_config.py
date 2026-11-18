@@ -48,6 +48,41 @@ class TestTriggerCondition:
         assert t.op == "lt"
         assert t.value == 3
 
+    def test_marker_state_missing_op_raises(self):
+        with pytest.raises(ValueError, match="Unknown operator"):
+            TriggerCondition.from_dict({
+                "type": "marker_state",
+                "path": "task.json",
+                "field": "status",
+                "value": "open",
+            })
+
+    def test_marker_state_invalid_op_raises(self):
+        with pytest.raises(ValueError, match="Unknown operator"):
+            TriggerCondition.from_dict({
+                "type": "marker_state",
+                "path": "task.json",
+                "field": "status",
+                "op": "contains",
+                "value": "open",
+            })
+
+    def test_nested_marker_state_invalid_op_raises(self):
+        with pytest.raises(ValueError, match="Unknown operator"):
+            TriggerCondition.from_dict({
+                "type": "and",
+                "conditions": [
+                    {"type": "file_missing", "path": "a.marker"},
+                    {
+                        "type": "marker_state",
+                        "path": "task.json",
+                        "field": "status",
+                        "op": "contains",
+                        "value": "open",
+                    },
+                ],
+            })
+
     def test_queue_empty_trigger(self):
         t = TriggerCondition.from_dict({"type": "queue_empty", "queue_dir": "/tmp/queue"})
         assert t.type == TriggerType.QUEUE_EMPTY
