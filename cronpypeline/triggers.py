@@ -233,7 +233,9 @@ def evaluate_trigger(
     :param base_dir: The workspace/target directory to check against.
     :param context: Optional context dict passed to custom callables.
     :returns: True if the stage should fire, False otherwise.
-    :raises ValueError: If no evaluator is registered for the trigger type.
+    :raises ValueError: Only when no evaluator is registered for the trigger type.
+        Built-in evaluator failures (e.g. bad paths or unknown operators) fail
+        closed and return False instead of raising.
     """
     if trigger.type in (TriggerType.AND, TriggerType.OR):
         try:
@@ -255,4 +257,10 @@ def evaluate_trigger(
     evaluator = _EVALUATORS.get(trigger.type)
     if evaluator is None:
         raise ValueError(f"No evaluator for trigger type: {trigger.type}")
-    return evaluator(trigger, base_dir)
+    try:
+        return evaluator(trigger, base_dir)
+    except (ValueError, OSError) as exc:
+        logging.getLogger(__name__).warning(
+            "Trigger %s raised %s; failing closed", trigger.type, exc
+        )
+        return False
