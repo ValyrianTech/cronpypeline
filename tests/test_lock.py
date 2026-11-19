@@ -533,9 +533,8 @@ class TestFileLockNoBackend:
         lock = FileLock(tmp_path / "pipeline.lock")
         with mock.patch.object(lock_module, "fcntl", None), mock.patch.object(
             lock_module, "msvcrt", None
-        ):
-            with pytest.raises(RuntimeError, match="No file-locking backend"):
-                lock.acquire()
+        ), pytest.raises(RuntimeError, match="No file-locking backend"):
+            lock.acquire()
         assert lock.is_acquired is False
 
 

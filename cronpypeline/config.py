@@ -81,7 +81,8 @@ class TriggerCondition:
 
         :param data: Dictionary with ``type`` and type-specific fields.
         :returns: A :class:`TriggerCondition` instance.
-        :raises ValueError: If the trigger type is unknown.
+        :raises ValueError: If the trigger type is unknown, or if a marker_state
+            trigger has a missing or invalid ``op`` operator.
         """
         try:
             trigger_type = TriggerType(data["type"])
@@ -91,6 +92,11 @@ class TriggerCondition:
         conditions = []
         if trigger_type in (TriggerType.AND, TriggerType.OR):
             conditions = [cls.from_dict(c) for c in data.get("conditions", [])]
+
+        if trigger_type == TriggerType.MARKER_STATE:
+            op = data.get("op")
+            if op not in ("eq", "ne", "lt", "lte", "gt", "gte"):
+                raise ValueError(f"Unknown operator for marker_state trigger: {op!r}")
 
         return cls(
             type=trigger_type,

@@ -72,6 +72,7 @@ from cronpypeline.plugins.swe_plugin import (
     _sha_is_ancestor,
     _should_block_on_open_issues,
     _slugify,
+    _start_github_session,
     _strip_newlines,
     _venv_binary,
     _write_batch_marker,
@@ -1377,6 +1378,22 @@ class TestReadGithubSession:
         target = _make_target_dir(tmp_path)
         (target / ".SWE" / "github_session.json").write_text("not json")
         assert _read_github_session(target) is None
+
+
+# ─── _start_github_session ───────────────────────────────────────────────────
+
+
+class TestStartGithubSession:
+    def test_completes_when_unlink_raises_oserror(self, tmp_path):
+        swe_dir = tmp_path / ".SWE"
+        swe_dir.mkdir(parents=True)
+        session_path = swe_dir / "github_session.json"
+        with patch("pathlib.Path.unlink", side_effect=OSError("boom")):
+            _start_github_session(session_path, 42, "issue-42")
+        saved = json.loads(session_path.read_text())
+        assert saved["active"] is True
+        assert saved["github_number"] == 42
+        assert saved["issue_id"] == "issue-42"
 
 
 # ─── _git_issue_type_from_labels ────────────────────────────────────────────
@@ -5137,7 +5154,6 @@ class TestRunCPrStatusUsesConfiguredToken:
             cmd = args[0] if args else kwargs.get("args")
             if isinstance(cmd, list) and "push" in cmd:
                 push_calls.append((cmd, kwargs.get("env") or {}))
-                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with patch("cronpypeline.plugins.swe_plugin._GH_OPENER.open", side_effect=[pr_resp, reviews_resp]), \
@@ -5181,6 +5197,14 @@ class TestRemoteIntegrationSha:
             capture_output=True, text=True, check=True,
         ).stdout.strip()
         assert _remote_integration_sha(target) == head
+
+    def test_returns_none_on_timeout(self, tmp_path):
+        target = _make_target_dir(tmp_path)
+        with patch(
+            "cronpypeline.plugins.swe_plugin._git",
+            side_effect=subprocess.TimeoutExpired(cmd="git", timeout=1),
+        ):
+            assert _remote_integration_sha(target) is None
 
 
 class TestDetectCPush:
@@ -5250,6 +5274,22 @@ class TestDetectCPush:
         with patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="aaa"), \
              patch("cronpypeline.plugins.swe_plugin._remote_integration_sha", return_value="bbb"):
             assert detect_c_push(self._ctx(target, delivery="branch_only")) is False
+
+    def test_no_fire_with_corrupt_pr_marker(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text("not-json")
+        with patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value="aaa"), \
+             patch("cronpypeline.plugins.swe_plugin._remote_integration_sha", return_value="bbb"):
+            assert detect_c_push(self._ctx(target)) is False
+
+    def test_no_fire_when_integration_head_sha_missing(self, tmp_path, monkeypatch):
+        target = _make_target_dir(tmp_path)
+        monkeypatch.setenv("SWE_GITHUB_TOKEN", "token")
+        (target / ".SWE" / "pr_published.json").write_text(json.dumps({"pr_number": 7}))
+        with patch("cronpypeline.plugins.swe_plugin.integration_head_sha", return_value=None), \
+             patch("cronpypeline.plugins.swe_plugin._remote_integration_sha", return_value="bbb"):
+            assert detect_c_push(self._ctx(target)) is False
 
 
 class TestRunCPush:

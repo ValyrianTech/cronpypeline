@@ -4,13 +4,15 @@ import errno
 import os
 import time
 from pathlib import Path
-from types import TracebackType
+from types import ModuleType, TracebackType
 
+fcntl: ModuleType | None
 try:
     import fcntl
 except ImportError:
     fcntl = None
 
+msvcrt: ModuleType | None
 try:
     import msvcrt
 except ImportError:
@@ -92,6 +94,7 @@ class FileLock:
             # Windows: lock the first byte of the file, non-blocking.
             # msvcrt.locking raises OSError when the lock is already held by
             # another process, which we treat as contention (return False).
+            assert msvcrt is not None
             try:
                 if os.fstat(fd).st_size == 0:
                     os.write(fd, b"\0")
@@ -146,6 +149,7 @@ class FileLock:
             # acquire() writes the PID/timestamp metadata the position is at
             # end-of-file, so seek back to 0 to unlock the exact byte that was
             # locked (acquire() locks byte 0).
+            assert msvcrt is not None
             os.lseek(fd, 0, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 

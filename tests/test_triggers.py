@@ -236,24 +236,21 @@ class TestQueueEmptyTrigger:
         (queue_dir / "task1.json").write_text("{}")
         assert evaluate_trigger(trigger, tmp_path) is False
 
-    def test_dotdot_queue_dir_raises_value_error(self, tmp_path):
+    def test_dotdot_queue_dir_fails_closed(self, tmp_path):
         trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="../outside")
-        with pytest.raises(ValueError, match="contains '\\.\\.'"):
-            evaluate_trigger(trigger, tmp_path)
+        assert evaluate_trigger(trigger, tmp_path) is False
 
-    def test_absolute_queue_dir_outside_base_raises_value_error(self, tmp_path):
+    def test_absolute_queue_dir_outside_base_fails_closed(self, tmp_path):
         trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir="/etc")
-        with pytest.raises(ValueError, match="escapes base directory"):
-            evaluate_trigger(trigger, tmp_path)
+        assert evaluate_trigger(trigger, tmp_path) is False
 
-    def test_symlink_escape_queue_dir_raises_value_error(self, tmp_path, tmp_path_factory):
+    def test_symlink_escape_queue_dir_fails_closed(self, tmp_path, tmp_path_factory):
         outside = tmp_path_factory.mktemp("outside")
         (outside / "secret.txt").touch()
         link = tmp_path / "link"
         link.symlink_to(outside, target_is_directory=True)
         trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir=str(tmp_path / "link" / "queue"))
-        with pytest.raises(ValueError, match="escapes base directory"):
-            evaluate_trigger(trigger, tmp_path)
+        assert evaluate_trigger(trigger, tmp_path) is False
 
     def test_relative_queue_dir_resolves(self, tmp_path):
         (tmp_path / "queue").mkdir()
@@ -507,8 +504,8 @@ class TestMarkerStateEdgeCases:
         )
         assert evaluate_trigger(trigger, tmp_path) is True
 
-    def test_unknown_operator_raises_value_error(self, tmp_path):
-        """Unknown operator should raise ValueError."""
+    def test_unknown_operator_fails_closed(self, tmp_path):
+        """Unknown operator should fail closed (return False) at runtime."""
         (tmp_path / "task.json").write_text(json.dumps({"status": "open"}))
         trigger = TriggerCondition(
             type=TriggerType.MARKER_STATE,
@@ -517,8 +514,7 @@ class TestMarkerStateEdgeCases:
             op="contains",
             value="open",
         )
-        with pytest.raises(ValueError, match="Unknown operator"):
-            evaluate_trigger(trigger, tmp_path)
+        assert evaluate_trigger(trigger, tmp_path) is False
 
     def test_lt_type_mismatch_returns_false(self, tmp_path):
         """String field vs int expected with 'lt' should return False, not raise TypeError."""
@@ -642,31 +638,28 @@ class TestTriggerPathValidation:
     """Path traversal validation for file-based trigger conditions."""
 
     @pytest.mark.parametrize("trigger_type, kwargs", _PATH_TRIGGER_TYPES)
-    def test_dotdot_path_raises_value_error(self, tmp_path, trigger_type, kwargs):
-        """A path containing '..' should raise ValueError for every evaluator."""
+    def test_dotdot_path_fails_closed(self, tmp_path, trigger_type, kwargs):
+        """A path containing '..' should fail closed for every evaluator."""
         trigger = TriggerCondition(type=trigger_type, path="../outside.txt", **kwargs)
-        with pytest.raises(ValueError, match="contains '\\.\\.' or is absolute"):
-            evaluate_trigger(trigger, tmp_path)
+        assert evaluate_trigger(trigger, tmp_path) is False
 
     @pytest.mark.parametrize("trigger_type, kwargs", _PATH_TRIGGER_TYPES)
-    def test_absolute_path_raises_value_error(self, tmp_path, trigger_type, kwargs):
-        """An absolute path should raise ValueError for every evaluator."""
+    def test_absolute_path_fails_closed(self, tmp_path, trigger_type, kwargs):
+        """An absolute path should fail closed for every evaluator."""
         trigger = TriggerCondition(type=trigger_type, path="/etc/passwd", **kwargs)
-        with pytest.raises(ValueError, match="contains '\\.\\.' or is absolute"):
-            evaluate_trigger(trigger, tmp_path)
+        assert evaluate_trigger(trigger, tmp_path) is False
 
     @pytest.mark.parametrize("trigger_type, kwargs", _PATH_TRIGGER_TYPES)
-    def test_symlink_escape_raises_value_error(
+    def test_symlink_escape_fails_closed(
         self, tmp_path, tmp_path_factory, trigger_type, kwargs
     ):
-        """A path escaping the base dir via symlink should raise ValueError."""
+        """A path escaping the base dir via symlink should fail closed."""
         outside = tmp_path_factory.mktemp("outside")
         (outside / "secret.txt").touch()
         link = tmp_path / "link"
         link.symlink_to(outside, target_is_directory=True)
         trigger = TriggerCondition(type=trigger_type, path="link/secret.txt", **kwargs)
-        with pytest.raises(ValueError, match="escapes base directory"):
-            evaluate_trigger(trigger, tmp_path)
+        assert evaluate_trigger(trigger, tmp_path) is False
 
     @pytest.mark.parametrize("trigger_type, kwargs", _PATH_TRIGGER_TYPES)
     def test_valid_relative_path_resolves(self, tmp_path, trigger_type, kwargs):
@@ -786,17 +779,46 @@ def boom(context):
                 del sys.modules["or_boom_module2"]
 
     def test_composite_dispatch_swallows_unexpected_exception(self, tmp_path):
-        (tmp_path / "task.json").write_text(json.dumps({"status": "open"}))
+        inner = TriggerCondition(type=TriggerType.FILE_MISSING, path="missing.md")
+        inner.type = "unknown_type"
         trigger = TriggerCondition(
             type=TriggerType.AND,
-            conditions=[
-                TriggerCondition(
-                    type=TriggerType.MARKER_STATE,
-                    path="task.json",
-                    field="status",
-                    op="contains",
-                    value="open",
-                ),
-            ],
+            conditions=[inner],
         )
+        assert evaluate_trigger(trigger, tmp_path) is False
+
+
+class TestBuiltinEvaluatorFailClosed:
+    """Built-in evaluators fail closed on ValueError/OSError like and/or/custom."""
+
+    def test_marker_state_unknown_op_logs_warning_and_returns_false(self, tmp_path, caplog):
+        """A ValueError from a built-in evaluator logs a warning and returns False."""
+        (tmp_path / "task.json").write_text(json.dumps({"status": "open"}))
+        trigger = TriggerCondition(
+            type=TriggerType.MARKER_STATE,
+            path="task.json",
+            field="status",
+            op="contains",
+            value="open",
+        )
+        caplog.set_level(logging.WARNING)
+        assert evaluate_trigger(trigger, tmp_path) is False
+        assert any(
+            "failing closed" in record.message
+            and "TriggerType.MARKER_STATE" in record.message
+            for record in caplog.records
+        )
+
+    def test_queue_empty_oserror_fails_closed(self, tmp_path, monkeypatch):
+        """An OSError while iterating a queue dir fails closed (returns False)."""
+
+        def raising_iterdir(self):
+            raise OSError("permission denied")
+
+        queue_dir = tmp_path / "queue"
+        queue_dir.mkdir()
+        (queue_dir / "task.json").write_text("{}")
+        trigger = TriggerCondition(type=TriggerType.QUEUE_EMPTY, queue_dir=str(queue_dir))
+
+        monkeypatch.setattr("pathlib.Path.iterdir", raising_iterdir)
         assert evaluate_trigger(trigger, tmp_path) is False
