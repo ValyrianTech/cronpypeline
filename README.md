@@ -366,7 +366,7 @@ Without a completion marker, a leftover processing marker is indistinguishable f
 }
 ```
 
-State derivation is a read-only snapshot for status/dashboard callers. `PipelineState.derive()` and `TargetState.derive()` accept a `cleanup_orphans` flag (default `True`); `Pipeline.status()` and the webui `/api/status` endpoint pass `cleanup_orphans=False`, so they derive state without mutating the filesystem. Orphaned-processing-marker cleanup (an explicit `TargetState.cleanup_orphans()` method) still runs on the normal `tick()` path.
+State derivation is a read-only snapshot for status/dashboard callers. `PipelineState.derive()` and `TargetState.derive()` accept a `cleanup_orphans` flag (default `True`); `Pipeline.status()` and the webui `/api/status` endpoint pass `cleanup_orphans=False`, so they derive state without mutating the filesystem. Orphaned-processing-marker cleanup (an explicit `TargetState.cleanup_orphans()` method) still runs on the normal (non-dry-run) `tick()` path; a dry-run tick now also passes `cleanup_orphans=False`, so it derives state without mutating the filesystem.
 
 ## Configuration reference
 
@@ -1121,7 +1121,7 @@ status = pipeline.status(targets=["my-repo"])
 result = pipeline.run_init(target="my-repo", force=False)
 ```
 
-`status()` is a read-only snapshot: it derives state with `cleanup_orphans=False`, so it does not clean up orphaned processing markers (the tick path still does).
+`status()` is a read-only snapshot: it derives state with `cleanup_orphans=False`, so it does not clean up orphaned processing markers (the non-dry-run tick path still does, while a dry-run tick no longer does).
 
 `tick_all()` continues processing remaining targets even if one raises an exception. Exceptions are captured as `ACTION_FAILED` `TickResult`s (one per failing target) with the traceback in the `stderr` field, so a single failure does not stop the rest of the batch.
 
