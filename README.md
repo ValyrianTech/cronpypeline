@@ -1149,7 +1149,7 @@ result.chained_stages  # ["A1", "A2"] if chaining occurred
 result.failed_chained_stages  # ["A2"] chained stage IDs whose actions failed
 ```
 
-The string representation of a `TickResult` (`str(result)`) includes the `stderr` output when present, so captured tracebacks are shown to the user.
+The string representation of a `TickResult` (`str(result)`) includes the `stderr` output when present, so captured tracebacks are shown to the user. The `stdout`, `stderr`, and failure `message` carried on a `TickResult` are now scrubbed of secrets via `scrub_secrets` (the same redaction applied to the execution log), and `str(result)` scrubs `stderr` before including it. This closes a leak where secrets printed by a failing action (tokens, passwords, `Authorization:` headers, etc.) still appeared in console output even though the durable log redacted them; scrubbing is idempotent, so it is harmless alongside the log's own scrubbing.
 
 ### Full public API
 
