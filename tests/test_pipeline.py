@@ -4194,6 +4194,90 @@ class TestCrossStageTargetLock:
         assert result.status == TickResultStatus.NO_WORK
         assert not (workspace / "my-repo" / ".processing_a").exists()
 
+    def test_dry_run_does_not_clean_up_orphaned_processing_marker(self, tmp_path):
+        """A dry-run tick must not delete an orphaned processing marker.
+
+        Orphan cleanup is a filesystem mutation, so it must be skipped when
+        ``dry_run`` is True. The dry-run still reports DRY_RUN (a later stage
+        has work) while leaving the orphaned processing marker intact.
+        """
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir(parents=True)
+
+        # A0 is complete (a.md exists) but its processing marker is orphaned.
+        (target_dir / "a.md").touch()
+        (target_dir / ".processing_a").write_text(json.dumps({}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Async step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo done"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "a.md"},
+                        "processing": {"type": "json", "name": ".processing_a"},
+                    },
+                    "timeout_minutes": 30,
+                },
+                {
+                    "id": "B0",
+                    "name": "Sync step",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo", dry_run=True)
+        assert result.status == TickResultStatus.DRY_RUN
+        assert (target_dir / ".processing_a").exists()
+
+    def test_real_tick_cleans_up_orphaned_processing_marker(self, tmp_path):
+        """A real (non-dry-run) tick must delete an orphaned processing marker."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target_dir = workspace / "my-repo"
+        target_dir.mkdir(parents=True)
+
+        # A0 is complete (a.md exists) but its processing marker is orphaned.
+        (target_dir / "a.md").touch()
+        (target_dir / ".processing_a").write_text(json.dumps({}))
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Async step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo done"}},
+                    "markers": {
+                        "completion": {"type": "file", "name": "a.md"},
+                        "processing": {"type": "json", "name": ".processing_a"},
+                    },
+                    "timeout_minutes": 30,
+                },
+                {
+                    "id": "B0",
+                    "name": "Sync step",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "echo b"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        pipeline.tick(target="my-repo", dry_run=False)
+        assert not (target_dir / ".processing_a").exists()
+
     def test_target_lock_logs_stage_states_distinctly(self, tmp_path):
         """With target_lock active and a processing stage, the log should
         distinguish processing vs complete vs blocked stages."""
