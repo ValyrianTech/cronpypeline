@@ -596,6 +596,7 @@ class Pipeline:
             state.derive(
                 targets,
                 target_configs=target_config_map,
+                cleanup_orphans=not dry_run,
                 marker_context_hook=self._marker_context_hook(),
             )
             target = state.get_target_with_work(targets)
@@ -758,6 +759,7 @@ class Pipeline:
         state.derive(
             [target],
             target_configs={target: target_config},
+            cleanup_orphans=not dry_run,
             marker_context_hook=self._marker_context_hook(),
         )
         target_state = state.target_states.get(target)
