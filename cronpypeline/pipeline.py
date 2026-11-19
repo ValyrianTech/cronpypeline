@@ -104,7 +104,7 @@ class TickResult:
         stage = self.stage_id or "-"
         base = f"{self.target} | {stage} -> {self.status.value} | {self.message}"
         if self.stderr:
-            return f"{base}\n{self.stderr}"
+            return f"{base}\n{scrub_secrets(self.stderr)}"
         return base
 
 
@@ -966,13 +966,14 @@ class Pipeline:
                     handlers=self._handlers,
                 )
                 execute_action(stage.on_fail, fail_ctx)
+            detail = scrub_secrets(action_result.stderr or action_result.stdout)
             result_tick = TickResult(
                 target=target,
                 stage_id=stage.id,
                 status=TickResultStatus.ACTION_FAILED,
-                message=f"Action failed: {action_result.stderr or action_result.stdout}",
-                stdout=action_result.stdout,
-                stderr=action_result.stderr,
+                message=f"Action failed: {detail}",
+                stdout=scrub_secrets(action_result.stdout),
+                stderr=scrub_secrets(action_result.stderr),
             )
             self._log_tick_end(result_tick)
             return result_tick
@@ -1032,14 +1033,14 @@ class Pipeline:
             if chained_result:
                 final_stage_id, chained, failed_stage_id, failed_result = chained_result
                 if failed_stage_id is not None:
-                    detail = failed_result.stderr or failed_result.stdout if failed_result else None
+                    detail = scrub_secrets(failed_result.stderr or failed_result.stdout) if failed_result else None
                     result_tick = TickResult(
                         target=target,
                         stage_id=failed_stage_id,
                         status=TickResultStatus.ACTION_FAILED,
                         message=f"Chained stage {failed_stage_id} failed: {detail}" if detail else f"Chained stage {failed_stage_id} failed",
-                        stdout=failed_result.stdout if failed_result else "",
-                        stderr=failed_result.stderr if failed_result else "",
+                        stdout=scrub_secrets(failed_result.stdout) if failed_result else "",
+                        stderr=scrub_secrets(failed_result.stderr) if failed_result else "",
                         chained_stages=chained,
                         failed_chained_stages=[failed_stage_id],
                     )
@@ -1361,9 +1362,9 @@ class Pipeline:
                 target=target,
                 stage_id=stage.id,
                 status=TickResultStatus.ACTION_FAILED,
-                message=f"Action failed: {action_result.stderr or action_result.stdout}",
-                stdout=action_result.stdout,
-                stderr=action_result.stderr,
+                message=f"Action failed: {scrub_secrets(action_result.stderr or action_result.stdout)}",
+                stdout=scrub_secrets(action_result.stdout),
+                stderr=scrub_secrets(action_result.stderr),
             )
 
         # Update processing marker with result data, or delete it for sync actions
@@ -1435,14 +1436,14 @@ class Pipeline:
             if chained_result:
                 final_stage_id, chained, failed_stage_id, failed_result = chained_result
                 if failed_stage_id is not None:
-                    detail = failed_result.stderr or failed_result.stdout if failed_result else None
+                    detail = scrub_secrets(failed_result.stderr or failed_result.stdout) if failed_result else None
                     return TickResult(
                         target=target,
                         stage_id=failed_stage_id,
                         status=TickResultStatus.ACTION_FAILED,
                         message=f"Chained stage {failed_stage_id} failed: {detail}" if detail else f"Chained stage {failed_stage_id} failed",
-                        stdout=failed_result.stdout if failed_result else "",
-                        stderr=failed_result.stderr if failed_result else "",
+                        stdout=scrub_secrets(failed_result.stdout) if failed_result else "",
+                        stderr=scrub_secrets(failed_result.stderr) if failed_result else "",
                         chained_stages=chained,
                         failed_chained_stages=[failed_stage_id],
                     )
@@ -1593,6 +1594,6 @@ class Pipeline:
             stage_id=None,
             status=status,
             message=message,
-            stdout=action_result.stdout,
-            stderr=action_result.stderr,
+            stdout=scrub_secrets(action_result.stdout),
+            stderr=scrub_secrets(action_result.stderr),
         )

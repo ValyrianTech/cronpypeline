@@ -7442,3 +7442,110 @@ def my_action(action, context):
             assert not (target_dir / "b.md").exists()
         finally:
             self._cleanup_custom_module(sys_mod, tmp_path, "initial_async_stop_mod")
+
+
+class TestSecretScrubbingInTickResult:
+    """Regression tests for secret scrubbing in TickResult."""
+
+    def test_str_scrubs_stderr_secret(self):
+        result = TickResult(
+            target="repo1",
+            stage_id="A0",
+            status=TickResultStatus.ACTION_FAILED,
+            message="action failed",
+            stderr="Authorization: Bearer ghp_supersecrettoken123\nnot a secret",
+        )
+        s = str(result)
+        assert "ghp_supersecrettoken123" not in s
+        assert "***" in s
+        assert "not a secret" in s  # non-secret text preserved
+
+    def test_failing_command_action_scrubs_secret_in_result(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Failing Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "sh -c 'echo \"password=hunter2secret\" >&2; exit 1'"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert "hunter2secret" not in result.message
+        assert "hunter2secret" not in result.stderr
+        assert "hunter2secret" not in result.stdout
+        assert "hunter2secret" not in str(result)
+        assert "***" in result.message  # the value is redacted
+
+    def test_chained_failure_scrubs_secret_in_result(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Step 1",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "echo a"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                    "chain": True,
+                },
+                {
+                    "id": "A1",
+                    "name": "Failing Step 2",
+                    "trigger": {"type": "file_missing", "path": "b.md"},
+                    "action": {"type": "command", "params": {"command": "sh -c 'echo \"api_key=topsecretvalue\" >&2; exit 1'"}},
+                    "markers": {"completion": {"type": "file", "name": "b.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        result = pipeline.tick(target="my-repo")
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert result.stage_id == "A1"
+        assert "topsecretvalue" not in result.message
+        assert "topsecretvalue" not in result.stderr
+        assert "topsecretvalue" not in result.stdout
+        assert "topsecretvalue" not in str(result)
+
+    def test_failing_multi_target_action_scrubs_secret_in_result(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "my-repo").mkdir()
+
+        config = PipelineConfig.from_dict({
+            "name": "test",
+            "workspace_dir": str(workspace),
+            "targets": {"type": "static", "items": ["my-repo"]},
+            "stages": [
+                {
+                    "id": "A0",
+                    "name": "Failing Step",
+                    "trigger": {"type": "file_missing", "path": "a.md"},
+                    "action": {"type": "command", "params": {"command": "sh -c 'echo \"password=hunter2secret\" >&2; exit 1'"}},
+                    "markers": {"completion": {"type": "file", "name": "a.md"}},
+                },
+            ],
+        })
+        pipeline = Pipeline(config)
+        results = pipeline.tick_all()
+        assert len(results) == 1
+        result = results[0]
+        assert result.status == TickResultStatus.ACTION_FAILED
+        assert "hunter2secret" not in result.message
+        assert "hunter2secret" not in result.stderr
+        assert "hunter2secret" not in str(result)
