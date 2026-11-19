@@ -966,7 +966,7 @@ class Pipeline:
                     handlers=self._handlers,
                 )
                 execute_action(stage.on_fail, fail_ctx)
-            detail = scrub_secrets(action_result.stderr or action_result.stdout)
+            detail: str | None = scrub_secrets(action_result.stderr or action_result.stdout)
             result_tick = TickResult(
                 target=target,
                 stage_id=stage.id,
